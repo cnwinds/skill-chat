@@ -54,8 +54,8 @@ a {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 320px;
   min-height: 100vh;
-  gap: 18px;
-  padding: 18px;
+  gap: 14px;
+  padding: 14px;
 }
 
 .side-panel,
@@ -80,7 +80,7 @@ a {
 
 .panel-header,
 .workspace-header {
-  padding: 20px 22px;
+  padding: 16px 18px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -173,7 +173,7 @@ a {
 
 .session-list,
 .panel-section {
-  padding: 16px;
+  padding: 12px;
   overflow: auto;
   min-height: 0;
 }
@@ -181,14 +181,14 @@ a {
 .session-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .session-item {
   width: 100%;
   text-align: left;
-  padding: 14px;
-  border-radius: 18px;
+  padding: 12px;
+  border-radius: 16px;
   border: 1px solid transparent;
   background: var(--surface-muted);
   color: #fff;
@@ -232,10 +232,10 @@ a {
 .message-list {
   height: 100%;
   overflow: auto;
-  padding: 24px;
+  padding: 18px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -249,10 +249,32 @@ a {
 
 .message-bubble {
   max-width: min(90%, 720px);
-  padding: 16px 18px;
-  border-radius: 22px;
-  line-height: 1.6;
+  padding: 11px 14px;
+  border-radius: 18px;
+  line-height: 1.45;
   border: 1px solid var(--border);
+}
+
+.message-bubble > :first-child {
+  margin-top: 0;
+}
+
+.message-bubble > :last-child {
+  margin-bottom: 0;
+}
+
+.message-bubble p {
+  margin: 0.25em 0;
+}
+
+.message-bubble ul,
+.message-bubble ol {
+  margin: 0.35em 0;
+  padding-left: 1.15em;
+}
+
+.message-bubble li + li {
+  margin-top: 0.15em;
 }
 
 .message-bubble.user {
@@ -273,7 +295,7 @@ a {
   display: block;
   width: 32px;
   height: 4px;
-  margin-top: 12px;
+  margin-top: 8px;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent), transparent);
   animation: shimmer 1.2s infinite;
@@ -282,7 +304,7 @@ a {
 .message-bubble.thinking-inline {
   width: fit-content;
   max-width: none;
-  padding: 10px 14px;
+  padding: 8px 12px;
   border-radius: 999px;
   border-color: rgba(131, 197, 190, 0.28);
   background: rgba(255, 255, 255, 0.05);
@@ -298,7 +320,7 @@ a {
 .notice-card,
 .empty-state,
 .inline-empty {
-  border-radius: 18px;
+  border-radius: 16px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.04);
 }
@@ -307,13 +329,13 @@ a {
 .file-card,
 .skill-card,
 .notice-card {
-  padding: 14px 16px;
+  padding: 11px 12px;
 }
 
 .status-card {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .status-card.muted {
@@ -339,13 +361,15 @@ a {
   font-size: 0.85rem;
   overflow: auto;
   background: rgba(0, 0, 0, 0.2);
-  padding: 10px;
+  padding: 8px 9px;
   border-radius: 12px;
 }
 
 .status-pre.compact {
   font-size: 0.78rem;
-  padding: 8px 10px;
+  padding: 7px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .progress-bar {
@@ -367,11 +391,11 @@ a {
 }
 
 .tool-trace-card {
-  width: min(100%, 420px);
-  border-radius: 16px;
+  width: min(100%, 680px);
+  border-radius: 14px;
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.035);
-  font-size: 0.92rem;
+  font-size: 0.88rem;
 }
 
 .tool-trace-card.is-running,
@@ -388,7 +412,7 @@ a {
 }
 
 .tool-trace-card details {
-  padding: 10px 12px;
+  padding: 7px 9px;
 }
 
 .tool-trace-card summary {
@@ -403,20 +427,20 @@ a {
 .tool-trace-summary {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
 }
 
 .tool-trace-card details:not([open]) .tool-trace-summary {
   flex-direction: row;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   min-width: 0;
 }
 
 .tool-trace-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 5px;
 }
 
 .tool-trace-card details:not([open]) .tool-trace-main {
@@ -424,16 +448,17 @@ a {
 }
 
 .tool-trace-main strong {
-  font-size: 0.92rem;
+  font-size: 0.85rem;
+  line-height: 1.2;
 }
 
 .tool-trace-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 22px;
-  padding: 0 8px;
+  min-height: 18px;
+  padding: 0 6px;
   border-radius: 999px;
-  font-size: 0.74rem;
+  font-size: 0.69rem;
   color: var(--text-soft);
   background: rgba(255, 255, 255, 0.07);
 }
@@ -453,7 +478,7 @@ a {
 
 .tool-trace-message {
   color: var(--text-soft);
-  line-height: 1.45;
+  line-height: 1.25;
   word-break: break-word;
 }
 
@@ -468,14 +493,14 @@ a {
 .tool-trace-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 8px;
+  gap: 5px;
+  padding-top: 5px;
 }
 
 .tool-trace-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
 }
 
 .tool-trace-section-title {
@@ -494,8 +519,31 @@ a {
 .file-card {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
+}
+
+.message-list .status-card,
+.message-list .file-card {
+  padding: 9px 10px;
+  border-radius: 14px;
+}
+
+.message-list .status-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  line-height: 1.1;
+}
+
+.message-list .file-meta {
+  font-size: 0.84rem;
+  line-height: 1.25;
+}
+
+.message-list .subtle-button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 12px;
 }
 
 .file-name,
@@ -522,8 +570,8 @@ a {
 .skill-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .skill-card p {
@@ -534,7 +582,7 @@ a {
 
 .skill-meta {
   display: flex;
-  gap: 10px;
+  gap: 8px;
 }
 
 .skill-badge-list {
@@ -564,10 +612,10 @@ a {
 
 .composer {
   border-top: 1px solid var(--border);
-  padding: 14px 18px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   background:
     linear-gradient(180deg, rgba(20, 20, 24, 0.2), rgba(20, 20, 24, 0.75)),
     rgba(20, 20, 24, 0.85);
@@ -576,7 +624,7 @@ a {
 .composer-box {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  gap: 10px;
   align-items: flex-end;
 }
 
@@ -593,7 +641,7 @@ a {
 .composer textarea {
   min-height: 112px;
   resize: vertical;
-  padding: 16px;
+  padding: 14px;
 }
 
 .field-group input {
@@ -685,7 +733,7 @@ a {
 }
 
 .error-banner.floating {
-  margin: 16px 18px 0;
+  margin: 12px 16px 0;
 }
 
 .tabs {
@@ -693,7 +741,17 @@ a {
 }
 
 .notice-card {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
+}
+
+.file-group + .file-group {
+  margin-top: 10px;
+}
+
+.file-group h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  text-transform: lowercase;
 }
 
 @keyframes shimmer {
