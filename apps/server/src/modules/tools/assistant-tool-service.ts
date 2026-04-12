@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises';
+import dns from 'node:dns';
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { z } from 'zod';
 import type { FileRecord, SessionFileContext } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
@@ -71,6 +73,12 @@ const SEARCH_RESULT_LIMIT = 8;
 const SEARCH_FETCH_LIMIT = 4;
 const SEARCH_PAGE_EXCERPT_CHARS = 1_600;
 const MODEL_CONTEXT_EXCERPT_CHARS = 900;
+
+export const networkResolver = {
+  lookup: dnsLookup,
+  getDefaultResultOrder: () => dns.getDefaultResultOrder(),
+  setDefaultResultOrder: (order: ReturnType<typeof dns.getDefaultResultOrder>) => dns.setDefaultResultOrder(order),
+};
 
 const webSearchSchema = z.object({
   query: z.string().trim().min(2, 'query 不能为空'),
@@ -256,6 +264,18 @@ const readCauseCode = (error: unknown) => {
   return String((cause as { code?: unknown }).code ?? '');
 };
 
+const shouldRetryWithIpv4 = (error: unknown) => readCauseCode(error) === 'UND_ERR_CONNECT_TIMEOUT';
+
+const hostHasDualStackAddresses = async (hostname: string) => {
+  try {
+    const records = await networkResolver.lookup(hostname, { all: true });
+    const families = new Set(records.map((record) => record.family));
+    return families.has(4) && families.has(6);
+  } catch {
+    return false;
+  }
+};
+
 const extractMetaContent = (html: string, key: string) => {
   const patterns = [
     new RegExp(`<meta[^>]+name=["']${key}["'][^>]+content=["']([\\s\\S]*?)["'][^>]*>`, 'i'),
@@ -389,18 +409,33 @@ export class AssistantToolService {
   }
 
   private async fetchText(url: string, action: string, accept = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8') {
+    const requestInit = {
+      signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
+      headers: {
+        'user-agent': BROWSER_USER_AGENT,
+        accept,
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      },
+    } satisfies RequestInit;
+
     let response: Response;
     try {
-      response = await fetch(url, {
-        signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
-        headers: {
-          'user-agent': BROWSER_USER_AGENT,
-          accept,
-          'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        },
-      });
+      response = await fetch(url, requestInit);
     } catch (error) {
-      throw new Error(this.formatFetchError(url, error, action));
+      const hostname = new URL(url).hostname;
+      if (shouldRetryWithIpv4(error) && await hostHasDualStackAddresses(hostname)) {
+        const previousOrder = networkResolver.getDefaultResultOrder();
+        try {
+          networkResolver.setDefaultResultOrder('ipv4first');
+          response = await fetch(url, requestInit);
+        } catch (retryError) {
+          throw new Error(this.formatFetchError(url, retryError, action));
+        } finally {
+          networkResolver.setDefaultResultOrder(previousOrder);
+        }
+      } else {
+        throw new Error(this.formatFetchError(url, error, action));
+      }
     }
 
     if (!response.ok) {

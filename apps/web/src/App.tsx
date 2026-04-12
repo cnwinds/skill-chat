@@ -2,12 +2,16 @@ import type { FormEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  bootstrapAdminSchema,
   loginSchema,
-  registerSchema,
+  registerRequestSchema,
+  type AdminUserSummary,
   type FileRecord,
+  type InviteCodeSummary,
   type SessionSummary,
   type SkillMetadata,
   type StoredEvent,
+  type SystemSettings,
 } from '@skillchat/shared';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, api } from './lib/api';
@@ -17,6 +21,7 @@ import { useUiStore } from './stores/ui-store';
 import { useSessionStream } from './hooks/useSessionStream';
 import { cn, formatBytes, groupBy, isWechatBrowser } from './lib/utils';
 import { buildRenderableTimeline, type TimelineItem } from './lib/timeline';
+import { applyThemeMode, usePreferencesStore } from './stores/preferences-store';
 
 const firstIssueMessage = (issues: Array<{ message: string }>) => issues[0]?.message ?? '输入不合法';
 
@@ -74,6 +79,10 @@ const LoginPage = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const systemStatusQuery = useQuery({
+    queryKey: ['system-status'],
+    queryFn: api.getSystemStatus,
+  });
 
   const mutation = useMutation({
     mutationFn: () => api.login({ username, password }),
@@ -108,9 +117,16 @@ const LoginPage = () => {
         mutation.mutate();
       }}
       footer={
-        <button type="button" className="text-button" onClick={() => navigate('/register')}>
-          还没有账号？去注册
-        </button>
+        <>
+          <button type="button" className="text-button" onClick={() => navigate('/register')}>
+            还没有账号？去注册
+          </button>
+          {systemStatusQuery.data && !systemStatusQuery.data.initialized ? (
+            <button type="button" className="text-button" onClick={() => navigate('/bootstrap-admin')}>
+              首次启动？创建管理员
+            </button>
+          ) : null}
+        </>
       }
     />
   );
@@ -123,9 +139,18 @@ const RegisterPage = () => {
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const systemStatusQuery = useQuery({
+    queryKey: ['system-status'],
+    queryFn: api.getSystemStatus,
+  });
+  const requireInviteCode = systemStatusQuery.data?.registrationRequiresInviteCode ?? true;
 
   const mutation = useMutation({
-    mutationFn: () => api.register({ username, password, inviteCode }),
+    mutationFn: () => api.register({
+      username,
+      password,
+      inviteCode: inviteCode.trim() ? inviteCode.trim() : undefined,
+    }),
     onSuccess: (payload) => {
       setAuth(payload);
       navigate('/app', { replace: true });
@@ -138,20 +163,101 @@ const RegisterPage = () => {
   return (
     <AuthCard
       title="注册 SkillChat"
-      subtitle="使用邀请码完成注册。V0.1 采用轻量鉴权，不依赖微信 OAuth。"
+      subtitle={requireInviteCode
+        ? '使用邀请码完成注册。V0.1 采用轻量鉴权，不依赖微信 OAuth。'
+        : '当前已开放注册，不需要邀请码。'}
       error={error}
       loading={mutation.isPending}
       fields={[
         { name: 'username', label: '用户名', value: username, onChange: setUsername },
         { name: 'password', label: '密码', type: 'password', value: password, onChange: setPassword },
-        { name: 'inviteCode', label: '邀请码', value: inviteCode, onChange: setInviteCode },
+        ...(requireInviteCode
+          ? [{ name: 'inviteCode', label: '邀请码', value: inviteCode, onChange: setInviteCode }]
+          : []),
       ]}
       submitText="注册并进入"
       onSubmit={(event: FormEvent) => {
         event.preventDefault();
-        const validation = registerSchema.safeParse({ username, password, inviteCode });
+        const validation = registerRequestSchema.safeParse({
+          username,
+          password,
+          inviteCode: inviteCode.trim() ? inviteCode.trim() : undefined,
+        });
         if (!validation.success) {
           setError(firstIssueMessage(validation.error.issues));
+          return;
+        }
+        if (requireInviteCode && !inviteCode.trim()) {
+          setError('请输入有效的邀请码');
+          return;
+        }
+        setError(null);
+        mutation.mutate();
+      }}
+      footer={
+        <>
+          <button type="button" className="text-button" onClick={() => navigate('/login')}>
+            已有账号？去登录
+          </button>
+          {systemStatusQuery.data && !systemStatusQuery.data.initialized ? (
+            <button type="button" className="text-button" onClick={() => navigate('/bootstrap-admin')}>
+              首次启动？创建管理员
+            </button>
+          ) : null}
+        </>
+      }
+    />
+  );
+};
+
+const BootstrapAdminPage = () => {
+  const navigate = useNavigate();
+  const setAuth = useAuthStore((state) => state.setAuth);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const systemStatusQuery = useQuery({
+    queryKey: ['system-status'],
+    queryFn: api.getSystemStatus,
+  });
+
+  const mutation = useMutation({
+    mutationFn: () => api.bootstrapAdmin({ username, password }),
+    onSuccess: (payload) => {
+      setAuth(payload);
+      navigate('/app', { replace: true });
+    },
+    onError: (mutationError) => {
+      setError(mutationError instanceof ApiError ? mutationError.message : '初始化管理员失败');
+    },
+  });
+
+  if (systemStatusQuery.data?.initialized) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return (
+    <AuthCard
+      title="初始化管理员"
+      subtitle="系统首次启动时创建第一个管理员账号。创建成功后，该入口将自动关闭。"
+      error={error}
+      loading={mutation.isPending}
+      fields={[
+        { name: 'username', label: '管理员用户名', value: username, onChange: setUsername },
+        { name: 'password', label: '密码', type: 'password', value: password, onChange: setPassword },
+        { name: 'confirmPassword', label: '确认密码', type: 'password', value: confirmPassword, onChange: setConfirmPassword },
+      ]}
+      submitText="创建管理员并进入"
+      onSubmit={(event: FormEvent) => {
+        event.preventDefault();
+        const validation = bootstrapAdminSchema.safeParse({ username, password });
+        if (!validation.success) {
+          setError(firstIssueMessage(validation.error.issues));
+          return;
+        }
+        if (password !== confirmPassword) {
+          setError('两次输入的密码不一致');
           return;
         }
         setError(null);
@@ -159,7 +265,7 @@ const RegisterPage = () => {
       }}
       footer={
         <button type="button" className="text-button" onClick={() => navigate('/login')}>
-          已有账号？去登录
+          返回登录
         </button>
       }
     />
@@ -174,6 +280,402 @@ const EmptyState = ({ title, detail, action }: { title: string; detail: string; 
   </div>
 );
 
+const AdminSettingsView = ({
+  pageError,
+  setPageError,
+}: {
+  pageError: string | null;
+  setPageError: (value: string | null) => void;
+}) => {
+  const queryClient = useQueryClient();
+  const [settingsTab, setSettingsTab] = useState<'users' | 'system' | 'invites'>('users');
+  const [inviteBatchCount, setInviteBatchCount] = useState('5');
+  const [systemDraft, setSystemDraft] = useState<SystemSettings | null>(null);
+  const settingsQuery = useQuery({
+    queryKey: ['admin-system-settings'],
+    queryFn: api.getAdminSystemSettings,
+  });
+  const usersQuery = useQuery({
+    queryKey: ['admin-users'],
+    queryFn: api.listAdminUsers,
+  });
+  const invitesQuery = useQuery({
+    queryKey: ['admin-invites'],
+    queryFn: api.listAdminInviteCodes,
+  });
+
+  const updateSettingsMutation = useMutation({
+    mutationFn: (payload: Partial<SystemSettings>) => api.updateAdminSystemSettings(payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin-system-settings'] });
+    },
+    onError: (error) => setPageError(error instanceof ApiError ? error.message : '更新系统配置失败'),
+  });
+
+  const updateUserMutation = useMutation({
+    mutationFn: ({ userId, payload }: { userId: string; payload: { role?: 'admin' | 'member'; status?: 'active' | 'disabled' } }) =>
+      api.updateAdminUser(userId, payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin-users'] });
+    },
+    onError: (error) => setPageError(error instanceof ApiError ? error.message : '更新用户失败'),
+  });
+
+  const createInvitesMutation = useMutation({
+    mutationFn: (count: number) => api.createAdminInviteCodes(count),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin-invites'] });
+    },
+    onError: (error) => setPageError(error instanceof ApiError ? error.message : '创建邀请码失败'),
+  });
+
+  const deleteInviteMutation = useMutation({
+    mutationFn: (code: string) => api.deleteAdminInviteCode(code),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['admin-invites'] });
+    },
+    onError: (error) => setPageError(error instanceof ApiError ? error.message : '删除邀请码失败'),
+  });
+
+  useEffect(() => {
+    if (settingsQuery.data) {
+      setSystemDraft(settingsQuery.data);
+    }
+  }, [settingsQuery.data]);
+
+  const updateSystemDraft = (updater: (current: SystemSettings) => SystemSettings) => {
+    setSystemDraft((current) => (current ? updater(current) : current));
+  };
+
+  const saveSystemDraft = () => {
+    if (!systemDraft) {
+      return;
+    }
+
+    setPageError(null);
+    updateSettingsMutation.mutate(systemDraft);
+  };
+
+  return (
+    <div className="settings-view">
+      <div className="settings-tabs">
+        <button type="button" className={cn('tab-button', settingsTab === 'users' && 'active')} onClick={() => setSettingsTab('users')}>用户</button>
+        <button type="button" className={cn('tab-button', settingsTab === 'system' && 'active')} onClick={() => setSettingsTab('system')}>系统</button>
+        <button type="button" className={cn('tab-button', settingsTab === 'invites' && 'active')} onClick={() => setSettingsTab('invites')}>邀请码</button>
+      </div>
+
+      {pageError ? <div className="error-banner">{pageError}</div> : null}
+
+      {settingsTab === 'users' ? (
+        <div className="settings-table-shell">
+          <table className="settings-table">
+            <thead>
+              <tr>
+                <th>用户名</th>
+                <th>角色</th>
+                <th>状态</th>
+                <th>创建时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(usersQuery.data ?? []).map((item: AdminUserSummary) => (
+                <tr key={item.id}>
+                  <td className="settings-table-strong">{item.username}</td>
+                  <td><span className="stream-pill">{item.role}</span></td>
+                  <td>{item.status}</td>
+                  <td>{new Date(item.createdAt).toLocaleString()}</td>
+                  <td>
+                    <div className="settings-actions nowrap">
+                      <button
+                        type="button"
+                        className="subtle-button"
+                        disabled={updateUserMutation.isPending}
+                        onClick={() => updateUserMutation.mutate({
+                          userId: item.id,
+                          payload: { role: item.role === 'admin' ? 'member' : 'admin' },
+                        })}
+                      >
+                        {item.role === 'admin' ? '降为成员' : '设为管理员'}
+                      </button>
+                      <button
+                        type="button"
+                        className="subtle-button"
+                        disabled={updateUserMutation.isPending}
+                        onClick={() => updateUserMutation.mutate({
+                          userId: item.id,
+                          payload: { status: item.status === 'active' ? 'disabled' : 'active' },
+                        })}
+                      >
+                        {item.status === 'active' ? '禁用' : '启用'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {settingsTab === 'system' && systemDraft ? (
+        <div className="settings-grid">
+          <article className="status-card">
+            <div className="settings-row">
+              <strong>注册邀请码</strong>
+              <button
+                type="button"
+                className="subtle-button"
+                disabled={updateSettingsMutation.isPending}
+                onClick={() => updateSettingsMutation.mutate({
+                  registrationRequiresInviteCode: !systemDraft.registrationRequiresInviteCode,
+                })}
+              >
+                {systemDraft.registrationRequiresInviteCode ? '当前需要邀请码' : '当前开放注册'}
+              </button>
+            </div>
+            <div className="file-meta">切换后，对后续注册请求立即生效。</div>
+          </article>
+
+          <article className="status-card">
+            <strong>Assistant Tools</strong>
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="subtle-button"
+                disabled={updateSettingsMutation.isPending}
+                onClick={() => updateSettingsMutation.mutate({
+                  enableAssistantTools: !systemDraft.enableAssistantTools,
+                })}
+              >
+                {systemDraft.enableAssistantTools ? '已启用' : '已关闭'}
+              </button>
+            </div>
+          </article>
+
+          <article className="status-card">
+            <strong>运行配置</strong>
+            <div className="settings-stack">
+              <label className="field-group">
+                <span>Web Origin</span>
+                <input
+                  value={systemDraft.webOrigin}
+                  onChange={(event) => {
+                    updateSystemDraft((current) => ({
+                      ...current,
+                      webOrigin: event.target.value,
+                    }));
+                  }}
+                />
+              </label>
+              <label className="field-group">
+                <span>默认激活 Skills</span>
+                <input
+                  value={systemDraft.defaultSessionActiveSkills.join(', ')}
+                  onChange={(event) => {
+                    updateSystemDraft((current) => ({
+                      ...current,
+                      defaultSessionActiveSkills: event.target.value
+                        .split(',')
+                        .map((item) => item.trim())
+                        .filter(Boolean),
+                    }));
+                  }}
+                />
+              </label>
+              <div className="settings-grid two-columns">
+                <label className="field-group">
+                  <span>Router Model</span>
+                  <input
+                    value={systemDraft.modelConfig.openaiModelRouter}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          openaiModelRouter: event.target.value,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="field-group">
+                  <span>Planner Model</span>
+                  <input
+                    value={systemDraft.modelConfig.openaiModelPlanner}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          openaiModelPlanner: event.target.value,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="field-group">
+                  <span>Reply Model</span>
+                  <input
+                    value={systemDraft.modelConfig.openaiModelReply}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          openaiModelReply: event.target.value,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="field-group">
+                  <span>Reasoning Effort</span>
+                  <select
+                    className="select-field"
+                    value={systemDraft.modelConfig.openaiReasoningEffortReply}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          openaiReasoningEffortReply: event.target.value as SystemSettings['modelConfig']['openaiReasoningEffortReply'],
+                        },
+                      }));
+                    }}
+                  >
+                    <option value="minimal">minimal</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="xhigh">xhigh</option>
+                  </select>
+                </label>
+                <label className="field-group">
+                  <span>LLM Max Output Tokens</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={String(systemDraft.modelConfig.llmMaxOutputTokens)}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          llmMaxOutputTokens: Math.max(1, Number(event.target.value || current.modelConfig.llmMaxOutputTokens)),
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="field-group">
+                  <span>Tool Max Output Tokens</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={String(systemDraft.modelConfig.toolMaxOutputTokens)}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          toolMaxOutputTokens: Math.max(1, Number(event.target.value || current.modelConfig.toolMaxOutputTokens)),
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="primary-button"
+                disabled={updateSettingsMutation.isPending}
+                onClick={saveSystemDraft}
+              >
+                保存模型配置
+              </button>
+            </div>
+          </article>
+        </div>
+      ) : null}
+
+      {settingsTab === 'invites' ? (
+        <div className="settings-stack">
+          <article className="status-card">
+            <strong>批量创建邀请码</strong>
+            <div className="settings-actions">
+              <input value={inviteBatchCount} onChange={(event) => setInviteBatchCount(event.target.value)} />
+              <button
+                type="button"
+                className="primary-button"
+                disabled={createInvitesMutation.isPending}
+                onClick={() => createInvitesMutation.mutate(Math.max(1, Math.min(100, Number(inviteBatchCount || '1'))))}
+              >
+                创建
+              </button>
+            </div>
+            <div className="file-meta">单次最多创建 100 个邀请码。</div>
+          </article>
+          <div className="settings-table-shell">
+            <table className="settings-table">
+              <thead>
+                <tr>
+                  <th>邀请码</th>
+                  <th>状态</th>
+                  <th>创建时间</th>
+                  <th>使用时间</th>
+                  <th>使用者</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(invitesQuery.data ?? []).map((invite: InviteCodeSummary) => (
+                  <tr key={invite.code}>
+                    <td className="settings-table-strong">{invite.code}</td>
+                    <td><span className="stream-pill">{invite.usedBy ? '已使用' : '未使用'}</span></td>
+                    <td>{new Date(invite.createdAt).toLocaleString()}</td>
+                    <td>{invite.usedAt ? new Date(invite.usedAt).toLocaleString() : '-'}</td>
+                    <td>{invite.usedBy ?? '-'}</td>
+                    <td>
+                      <div className="settings-actions nowrap">
+                        <button
+                          type="button"
+                          className="subtle-button"
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(invite.code);
+                            } catch {
+                              setPageError('当前环境不支持复制到剪贴板');
+                            }
+                          }}
+                        >
+                          复制
+                        </button>
+                        {!invite.usedBy ? (
+                          <button
+                            type="button"
+                            className="subtle-button"
+                            disabled={deleteInviteMutation.isPending}
+                            onClick={() => deleteInviteMutation.mutate(invite.code)}
+                          >
+                            删除
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const SessionWorkspace = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -183,6 +685,7 @@ const SessionWorkspace = () => {
   const logout = useAuthStore((state) => state.logout);
   const setActiveSessionId = useUiStore((state) => state.setActiveSessionId);
   const activeSessionId = sessionId ?? null;
+  const isSettingsView = location.pathname === '/app/settings';
   const mobilePanel = useUiStore((state) => state.mobilePanel);
   const setMobilePanel = useUiStore((state) => state.setMobilePanel);
   const drafts = useUiStore((state) => state.drafts);
@@ -191,13 +694,39 @@ const SessionWorkspace = () => {
   const stream = useSessionStream(activeSessionId);
   const [inspectorTab, setInspectorTab] = useState<'files' | 'skills'>('files');
   const [pageError, setPageError] = useState<string | null>(null);
+  const [visibleSessionCount, setVisibleSessionCount] = useState(5);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
+  const themeMode = usePreferencesStore((state) => state.themeMode);
+  const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
 
   useEffect(() => {
     setActiveSessionId(activeSessionId);
   }, [activeSessionId, setActiveSessionId]);
+
+  const mySettingsQuery = useQuery({
+    queryKey: ['my-settings'],
+    queryFn: api.getMySettings,
+    enabled: Boolean(user),
+  });
+
+  useEffect(() => {
+    if (mySettingsQuery.data?.themeMode) {
+      setThemeMode(mySettingsQuery.data.themeMode);
+    } else {
+      applyThemeMode(themeMode);
+    }
+  }, [mySettingsQuery.data?.themeMode, setThemeMode, themeMode]);
+
+  const updateMySettingsMutation = useMutation({
+    mutationFn: api.updateMySettings,
+    onSuccess: (payload) => {
+      setThemeMode(payload.themeMode);
+      queryClient.setQueryData(['my-settings'], payload);
+    },
+    onError: (error) => setPageError(error instanceof ApiError ? error.message : '更新个人设置失败'),
+  });
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.visualViewport) {
@@ -229,6 +758,11 @@ const SessionWorkspace = () => {
     () => sessionsQuery.data?.find((item) => item.id === activeSessionId) ?? null,
     [activeSessionId, sessionsQuery.data],
   );
+  const visibleSessions = useMemo(
+    () => (sessionsQuery.data ?? []).slice(0, visibleSessionCount),
+    [sessionsQuery.data, visibleSessionCount],
+  );
+  const hiddenSessionCount = Math.max(0, (sessionsQuery.data?.length ?? 0) - visibleSessionCount);
 
   const createSessionMutation = useMutation({
     mutationFn: () => api.createSession(),
@@ -253,7 +787,7 @@ const SessionWorkspace = () => {
   });
 
   useEffect(() => {
-    if (!sessionsQuery.isSuccess || location.pathname.startsWith('/login') || location.pathname.startsWith('/register')) {
+    if (!sessionsQuery.isSuccess || isSettingsView || location.pathname.startsWith('/login') || location.pathname.startsWith('/register')) {
       return;
     }
 
@@ -264,7 +798,17 @@ const SessionWorkspace = () => {
         createSessionMutation.mutate();
       }
     }
-  }, [activeSessionId, createSessionMutation, location.pathname, navigate, sessionsQuery.data, sessionsQuery.isSuccess]);
+  }, [activeSessionId, createSessionMutation, isSettingsView, location.pathname, navigate, sessionsQuery.data, sessionsQuery.isSuccess]);
+
+  useEffect(() => {
+    if (!sessionsQuery.data) {
+      return;
+    }
+    setVisibleSessionCount((current) => {
+      const nextMin = Math.min(5, sessionsQuery.data.length);
+      return Math.max(current, nextMin);
+    });
+  }, [sessionsQuery.data]);
 
   const messagesQuery = useQuery({
     queryKey: ['messages', activeSessionId],
@@ -377,6 +921,9 @@ const SessionWorkspace = () => {
   if (!user) {
     return <Navigate to="/login" replace />;
   }
+  if (isSettingsView && user.role !== 'admin') {
+    return <Navigate to="/app" replace />;
+  }
 
   return (
     <div className="shell">
@@ -392,7 +939,20 @@ const SessionWorkspace = () => {
         </div>
 
         <div className="session-list">
-          {(sessionsQuery.data ?? []).map((session: SessionSummary) => (
+          {user.role === 'admin' ? (
+            <button
+              type="button"
+              className={cn('session-item settings-entry', isSettingsView && 'active')}
+              onClick={() => {
+                navigate('/app/settings');
+                setMobilePanel(null);
+              }}
+            >
+              <strong>设置</strong>
+              <span>系统配置 / 用户 / 邀请码</span>
+            </button>
+          ) : null}
+          {visibleSessions.map((session: SessionSummary) => (
             <button
               key={session.id}
               type="button"
@@ -411,6 +971,15 @@ const SessionWorkspace = () => {
               <span>{new Date(session.updatedAt).toLocaleString()}</span>
             </button>
           ))}
+          {hiddenSessionCount > 0 ? (
+            <button
+              type="button"
+              className="session-more-button"
+              onClick={() => setVisibleSessionCount((current) => current + 5)}
+            >
+              更多会话（还有 {hiddenSessionCount} 条）
+            </button>
+          ) : null}
         </div>
       </aside>
 
@@ -418,12 +987,17 @@ const SessionWorkspace = () => {
         <header className="workspace-header">
           <div>
             <div className="eyebrow">SkillChat</div>
-            <h1>{activeSession?.title ?? 'SkillChat Workspace'}</h1>
+            <h1>{isSettingsView ? '设置中心' : (activeSession?.title ?? 'SkillChat Workspace')}</h1>
             <p>
-              当前用户：{user.username} · 连接状态：
-              <span className={cn('stream-pill', `is-${stream.status}`)}>{stream.status}</span>
+              当前用户：{user.username}
+              {!isSettingsView ? (
+                <>
+                  {' '}· 连接状态：
+                  <span className={cn('stream-pill', `is-${stream.status}`)}>{stream.status}</span>
+                </>
+              ) : null}
             </p>
-            {activeSkills.length > 0 ? (
+            {!isSettingsView && activeSkills.length > 0 ? (
               <div className="skill-badge-list">
                 {activeSkills.map((skillName) => (
                   <span key={skillName} className="skill-badge active">
@@ -458,6 +1032,15 @@ const SessionWorkspace = () => {
             >
               Skill
             </button>
+            <button
+              type="button"
+              className="subtle-button"
+              onClick={() => updateMySettingsMutation.mutate({
+                themeMode: themeMode === 'dark' ? 'light' : 'dark',
+              })}
+            >
+              {themeMode === 'dark' ? '浅色' : '深色'}
+            </button>
             <button type="button" className="subtle-button" onClick={() => logout()}>
               退出
             </button>
@@ -466,86 +1049,98 @@ const SessionWorkspace = () => {
 
         {pageError ? <div className="error-banner floating">{pageError}</div> : null}
 
-        <section className="message-stage">
-          <div className="message-list" ref={messageListRef}>
-            {timeline.length === 0 && !stream.pendingText ? (
-              <EmptyState
-                title="开始一个任务"
-                detail="可以直接说“帮我生成一份本周销售报告 PDF”，也可以先上传 CSV、Markdown 或文本文件。"
-              />
-            ) : null}
-            {timeline.map((event) => (
-              <MessageItem
-                key={event.id}
-                event={event}
-                onDownload={(file) => downloadMutation.mutate(file)}
-                downloading={downloadMutation.isPending}
-              />
-            ))}
-            {stream.pendingText ? (
-              <MessageItem
-                event={{ kind: 'pending_text', content: stream.pendingText }}
-                onDownload={(file) => downloadMutation.mutate(file)}
-                downloading={downloadMutation.isPending}
-              />
-            ) : null}
-            {activeThinking ? (
-              <MessageItem
-                key={activeThinking.id}
-                event={activeThinking}
-                onDownload={(file) => downloadMutation.mutate(file)}
-                downloading={downloadMutation.isPending}
-              />
-            ) : null}
-          </div>
-        </section>
+        {isSettingsView ? (
+          <section className="settings-stage">
+            <AdminSettingsView pageError={pageError} setPageError={setPageError} />
+          </section>
+        ) : (
+          <>
+            <section className="message-stage">
+              <div className="message-list" ref={messageListRef}>
+                {timeline.length === 0 && !stream.pendingText ? (
+                  <EmptyState
+                    title="开始一个任务"
+                    detail="可以直接说“帮我生成一份本周销售报告 PDF”，也可以先上传 CSV、Markdown 或文本文件。"
+                  />
+                ) : null}
+                {timeline.map((event) => (
+                  <MessageItem
+                    key={event.id}
+                    event={event}
+                    onDownload={(file) => downloadMutation.mutate(file)}
+                    downloading={downloadMutation.isPending}
+                    canExpandToolTrace={user.role === 'admin'}
+                  />
+                ))}
+                {stream.pendingText ? (
+                  <MessageItem
+                    event={{ kind: 'pending_text', content: stream.pendingText }}
+                    onDownload={(file) => downloadMutation.mutate(file)}
+                    downloading={downloadMutation.isPending}
+                    canExpandToolTrace={user.role === 'admin'}
+                  />
+                ) : null}
+                {activeThinking ? (
+                  <MessageItem
+                    key={activeThinking.id}
+                    event={activeThinking}
+                    onDownload={(file) => downloadMutation.mutate(file)}
+                    downloading={downloadMutation.isPending}
+                    canExpandToolTrace={user.role === 'admin'}
+                  />
+                ) : null}
+              </div>
+            </section>
 
-        <footer
-          className="composer"
-          style={{
-            paddingBottom: `calc(14px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
-          }}
-        >
-          <div className="composer-tools">
-            <button type="button" className="subtle-button" onClick={() => uploadInputRef.current?.click()} disabled={!activeSessionId || uploadMutation.isPending}>
-              {uploadMutation.isPending ? '上传中...' : '上传文件'}
-            </button>
-            <input
-              ref={uploadInputRef}
-              type="file"
-              hidden
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file && activeSessionId) {
-                  uploadMutation.mutate(file);
-                }
-                event.currentTarget.value = '';
+            <footer
+              className="composer"
+              style={{
+                paddingBottom: `calc(14px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
               }}
-            />
-            <span className="composer-hint">微信内建议使用 16px 以上字体输入，避免页面缩放。</span>
-          </div>
+            >
+              <div className="composer-tools">
+                <button type="button" className="subtle-button" onClick={() => uploadInputRef.current?.click()} disabled={!activeSessionId || uploadMutation.isPending}>
+                  {uploadMutation.isPending ? '上传中...' : '上传文件'}
+                </button>
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  hidden
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file && activeSessionId) {
+                      uploadMutation.mutate(file);
+                    }
+                    event.currentTarget.value = '';
+                  }}
+                />
+                <span className="composer-hint">微信内建议使用 16px 以上字体输入，避免页面缩放。</span>
+              </div>
 
-          <div className="composer-box">
-            <textarea
-              value={draft}
-              onChange={(event) => activeSessionId && setDraft(activeSessionId, event.target.value)}
-              placeholder="输入你的需求，例如：把上传的 CSV 生成 Excel 并加上柱状图"
-              rows={3}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey && window.innerWidth >= 900) {
-                  event.preventDefault();
-                  handleSend();
-                }
-              }}
-            />
-            <button type="button" className="primary-button" onClick={handleSend} disabled={!draft.trim() || sendMessageMutation.isPending}>
-              {sendMessageMutation.isPending ? '处理中...' : '发送'}
-            </button>
-          </div>
-        </footer>
+              <div className="composer-box">
+                <textarea
+                  value={draft}
+                  onChange={(event) => activeSessionId && setDraft(activeSessionId, event.target.value)}
+                  placeholder="输入你的需求，例如：把上传的 CSV 生成 Excel 并加上柱状图"
+                  rows={3}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey && window.innerWidth >= 900) {
+                      event.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                />
+                <button type="button" className="primary-button" onClick={handleSend} disabled={!draft.trim() || sendMessageMutation.isPending}>
+                  {sendMessageMutation.isPending ? '处理中...' : '发送'}
+                </button>
+              </div>
+            </footer>
+          </>
+        )}
       </main>
 
-      <aside className={cn('side-panel inspector-panel', mobilePanel && mobilePanel !== 'sessions' && 'mobile-open')}>
+      {!isSettingsView ? (
+        <aside className={cn('side-panel inspector-panel', mobilePanel && mobilePanel !== 'sessions' && 'mobile-open')}>
         <div className="panel-header">
           <div className="tabs">
             <button
@@ -637,7 +1232,8 @@ const SessionWorkspace = () => {
             ))}
           </div>
         )}
-      </aside>
+        </aside>
+      ) : null}
     </div>
   );
 };
@@ -654,6 +1250,7 @@ const App = () => (
   <Routes>
     <Route path="/login" element={<LoginPage />} />
     <Route path="/register" element={<RegisterPage />} />
+    <Route path="/bootstrap-admin" element={<BootstrapAdminPage />} />
     <Route
       path="/app"
       element={(
@@ -664,6 +1261,14 @@ const App = () => (
     />
     <Route
       path="/app/session/:sessionId"
+      element={(
+        <ProtectedRoute>
+          <SessionWorkspace />
+        </ProtectedRoute>
+      )}
+    />
+    <Route
+      path="/app/settings"
       element={(
         <ProtectedRoute>
           <SessionWorkspace />

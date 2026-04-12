@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
+import { getSessionMessagesPath } from './core/storage/paths.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const skillsRoot = path.join(repoRoot, 'skills');
@@ -14,6 +15,20 @@ const seedInviteCode = (dbPath: string, code: string) => {
   const db = new Database(dbPath);
   db.prepare('INSERT INTO invite_codes (code) VALUES (?)').run(code);
   db.close();
+};
+
+const bootstrapAdmin = async (app: FastifyInstance, username = 'admin_user') => {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/system/bootstrap-admin',
+    payload: {
+      username,
+      password: 'secret123',
+    },
+  });
+
+  expect(response.statusCode).toBe(200);
+  return response.json() as { token: string; user: { id: string; username: string; role: string } };
 };
 
 const registerAndLogin = async (app: FastifyInstance, username: string) => {
@@ -156,6 +171,314 @@ describe('SkillChat server', () => {
     expect(response.json()).toEqual({
       message: '密码至少需要 8 个字符',
     });
+  });
+
+  it('bootstraps the first admin and then closes bootstrap mode', async () => {
+    const statusBefore = await app.inject({
+      method: 'GET',
+      url: '/api/system/status',
+    });
+
+    expect(statusBefore.statusCode).toBe(200);
+    expect(statusBefore.json()).toMatchObject({
+      initialized: false,
+      hasAdmin: false,
+      registrationRequiresInviteCode: true,
+    });
+
+    const admin = await bootstrapAdmin(app, 'root_admin');
+    expect(admin.user.role).toBe('admin');
+
+    const statusAfter = await app.inject({
+      method: 'GET',
+      url: '/api/system/status',
+    });
+
+    expect(statusAfter.json()).toMatchObject({
+      initialized: true,
+      hasAdmin: true,
+    });
+
+    const secondBootstrap = await app.inject({
+      method: 'POST',
+      url: '/api/system/bootstrap-admin',
+      payload: {
+        username: 'another_admin',
+        password: 'secret123',
+      },
+    });
+
+    expect(secondBootstrap.statusCode).toBe(409);
+    expect(secondBootstrap.json()).toEqual({
+      message: '系统已存在管理员，不能重复初始化',
+    });
+  });
+
+  it('allows registration without invite after admin disables invite requirement', async () => {
+    const admin = await bootstrapAdmin(app, 'settings_admin');
+
+    const patchResponse = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/system-settings',
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+      payload: {
+        registrationRequiresInviteCode: false,
+        modelConfig: {
+          openaiModelReply: 'gpt-4o-mini',
+          llmMaxOutputTokens: 2048,
+        },
+      },
+    });
+
+    expect(patchResponse.statusCode).toBe(200);
+    expect(app.config.OPENAI_MODEL_REPLY).toBe('gpt-4o-mini');
+    expect(app.config.LLM_MAX_OUTPUT_TOKENS).toBe(2048);
+
+    const registerResponse = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: {
+        username: 'invite_free_user',
+        password: 'secret123',
+      },
+    });
+
+    expect(registerResponse.statusCode).toBe(200);
+    expect(registerResponse.json()).toMatchObject({
+      user: {
+        username: 'invite_free_user',
+        role: 'member',
+      },
+    });
+  });
+
+  it('supports admin user management, invite management, and user preference settings', async () => {
+    const admin = await bootstrapAdmin(app, 'ops_admin');
+
+    const createInvites = await app.inject({
+      method: 'POST',
+      url: '/api/admin/invite-codes',
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+      payload: {
+        count: 2,
+      },
+    });
+
+    expect(createInvites.statusCode).toBe(200);
+    const createdInvites = createInvites.json() as { codes: string[] };
+    expect(createdInvites.codes).toHaveLength(2);
+
+    const registerResponse = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: {
+        username: 'managed_user',
+        password: 'secret123',
+        inviteCode: createdInvites.codes[0],
+      },
+    });
+    expect(registerResponse.statusCode).toBe(200);
+    const managedMember = registerResponse.json() as { user: { username: string } };
+
+    const usersResponse = await app.inject({
+      method: 'GET',
+      url: '/api/admin/users',
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+    });
+
+    expect(usersResponse.statusCode).toBe(200);
+    const users = usersResponse.json() as Array<{ id: string; username: string; role: string; status: string }>;
+    const managedUser = users.find((user) => user.username === 'managed_user');
+    expect(managedUser).toBeTruthy();
+
+    const disableResponse = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/users/${managedUser!.id}`,
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+      payload: {
+        status: 'disabled',
+      },
+    });
+
+    expect(disableResponse.statusCode).toBe(200);
+    expect(disableResponse.json()).toMatchObject({
+      id: managedUser!.id,
+      status: 'disabled',
+    });
+
+    const disabledLogin = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: {
+        username: 'managed_user',
+        password: 'secret123',
+      },
+    });
+
+    expect(disabledLogin.statusCode).toBe(400);
+    expect(disabledLogin.json()).toEqual({
+      message: '用户已被禁用',
+    });
+
+    const meSettingsPatch = await app.inject({
+      method: 'PATCH',
+      url: '/api/me/settings',
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+      payload: {
+        themeMode: 'light',
+      },
+    });
+
+    expect(meSettingsPatch.statusCode).toBe(200);
+    expect(meSettingsPatch.json()).toEqual({
+      themeMode: 'light',
+    });
+
+    const meSettingsGet = await app.inject({
+      method: 'GET',
+      url: '/api/me/settings',
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+    });
+
+    expect(meSettingsGet.statusCode).toBe(200);
+    expect(meSettingsGet.json()).toEqual({
+      themeMode: 'light',
+    });
+
+    const inviteList = await app.inject({
+      method: 'GET',
+      url: '/api/admin/invite-codes',
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+    });
+
+    expect(inviteList.statusCode).toBe(200);
+    const invites = inviteList.json() as Array<{ code: string; usedBy: string | null }>;
+    expect(invites.some((invite) => invite.code === createdInvites.codes[0] && invite.usedBy === managedMember.user.username)).toBe(true);
+
+    const deleteUsedInvite = await app.inject({
+      method: 'DELETE',
+      url: `/api/admin/invite-codes/${createdInvites.codes[0]}`,
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+    });
+    expect(deleteUsedInvite.statusCode).toBe(400);
+
+    const deleteUnusedInvite = await app.inject({
+      method: 'DELETE',
+      url: `/api/admin/invite-codes/${createdInvites.codes[1]}`,
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+    });
+    expect(deleteUnusedInvite.statusCode).toBe(204);
+  });
+
+  it('rejects admin endpoints for non-admin users', async () => {
+    const admin = await bootstrapAdmin(app, 'policy_admin');
+    const settingsResponse = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/system-settings',
+      headers: {
+        authorization: `Bearer ${admin.token}`,
+      },
+      payload: {
+        registrationRequiresInviteCode: false,
+      },
+    });
+    expect(settingsResponse.statusCode).toBe(200);
+
+    const memberRegister = await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: {
+        username: 'plain_member',
+        password: 'secret123',
+      },
+    });
+    expect(memberRegister.statusCode).toBe(200);
+    const member = memberRegister.json() as { token: string };
+
+    const memberAdminAccess = await app.inject({
+      method: 'GET',
+      url: '/api/admin/users',
+      headers: {
+        authorization: `Bearer ${member.token}`,
+      },
+    });
+
+    expect(memberAdminAccess.statusCode).toBe(403);
+    expect(memberAdminAccess.json()).toEqual({
+      message: '仅管理员可访问',
+    });
+  });
+
+  it('sanitizes tool details for non-admin users when reading session messages', async () => {
+    const member = await registerAndLogin(app, 'tooltrace_member');
+    const session = await createSession(app, member.token, '工具权限测试');
+    const messagesPath = getSessionMessagesPath(app.config, member.user.id, session.id);
+
+    await fs.appendFile(messagesPath, `${JSON.stringify({
+      id: 'tool-call',
+      sessionId: session.id,
+      kind: 'tool_call',
+      callId: 'call_1',
+      skill: 'web_search',
+      arguments: { query: '金融专业就业' },
+      meta: { provider: 'openai' },
+      createdAt: '2026-04-12T00:00:00.000Z',
+    })}\n`, 'utf8');
+    await fs.appendFile(messagesPath, `${JSON.stringify({
+      id: 'tool-result',
+      sessionId: session.id,
+      kind: 'tool_result',
+      callId: 'call_1',
+      skill: 'web_search',
+      message: '检索到 3 条网页结果',
+      content: '1. Example News',
+      meta: { raw: 'secret payload' },
+      createdAt: '2026-04-12T00:00:01.000Z',
+    })}\n`, 'utf8');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${session.id}/messages?limit=200`,
+      headers: {
+        authorization: `Bearer ${member.token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject([
+      {
+        id: 'tool-call',
+        kind: 'tool_call',
+        arguments: {},
+      },
+      {
+        id: 'tool-result',
+        kind: 'tool_result',
+        message: '检索到 3 条网页结果',
+      },
+    ]);
+    const [toolCall, toolResult] = response.json() as Array<Record<string, unknown>>;
+    expect(toolCall.meta).toBeUndefined();
+    expect(toolResult.content).toBeUndefined();
+    expect(toolResult.meta).toBeUndefined();
   });
 
   it('generates a PDF file and supports sharing and downloading it', async () => {

@@ -5,13 +5,20 @@ import multipart from '@fastify/multipart';
 import Fastify from 'fastify';
 import { z } from 'zod';
 import {
+  adminInviteCreateSchema,
+  adminUserUpdateSchema,
+  bootstrapAdminSchema,
   createMessageSchema,
   createSessionSchema,
   fileBucketSchema,
   loginSchema,
-  registerSchema,
+  registerRequestSchema,
+  systemSettingsPatchSchema,
   updateSessionSchema,
+  userPreferenceSettingsSchema,
   type AuthResponse,
+  type SSEvent,
+  type StoredEvent,
 } from '@skillchat/shared';
 import { getProjectRoot, loadConfig, type ConfigOverrides } from './config/env.js';
 import { createDatabase, migrateDatabase } from './db/database.js';
@@ -27,6 +34,9 @@ import { RunnerManager } from './core/runner/runner-manager.js';
 import { ChatService } from './modules/chat/chat-service.js';
 import { AssistantToolService } from './modules/tools/assistant-tool-service.js';
 import { OpenAIHarness } from './modules/chat/openai-harness.js';
+import { SystemSettingsService } from './modules/system/system-settings-service.js';
+import { UserSettingsService } from './modules/system/user-settings-service.js';
+import { AdminService } from './modules/admin/admin-service.js';
 
 export interface CreateAppOptions {
   cwd?: string;
@@ -57,6 +67,77 @@ const errorMessage = (error: unknown, fallback: string) => {
 
 const formatSse = (event: { id: string; event: string; data: unknown }) =>
   `id: ${event.id}\nevent: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`;
+
+const sanitizeStoredEventForRole = (event: StoredEvent, role: 'admin' | 'member'): StoredEvent => {
+  if (role === 'admin') {
+    return event;
+  }
+
+  if (event.kind === 'tool_call') {
+    return {
+      ...event,
+      arguments: {},
+      meta: undefined,
+    };
+  }
+
+  if (event.kind === 'tool_progress') {
+    return {
+      ...event,
+      meta: undefined,
+    };
+  }
+
+  if (event.kind === 'tool_result') {
+    return {
+      ...event,
+      content: undefined,
+      meta: undefined,
+    };
+  }
+
+  return event;
+};
+
+const sanitizeSseEventForRole = (event: SSEvent, role: 'admin' | 'member'): SSEvent => {
+  if (role === 'admin') {
+    return event;
+  }
+
+  if (event.event === 'tool_start') {
+    return {
+      ...event,
+      data: {
+        ...(typeof event.data === 'object' && event.data ? event.data as Record<string, unknown> : {}),
+        arguments: undefined,
+        meta: undefined,
+      },
+    };
+  }
+
+  if (event.event === 'tool_progress') {
+    return {
+      ...event,
+      data: {
+        ...(typeof event.data === 'object' && event.data ? event.data as Record<string, unknown> : {}),
+        meta: undefined,
+      },
+    };
+  }
+
+  if (event.event === 'tool_result') {
+    return {
+      ...event,
+      data: {
+        ...(typeof event.data === 'object' && event.data ? event.data as Record<string, unknown> : {}),
+        content: undefined,
+        meta: undefined,
+      },
+    };
+  }
+
+  return event;
+};
 
 const normalizeActiveSkills = (input: string[] | undefined, knownSkills: Set<string>) => {
   const seen = new Set<string>();
@@ -94,11 +175,14 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   const skillRegistry = new SkillRegistry(config);
   await skillRegistry.load();
   const knownSkillNames = new Set(skillRegistry.list().map((skill) => skill.name));
-  const defaultSessionActiveSkills = normalizeActiveSkills(config.DEFAULT_SESSION_ACTIVE_SKILLS, knownSkillNames);
 
   const messageStore = new MessageStore(config);
   const streamHub = new StreamHub();
   const authService = new AuthService(db, config);
+  const systemSettingsService = new SystemSettingsService(db, config);
+  systemSettingsService.initialize();
+  const userSettingsService = new UserSettingsService(db);
+  const adminService = new AdminService(db);
   const sessionService = new SessionService(db, config);
   const fileService = new FileService(db, config);
   const runnerManager = new RunnerManager(config, fileService);
@@ -116,7 +200,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     runnerManager,
     sessionService,
     assistantToolService,
-    config.ENABLE_ASSISTANT_TOOLS,
+    config,
     openAIHarness,
   );
 
@@ -137,7 +221,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   app.decorate('config', config);
 
   await app.register(cors, {
-    origin: config.WEB_ORIGIN,
+    origin: true,
     credentials: true,
   });
   await app.register(multipart, {
@@ -150,8 +234,12 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     secret: config.JWT_SECRET,
   });
 
-  app.decorate('authenticate', async (request) => {
+  app.decorate('authenticate', async (request, reply) => {
     await request.jwtVerify();
+    const user = authService.getUserById(request.user.sub);
+    if (!user || user.status === 'disabled') {
+      return reply.code(401).send({ message: '用户不存在或已被禁用' });
+    }
   });
 
   app.addHook('onClose', async () => {
@@ -163,10 +251,31 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     timestamp: new Date().toISOString(),
   }));
 
+  app.get('/api/system/status', async () => systemSettingsService.getStatus());
+
+  app.post('/api/system/bootstrap-admin', async (request, reply) => {
+    try {
+      const input = bootstrapAdminSchema.parse(request.body);
+      const user = await authService.bootstrapAdmin(input);
+      const token = await reply.jwtSign(
+        { sub: user.id, username: user.username, role: user.role },
+        { expiresIn: config.JWT_EXPIRES_IN },
+      );
+      const payload: AuthResponse = { user, token };
+      return payload;
+    } catch (error) {
+      const message = errorMessage(error, '初始化管理员失败');
+      const status = /已存在管理员/.test(message) ? 409 : errorStatus(error);
+      return reply.code(status).send({ message });
+    }
+  });
+
   app.post('/api/auth/register', async (request, reply) => {
     try {
-      const input = registerSchema.parse(request.body);
-      const user = await authService.register(input);
+      const input = registerRequestSchema.parse(request.body);
+      const user = await authService.registerMember(input, {
+        requireInviteCode: systemSettingsService.getSettings().registrationRequiresInviteCode,
+      });
       const token = await reply.jwtSign(
         { sub: user.id, username: user.username, role: user.role },
         { expiresIn: config.JWT_EXPIRES_IN },
@@ -193,6 +302,102 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     }
   });
 
+  const ensureAdmin = async (request: typeof app extends { } ? any : never, reply: typeof app extends { } ? any : never) => {
+    const user = authService.getUserById(request.user.sub);
+    if (!user || user.status === 'disabled') {
+      return reply.code(401).send({ message: '用户不存在或已被禁用' });
+    }
+    if (user.role !== 'admin') {
+      return reply.code(403).send({ message: '仅管理员可访问' });
+    }
+    return undefined;
+  };
+
+  app.get('/api/me/settings', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      return userSettingsService.get(request.user.sub);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取用户设置失败') });
+    }
+  });
+
+  app.patch('/api/me/settings', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      const input = userPreferenceSettingsSchema.parse(request.body);
+      return userSettingsService.update(request.user.sub, input);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '更新用户设置失败') });
+    }
+  });
+
+  app.get('/api/admin/system-settings', { preHandler: [app.authenticate, ensureAdmin] }, async (_request, reply) => {
+    try {
+      return systemSettingsService.getSettings();
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取系统配置失败') });
+    }
+  });
+
+  app.patch('/api/admin/system-settings', { preHandler: [app.authenticate, ensureAdmin] }, async (request, reply) => {
+    try {
+      const input = systemSettingsPatchSchema.parse(request.body ?? {});
+      const payload = {
+        ...input,
+        defaultSessionActiveSkills: typeof input.defaultSessionActiveSkills === 'undefined'
+          ? undefined
+          : normalizeActiveSkills(input.defaultSessionActiveSkills, knownSkillNames),
+      };
+      return systemSettingsService.updateSettings(payload, request.user.sub);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '更新系统配置失败') });
+    }
+  });
+
+  app.get('/api/admin/users', { preHandler: [app.authenticate, ensureAdmin] }, async (_request, reply) => {
+    try {
+      return adminService.listUsers();
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取用户列表失败') });
+    }
+  });
+
+  app.patch('/api/admin/users/:id', { preHandler: [app.authenticate, ensureAdmin] }, async (request, reply) => {
+    try {
+      const params = z.object({ id: z.string().min(1) }).parse(request.params);
+      const input = adminUserUpdateSchema.parse(request.body ?? {});
+      return adminService.updateUser(params.id, input);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '更新用户失败') });
+    }
+  });
+
+  app.get('/api/admin/invite-codes', { preHandler: [app.authenticate, ensureAdmin] }, async (_request, reply) => {
+    try {
+      return adminService.listInviteCodes();
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取邀请码失败') });
+    }
+  });
+
+  app.post('/api/admin/invite-codes', { preHandler: [app.authenticate, ensureAdmin] }, async (request, reply) => {
+    try {
+      const input = adminInviteCreateSchema.parse(request.body ?? {});
+      return adminService.createInviteCodes(input.count, request.user.sub);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '创建邀请码失败') });
+    }
+  });
+
+  app.delete('/api/admin/invite-codes/:code', { preHandler: [app.authenticate, ensureAdmin] }, async (request, reply) => {
+    try {
+      const params = z.object({ code: z.string().min(1) }).parse(request.params);
+      adminService.deleteInviteCode(params.code);
+      return reply.code(204).send();
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '删除邀请码失败') });
+    }
+  });
+
   app.get('/api/sessions', { preHandler: app.authenticate }, async (request, reply) => {
     try {
       return await sessionService.list(request.user.sub);
@@ -204,6 +409,10 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   app.post('/api/sessions', { preHandler: app.authenticate }, async (request, reply) => {
     try {
       const input = createSessionSchema.parse(request.body ?? {});
+      const defaultSessionActiveSkills = normalizeActiveSkills(
+        systemSettingsService.getSettings().defaultSessionActiveSkills,
+        knownSkillNames,
+      );
       const activeSkills = normalizeActiveSkills(input.activeSkills ?? defaultSessionActiveSkills, knownSkillNames);
       return await sessionService.create(request.user.sub, input.title, activeSkills);
     } catch (error) {
@@ -236,7 +445,8 @@ export const createApp = async (options: CreateAppOptions = {}) => {
         limit: z.coerce.number().int().positive().max(500).optional(),
       }).parse(request.query ?? {});
       sessionService.requireOwned(request.user.sub, params.id);
-      return await messageStore.readEvents(request.user.sub, params.id, query);
+      const events = await messageStore.readEvents(request.user.sub, params.id, query);
+      return events.map((event) => sanitizeStoredEventForRole(event, request.user.role));
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取消息失败') });
     }
@@ -286,7 +496,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     reply.raw.write('retry: 3000\n\n');
 
     const unsubscribe = streamHub.subscribe(params.id, (event) => {
-      reply.raw.write(formatSse(event));
+      reply.raw.write(formatSse(sanitizeSseEventForRole(event, request.user.role)));
     });
 
     const heartbeat = setInterval(() => {

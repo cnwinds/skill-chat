@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { nanoid } from 'nanoid';
 import type {
   FileRecord,
@@ -18,6 +17,7 @@ import { RunnerManager } from '../../core/runner/runner-manager.js';
 import { SessionService } from '../sessions/session-service.js';
 import { AssistantToolService, type ExecutedAssistantToolResult } from '../tools/assistant-tool-service.js';
 import type { OpenAIHarness } from './openai-harness.js';
+import type { AppConfig } from '../../config/env.js';
 
 type UserContext = {
   id: string;
@@ -27,7 +27,6 @@ type UserContext = {
 
 const createEventId = () => `evt_${nanoid()}`;
 const createToolCallId = () => `tool_${nanoid()}`;
-const INTERNAL_READ_PREVIEW_CHARS = 6_000;
 const MODEL_TOOL_CONTEXT_CHARS = 3_500;
 const explicitUrlPattern = /https?:\/\/[^\s)]+/i;
 const zhangXuefengResearchPattern = /(最新|最近|当前|今年|明年|数据|排名|分数线|录取|保研|政策|就业|薪资|工资|薪酬|中位数|行业|岗位|招聘|专业|学校|院校|大学|高考|志愿|选科|考研|报考|升学)/;
@@ -55,7 +54,7 @@ export class ChatService {
     private readonly runnerManager: RunnerManager,
     private readonly sessionService: SessionService,
     private readonly assistantToolService: AssistantToolService,
-    private readonly assistantToolsEnabled: boolean,
+    private readonly config: AppConfig,
     private readonly openAIHarness?: OpenAIHarness,
   ) {}
 
@@ -200,7 +199,6 @@ export class ChatService {
         }
 
         const skill = this.skillRegistry.get(decision.selectedSkills[0]);
-        await this.emitSkillContextReads(user.id, sessionId, skill);
         if (skill.runtime === 'chat') {
           this.publishThinking(sessionId, `正在切换到 ${skill.name} 视角`);
           await this.replyWithAssistantTools(user.id, sessionId, content, history, files, skill);
@@ -336,7 +334,7 @@ export class ChatService {
     files: ReturnType<FileService['getFileContext']>,
     skill?: ReturnType<SkillRegistry['get']>,
   ) {
-    if (!this.assistantToolsEnabled) {
+    if (!this.config.ENABLE_ASSISTANT_TOOLS) {
       return [] as ExecutedAssistantToolResult[];
     }
 
@@ -431,97 +429,6 @@ export class ChatService {
     }
 
     return zhangXuefengResearchPattern.test(content);
-  }
-
-  private async emitSkillContextReads(
-    userId: string,
-    sessionId: string,
-    skill: ReturnType<SkillRegistry['get']>,
-  ) {
-    const skillFolder = path.basename(skill.directory);
-    await this.emitDebugReadToolResult(userId, sessionId, {
-      tool: 'read_skill_file',
-      arguments: {
-        skill: skill.name,
-        fileName: 'SKILL.md',
-        relativePath: `${skillFolder}/SKILL.md`,
-      },
-      summary: `已读取 ${skill.name} 的 SKILL.md`,
-      content: [
-        `来源：技能定义`,
-        `技能：${skill.name}`,
-        `路径：${skillFolder}/SKILL.md`,
-        '内容：',
-        this.truncateDebugContent(skill.markdown),
-      ].join('\n\n'),
-    });
-
-    for (const reference of skill.referencesContent) {
-      await this.emitDebugReadToolResult(userId, sessionId, {
-        tool: 'read_reference_file',
-        arguments: {
-          skill: skill.name,
-          fileName: reference.name,
-          relativePath: `${skillFolder}/references/${reference.name}`,
-        },
-        summary: `已读取参考文件 ${reference.name}`,
-        content: [
-          `来源：技能参考文件`,
-          `技能：${skill.name}`,
-          `路径：${skillFolder}/references/${reference.name}`,
-          '内容：',
-          this.truncateDebugContent(reference.content),
-        ].join('\n\n'),
-      });
-    }
-  }
-
-  private truncateDebugContent(content: string) {
-    if (content.length <= INTERNAL_READ_PREVIEW_CHARS) {
-      return content;
-    }
-
-    return `${content.slice(0, INTERNAL_READ_PREVIEW_CHARS)}\n\n[内容过长，已截断显示]`;
-  }
-
-  private async emitDebugReadToolResult(
-    userId: string,
-    sessionId: string,
-    result: ExecutedAssistantToolResult,
-  ) {
-    const callId = createToolCallId();
-    const toolCallEvent: ToolCallEvent = {
-      id: createEventId(),
-      sessionId,
-      kind: 'tool_call',
-      callId,
-      skill: result.tool,
-      arguments: result.arguments,
-      createdAt: now(),
-    };
-    await this.emitStored(userId, sessionId, toolCallEvent);
-    this.publish(sessionId, {
-      id: toolCallEvent.id,
-      event: 'tool_start',
-      data: {
-        callId,
-        skill: {
-          name: result.tool,
-          status: 'running',
-        },
-        arguments: result.arguments,
-      },
-    });
-    await this.emitStored(userId, sessionId, {
-      id: createEventId(),
-      sessionId,
-      kind: 'tool_result',
-      callId,
-      skill: result.tool,
-      message: result.summary,
-      content: result.content,
-      createdAt: now(),
-    });
   }
 
   private isParallelAssistantTool(toolCall: PlannedAssistantToolCall) {

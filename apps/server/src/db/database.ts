@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE NOT NULL,
   password TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'member' CHECK(role IN ('admin', 'member')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -18,6 +19,21 @@ CREATE TABLE IF NOT EXISTS invite_codes (
   used_by TEXT REFERENCES users(id),
   used_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by TEXT REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, key)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -65,6 +81,10 @@ export const createDatabase = (config: AppConfig): AppDatabase => {
 
 export const migrateDatabase = (db: AppDatabase) => {
   db.exec(schemaSql);
+  const userColumns = db.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
+  if (!userColumns.some((column) => column.name === 'status')) {
+    db.exec("ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'disabled'))");
+  }
   const sessionColumns = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
   if (!sessionColumns.some((column) => column.name === 'active_skills')) {
     db.exec("ALTER TABLE sessions ADD COLUMN active_skills TEXT NOT NULL DEFAULT '[]'");

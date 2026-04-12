@@ -60,13 +60,21 @@ const zhangXuefengSkill = {
   entrypoint: '',
   runtime: 'chat' as const,
   timeoutSec: 120,
-  references: ['majors.md'],
+  references: ['style-guide.md', 'core-framework.md', 'boundaries-and-sources.md'],
   directory: '/workspace/qizhi/skills/zhangxuefeng-perspective',
-  markdown: '# 张雪峰风格\n\n先看就业，再看城市。',
+  markdown: '# 张雪峰 Perspective\n\n先读本文件，再按需读取 style-guide、core-framework、boundaries-and-sources。',
   referencesContent: [
     {
-      name: 'majors.md',
-      content: '人工智能、口腔医学、临床医学',
+      name: 'style-guide.md',
+      content: '直接用“我”回答，短句、高密度、东北大哥语气。',
+    },
+    {
+      name: 'core-framework.md',
+      content: '先看中位数，再看就业和城市。',
+    },
+    {
+      name: 'boundaries-and-sources.md',
+      content: '张雪峰已于2026年3月24日去世，回答时注意事实边界。',
     },
   ],
 };
@@ -182,8 +190,9 @@ describe('OpenAIHarness', () => {
 
     const firstRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(String(firstRequest.instructions)).toContain('skills/zhangxuefeng-perspective/SKILL.md');
-    expect(String(firstRequest.instructions)).toContain('<skill>');
-    expect(String(firstRequest.instructions)).toContain('<name>zhangxuefeng-perspective</name>');
+    expect(String(firstRequest.instructions)).toContain('## Explicitly Activated Skills');
+    expect(String(firstRequest.instructions)).toContain('- zhangxuefeng-perspective (file: skills/zhangxuefeng-perspective/SKILL.md)');
+    expect(String(firstRequest.instructions)).not.toContain('# 张雪峰风格');
 
     const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(secondRequest.input).toEqual(expect.arrayContaining([
@@ -416,6 +425,331 @@ describe('OpenAIHarness', () => {
       expect.objectContaining({
         type: 'function_call_output',
         call_id: 'call_read_skill',
+      }),
+    ]));
+  });
+
+  it('supports progressive skill reads from SKILL.md into top-level references', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_item.done',
+          data: {
+            type: 'response.output_item.done',
+            item: {
+              id: 'fc_read_skill',
+              type: 'function_call',
+              call_id: 'call_read_skill',
+              name: 'read_workspace_path_slice',
+              arguments: JSON.stringify({
+                root: 'workspace',
+                path: 'skills/zhangxuefeng-perspective/SKILL.md',
+                startLine: 1,
+                endLine: 80,
+              }),
+            },
+          },
+        },
+      ]))
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_item.done',
+          data: {
+            type: 'response.output_item.done',
+            item: {
+              id: 'fc_read_reference',
+              type: 'function_call',
+              call_id: 'call_read_reference',
+              name: 'read_workspace_path_slice',
+              arguments: JSON.stringify({
+                root: 'workspace',
+                path: 'skills/zhangxuefeng-perspective/references/core-framework.md',
+                startLine: 1,
+                endLine: 80,
+              }),
+            },
+          },
+        },
+      ]))
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '我先看了 skill，再补充读取了专业参考资料。',
+          },
+        },
+      ]));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const execute = vi.fn()
+      .mockResolvedValueOnce({
+        tool: 'read_workspace_path_slice',
+        arguments: {
+          root: 'workspace',
+          path: 'skills/zhangxuefeng-perspective/SKILL.md',
+        },
+        summary: '已读取 skill 定义',
+        content: '先读本文件，再按需读取 references/core-framework.md。',
+        context: '先读本文件，再按需读取 references/core-framework.md。',
+      })
+      .mockResolvedValueOnce({
+        tool: 'read_workspace_path_slice',
+        arguments: {
+          root: 'workspace',
+          path: 'skills/zhangxuefeng-perspective/references/core-framework.md',
+        },
+        summary: '已读取决策框架参考',
+        content: '先看中位数，再看就业和城市。',
+        context: '先看中位数，再看就业和城市。',
+      });
+
+    const harness = new OpenAIHarness(
+      createConfig(),
+      {
+        execute,
+      } as never,
+      {} as never,
+      {
+        listRegistered: vi.fn().mockReturnValue([zhangXuefengSkill]),
+        get: vi.fn(),
+      } as never,
+    );
+
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '扮演张雪峰，帮我分析人工智能专业值不值得报',
+      history: [],
+      files: [],
+      activatedSkills: [zhangXuefengSkill],
+    });
+
+    expect(result.finalText).toContain('补充读取了专业参考资料');
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      call: expect.objectContaining({
+        tool: 'read_workspace_path_slice',
+        arguments: expect.objectContaining({
+          path: 'skills/zhangxuefeng-perspective/SKILL.md',
+        }),
+      }),
+    }));
+    expect(execute).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      call: expect.objectContaining({
+        tool: 'read_workspace_path_slice',
+        arguments: expect.objectContaining({
+          path: 'skills/zhangxuefeng-perspective/references/core-framework.md',
+        }),
+      }),
+    }));
+
+    const firstRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(String(firstRequest.instructions)).not.toContain('先看中位数，再看就业和城市。');
+
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(secondRequest.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'function_call_output',
+        call_id: 'call_read_skill',
+      }),
+    ]));
+
+    const thirdRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(thirdRequest.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'function_call_output',
+        call_id: 'call_read_reference',
+      }),
+    ]));
+  });
+
+  it('supports progressive reads from SKILL.md to top-level references and then deep research files', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_item.done',
+          data: {
+            type: 'response.output_item.done',
+            item: {
+              id: 'fc_read_skill',
+              type: 'function_call',
+              call_id: 'call_read_skill',
+              name: 'read_workspace_path_slice',
+              arguments: JSON.stringify({
+                root: 'workspace',
+                path: 'skills/zhangxuefeng-perspective/SKILL.md',
+                startLine: 1,
+                endLine: 120,
+              }),
+            },
+          },
+        },
+      ]))
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_item.done',
+          data: {
+            type: 'response.output_item.done',
+            item: {
+              id: 'fc_read_boundary_ref',
+              type: 'function_call',
+              call_id: 'call_read_boundary_ref',
+              name: 'read_workspace_path_slice',
+              arguments: JSON.stringify({
+                root: 'workspace',
+                path: 'skills/zhangxuefeng-perspective/references/boundaries-and-sources.md',
+                startLine: 1,
+                endLine: 120,
+              }),
+            },
+          },
+        },
+      ]))
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_item.done',
+          data: {
+            type: 'response.output_item.done',
+            item: {
+              id: 'fc_read_research',
+              type: 'function_call',
+              call_id: 'call_read_research',
+              name: 'read_workspace_path_slice',
+              arguments: JSON.stringify({
+                root: 'workspace',
+                path: 'skills/zhangxuefeng-perspective/references/research/06-timeline.md',
+                startLine: 1,
+                endLine: 80,
+              }),
+            },
+          },
+        },
+      ]))
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '我先读了 skill 总纲，再补边界说明，最后去看时间线研究材料。',
+          },
+        },
+      ]));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const execute = vi.fn()
+      .mockResolvedValueOnce({
+        tool: 'read_workspace_path_slice',
+        arguments: {
+          root: 'workspace',
+          path: 'skills/zhangxuefeng-perspective/SKILL.md',
+          startLine: 1,
+          endLine: 120,
+        },
+        summary: '已读取 skill 总纲',
+        content: '先读本文件，再按需读取 boundaries-and-sources.md 和 research/06-timeline.md。',
+        context: '先读本文件，再按需读取 boundaries-and-sources.md 和 research/06-timeline.md。',
+      })
+      .mockResolvedValueOnce({
+        tool: 'read_workspace_path_slice',
+        arguments: {
+          root: 'workspace',
+          path: 'skills/zhangxuefeng-perspective/references/boundaries-and-sources.md',
+          startLine: 1,
+          endLine: 120,
+        },
+        summary: '已读取边界与来源说明',
+        content: '张雪峰已于2026年3月24日去世；涉及人物经历时继续查看 research/06-timeline.md。',
+        context: '张雪峰已于2026年3月24日去世；涉及人物经历时继续查看 research/06-timeline.md。',
+      })
+      .mockResolvedValueOnce({
+        tool: 'read_workspace_path_slice',
+        arguments: {
+          root: 'workspace',
+          path: 'skills/zhangxuefeng-perspective/references/research/06-timeline.md',
+          startLine: 1,
+          endLine: 80,
+        },
+        summary: '已读取研究时间线',
+        content: '1984 出生，2007 北漂，2026-03-24 去世。',
+        context: '1984 出生，2007 北漂，2026-03-24 去世。',
+      });
+
+    const harness = new OpenAIHarness(
+      createConfig(),
+      {
+        execute,
+      } as never,
+      {} as never,
+      {
+        listRegistered: vi.fn().mockReturnValue([zhangXuefengSkill]),
+        get: vi.fn(),
+      } as never,
+    );
+
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '扮演张雪峰，结合时间线背景回答',
+      history: [],
+      files: [],
+      activatedSkills: [zhangXuefengSkill],
+    });
+
+    expect(result.finalText).toContain('先读了 skill 总纲');
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      call: expect.objectContaining({
+        tool: 'read_workspace_path_slice',
+        arguments: expect.objectContaining({
+          path: 'skills/zhangxuefeng-perspective/SKILL.md',
+          startLine: 1,
+          endLine: 120,
+        }),
+      }),
+    }));
+    expect(execute).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      call: expect.objectContaining({
+        tool: 'read_workspace_path_slice',
+        arguments: expect.objectContaining({
+          path: 'skills/zhangxuefeng-perspective/references/boundaries-and-sources.md',
+          startLine: 1,
+          endLine: 120,
+        }),
+      }),
+    }));
+    expect(execute).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      call: expect.objectContaining({
+        tool: 'read_workspace_path_slice',
+        arguments: expect.objectContaining({
+          path: 'skills/zhangxuefeng-perspective/references/research/06-timeline.md',
+        }),
+      }),
+    }));
+
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(secondRequest.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'function_call_output',
+        call_id: 'call_read_skill',
+      }),
+    ]));
+
+    const thirdRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(thirdRequest.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'function_call_output',
+        call_id: 'call_read_boundary_ref',
+      }),
+    ]));
+
+    const fourthRequest = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
+    expect(fourthRequest.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'function_call_output',
+        call_id: 'call_read_research',
       }),
     ]));
   });

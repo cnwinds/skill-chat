@@ -11,11 +11,50 @@ export interface UserSummary {
   id: string;
   username: string;
   role: 'admin' | 'member';
+  status?: 'active' | 'disabled';
 }
 
 export interface AuthResponse {
   user: UserSummary;
   token: string;
+}
+
+export interface SystemStatus {
+  initialized: boolean;
+  hasAdmin: boolean;
+  registrationRequiresInviteCode: boolean;
+}
+
+export interface SystemSettings {
+  registrationRequiresInviteCode: boolean;
+  defaultSessionActiveSkills: string[];
+  enableAssistantTools: boolean;
+  webOrigin: string;
+  modelConfig: {
+    openaiModelRouter: string;
+    openaiModelPlanner: string;
+    openaiModelReply: string;
+    openaiReasoningEffortReply: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+    llmMaxOutputTokens: number;
+    toolMaxOutputTokens: number;
+  };
+}
+
+export interface UserPreferenceSettings {
+  themeMode: 'light' | 'dark';
+}
+
+export interface AdminUserSummary extends UserSummary {
+  status: 'active' | 'disabled';
+  createdAt: string;
+}
+
+export interface InviteCodeSummary {
+  code: string;
+  createdBy: string | null;
+  usedBy: string | null;
+  usedAt: string | null;
+  createdAt: string;
 }
 
 export interface SessionSummary {

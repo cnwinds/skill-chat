@@ -50,25 +50,26 @@ const formatSkillsSection = (skills: RegisteredSkill[]) => {
   }
 
   lines.push('### How to use skills');
-  lines.push('- 如果用户点名某个 skill，或任务明显匹配某个 skill 的描述，就在本轮使用它。');
-  lines.push('- 使用 skill 时，先读取对应的 `SKILL.md`，只读取完成当前任务所需的部分。');
-  lines.push('- 如果 `SKILL.md` 提到了 `references/`、脚本、模板或其他文件，再按需逐步读取，不要一次性加载全部参考资料。');
-  lines.push('- chat 类型 skill 通过读取其说明和参考资料来获得角色、语气和回答工作流。');
-  lines.push('- python/node 类型 skill 如果需要生成 PDF/XLSX/DOCX 等产物，可以在理解 `SKILL.md` 后调用 `run_skill`。');
-  lines.push('- 调用文档类 skill（例如 pdf/docx）时，必须把最终成稿内容放进 `run_skill.arguments`，优先使用 `title`、`summary`、`documentMarkdown` 等字段；不要把“请生成”“文档要求”“输出约束”这类任务说明直接当正文传给 skill。');
-  lines.push('- 不要把 skill 当成自动预载上下文；先确认需要，再读取。');
+  lines.push('- Discovery: 上面的列表就是当前会话可用的 skills；skill 正文在对应目录的 `SKILL.md` 中。');
+  lines.push('- Trigger rules: 如果用户点名某个 skill，或任务明显匹配某个 skill 的描述，就在本轮使用它。多个 skill 同时命中时，使用能覆盖任务的最小集合。除非用户再次提及，否则不要把 skill 自动延续到后续轮次。');
+  lines.push('- Missing/blocked: 如果用户点名的 skill 不在列表里，或文件无法读取，简短说明后继续采用最佳替代方案。');
+  lines.push('- How to use a skill (progressive disclosure):');
+  lines.push('  1. 决定使用某个 skill 后，先读取它的 `SKILL.md`，只读取足够完成当前任务的部分。');
+  lines.push('  2. 如果 `SKILL.md` 提到了相对路径，例如 `scripts/foo.py` 或 `references/bar.md`，先按 skill 目录中的相对路径解析，再视需要继续读取。');
+  lines.push('  3. 如果 `SKILL.md` 指向 `references/` 等额外目录，只读取当前请求需要的具体文件，不要整包加载。');
+  lines.push('  4. 如果 skill 提供了 `scripts/`，优先复用或修改脚本，而不是把大段代码手写一遍。');
+  lines.push('  5. 如果 skill 提供了 `assets/` 或模板，优先复用这些资源，不要重复造轮子。');
+  lines.push('- Coordination and sequencing: 如果多个 skill 都适用，先选最小必要集合，并在内部按依赖顺序使用。');
+  lines.push('- Context hygiene: 保持上下文精简；长内容优先摘要；只在需要时加载额外文件；避免深层级 reference 追踪；如果有多种变体或实现路线，只读取与当前请求直接相关的那一份 reference。');
+  lines.push('- Safety and fallback: 如果某个 skill 说明不清、资源缺失或无法顺畅套用，说明问题后切换到最合适的后备方案。');
 
   return lines.join('\n');
 };
 
-const serializeActivatedSkill = (skill: RegisteredSkill) => {
+const serializeActivatedSkillSelection = (skill: RegisteredSkill) => {
   const relativeSkillPath = `${skill.directory.replace(/\\/g, '/').replace(/^.*\/skills\//, 'skills/')}/SKILL.md`;
   return [
-    '<skill>',
-    `<name>${skill.name}</name>`,
-    `<path>${relativeSkillPath}</path>`,
-    skill.rawMarkdown ?? skill.markdown,
-    '</skill>',
+    `- ${skill.name} (file: ${relativeSkillPath})`,
   ].join('\n');
 };
 
@@ -79,8 +80,9 @@ const formatExplicitActivatedSkillsSection = (skills: RegisteredSkill[]) => {
 
   return [
     '## Explicitly Activated Skills',
-    '以下 skill 已在会话启动前被显式激活。它们等价于用户在本轮前已经明确选择了这些 skill，你应优先遵循这些 skill 的指令。',
-    ...skills.map(serializeActivatedSkill),
+    '以下 skill 已在会话启动前被显式激活。它们等价于用户在本轮前已经明确选择了这些 skill，你应优先使用它们。',
+    '不要把它们当成已预载上下文；如果需要具体指令，仍然先读取对应的 `SKILL.md`，再按需读取 `references/`。',
+    ...skills.map(serializeActivatedSkillSelection),
   ].join('\n\n');
 };
 
@@ -101,6 +103,7 @@ export const buildOpenAIHarnessInstructions = (args: {
     '- 需要最新事实、新闻、政策、排名、就业数据、薪资数据或官网信息时，优先使用 `web_search`。',
     '- 用户给出明确网页 URL，或你需要抓取一个确定页面时，再使用 `web_fetch`。',
     '- 访问项目文件、skill 文件、参考资料、配置或脚本时，优先 `list_workspace_paths` / `read_workspace_path_slice`，先缩小范围再读片段。',
+    '- 对长 `SKILL.md` 做分段读取时，先根据已读内容判断是否还缺关键规则；如果缺，就继续读取下一段，再开始回答或读取更深层参考文件。',
     '- 访问上传文件时，优先 `list_files` / `read_file`。如果文件不明确，先列出候选，再读取。',
     '- 只有在确实需要生成会话产物时才调用 `write_artifact_file` 或 `run_skill`。',
     '- 生成 PDF/DOCX 等文档时，先在脑中完成内容组织，再调用 `run_skill`。`prompt` 应该只是简短执行说明，最终正文放到 `arguments.documentMarkdown`，标题放到 `arguments.title`。',

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../../config/env.js';
-import { AssistantToolService } from './assistant-tool-service.js';
+import { AssistantToolService, networkResolver } from './assistant-tool-service.js';
 
 const createConfig = (dataRoot: string): AppConfig => ({
   NODE_ENV: 'test',
@@ -574,5 +574,96 @@ describe('AssistantToolService', () => {
         },
       },
     })).rejects.toThrow('访问网页超时');
+  });
+
+  it('retries web fetch with ipv4-first when dual-stack connect timeout occurs', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed', {
+        cause: {
+          code: 'UND_ERR_CONNECT_TIMEOUT',
+        },
+      }))
+      .mockResolvedValueOnce(new Response('<html><title>上海政法学院</title><body>分数线信息</body></html>', {
+        status: 200,
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+        },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(networkResolver, 'lookup').mockResolvedValue([
+      { address: '2001:db8::1', family: 6 },
+      { address: '203.0.113.8', family: 4 },
+    ] as unknown as Awaited<ReturnType<typeof networkResolver.lookup>>);
+    const getDefaultResultOrderSpy = vi.spyOn(networkResolver, 'getDefaultResultOrder').mockReturnValue('verbatim');
+    const setDefaultResultOrderSpy = vi.spyOn(networkResolver, 'setDefaultResultOrder').mockImplementation(() => {});
+
+    const service = new AssistantToolService(
+      createConfig('/tmp/skillchat-tools'),
+      {
+        getFileContext: () => [],
+        recordGeneratedFile: vi.fn(),
+      } as never,
+      {
+        get: vi.fn(),
+      } as never,
+    );
+
+    const result = await service.execute({
+      userId: 'u1',
+      sessionId: 's1',
+      call: {
+        tool: 'web_fetch',
+        arguments: {
+          url: 'https://xxgk.shupl.edu.cn/2024/0918/c4032a133663/page.htm',
+        },
+      },
+    });
+
+    expect(result.summary).toContain('xxgk.shupl.edu.cn');
+    expect(result.content).toContain('上海政法学院');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(getDefaultResultOrderSpy).toHaveBeenCalledTimes(1);
+    expect(setDefaultResultOrderSpy).toHaveBeenNthCalledWith(1, 'ipv4first');
+    expect(setDefaultResultOrderSpy).toHaveBeenNthCalledWith(2, 'verbatim');
+  });
+
+  it('does not retry web fetch with ipv4-first when the host is not dual-stack', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('fetch failed', {
+      cause: {
+        code: 'UND_ERR_CONNECT_TIMEOUT',
+      },
+    }));
+
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(networkResolver, 'lookup').mockResolvedValue([
+      { address: '2001:db8::1', family: 6 },
+    ] as unknown as Awaited<ReturnType<typeof networkResolver.lookup>>);
+    const setDefaultResultOrderSpy = vi.spyOn(networkResolver, 'setDefaultResultOrder').mockImplementation(() => {});
+
+    const service = new AssistantToolService(
+      createConfig('/tmp/skillchat-tools'),
+      {
+        getFileContext: () => [],
+        recordGeneratedFile: vi.fn(),
+      } as never,
+      {
+        get: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.execute({
+      userId: 'u1',
+      sessionId: 's1',
+      call: {
+        tool: 'web_fetch',
+        arguments: {
+          url: 'https://example.com/page',
+        },
+      },
+    })).rejects.toThrow('访问网页超时');
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(setDefaultResultOrderSpy).not.toHaveBeenCalled();
   });
 });

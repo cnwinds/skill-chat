@@ -8,6 +8,76 @@ type Props = {
   event: StoredEvent | ToolTraceDisplayEvent | { kind: 'pending_text'; content: string };
   onDownload?: (file: FileRecord) => void;
   downloading?: boolean;
+  canExpandToolTrace?: boolean;
+};
+
+const formatSkillPathLabel = (path: string) => {
+  const normalizedPath = path.replace(/\\/g, '/');
+  const skillMatch = normalizedPath.match(/^skills\/([^/]+)\/SKILL\.md$/i);
+  if (skillMatch) {
+    return `${skillMatch[1]} / SKILL.md`;
+  }
+
+  const referenceMatch = normalizedPath.match(/^skills\/([^/]+)\/references\/(.+)$/i);
+  if (referenceMatch) {
+    return `${referenceMatch[1]} / references/${referenceMatch[2]}`;
+  }
+
+  return normalizedPath;
+};
+
+const formatToolName = (tool: string, args?: Record<string, unknown>) => {
+  if (tool !== 'read_workspace_path_slice') {
+    return tool;
+  }
+
+  const path = typeof args?.path === 'string' ? args.path : '';
+  if (/\/SKILL\.md$/i.test(path)) {
+    return '读取 Skill';
+  }
+  if (/\/references\//i.test(path)) {
+    return '读取参考资料';
+  }
+  return '读取工作区文件';
+};
+
+const formatToolMessage = (tool: string, message: string, args?: Record<string, unknown>) => {
+  if (tool !== 'read_workspace_path_slice') {
+    return message;
+  }
+
+  const path = typeof args?.path === 'string' ? args.path : '';
+  if (!path) {
+    return message;
+  }
+
+  const label = formatSkillPathLabel(path);
+  if (/\/SKILL\.md$/i.test(path)) {
+    return `已读取 Skill 定义：${label}`;
+  }
+  if (/\/references\//i.test(path)) {
+    return `已读取参考资料：${label}`;
+  }
+  if (message.startsWith('已读取')) {
+    return `已读取工作区文件：${label}`;
+  }
+  return message;
+};
+
+const formatToolArguments = (tool: string, args?: Record<string, unknown>) => {
+  if (!args) {
+    return '';
+  }
+
+  if (tool !== 'read_workspace_path_slice') {
+    return JSON.stringify(args, null, 2);
+  }
+
+  const formattedArgs = { ...args };
+  if (typeof formattedArgs.path === 'string') {
+    formattedArgs.path = formatSkillPathLabel(formattedArgs.path);
+  }
+  return JSON.stringify(formattedArgs, null, 2);
 };
 
 const toolStatusLabel: Record<ToolTraceDisplayEvent['status'], string> = {
@@ -63,7 +133,7 @@ const ThinkingBubble = ({ createdAt, content }: { createdAt: string; content: st
   );
 };
 
-export const MessageItem = ({ event, onDownload, downloading = false }: Props) => {
+export const MessageItem = ({ event, onDownload, downloading = false, canExpandToolTrace = true }: Props) => {
   if (event.kind === 'pending_text') {
     return (
       <article className="message-row assistant">
@@ -89,21 +159,50 @@ export const MessageItem = ({ event, onDownload, downloading = false }: Props) =
   }
 
   if (event.kind === 'tool_trace') {
+    const displayTool = formatToolName(event.tool, event.arguments);
+    const displayMessage = formatToolMessage(event.tool, event.message, event.arguments);
+    const displayArguments = formatToolArguments(event.tool, event.arguments);
+    const hasDetails = Boolean(
+      (event.arguments && Object.keys(event.arguments).length > 0) ||
+      event.resultContent ||
+      (typeof event.percent === 'number' && event.status === 'running'),
+    );
+
+    const summaryContent = (
+      <div className="tool-trace-summary">
+        <div className="tool-trace-main">
+          <strong>{displayTool}</strong>
+          <span className={cn('tool-trace-badge', `is-${event.status}`)}>{toolStatusLabel[event.status]}</span>
+        </div>
+        <div className="tool-trace-message">{displayMessage}</div>
+      </div>
+    );
+
+    if (!canExpandToolTrace || !hasDetails) {
+      return (
+        <article className={cn('tool-trace-card', 'is-static', `is-${event.status}`)}>
+          <div className="tool-trace-card-static">
+            {summaryContent}
+          </div>
+        </article>
+      );
+    }
+
     return (
       <article className={cn('tool-trace-card', `is-${event.status}`)}>
         <details>
           <summary className="tool-trace-summary">
             <div className="tool-trace-main">
-              <strong>{event.tool}</strong>
+              <strong>{displayTool}</strong>
               <span className={cn('tool-trace-badge', `is-${event.status}`)}>{toolStatusLabel[event.status]}</span>
             </div>
-            <div className="tool-trace-message">{event.message}</div>
+            <div className="tool-trace-message">{displayMessage}</div>
           </summary>
           <div className="tool-trace-body">
             {event.arguments && Object.keys(event.arguments).length > 0 ? (
               <div className="tool-trace-section">
                 <div className="tool-trace-section-title">参数</div>
-                <pre className="status-pre compact">{JSON.stringify(event.arguments, null, 2)}</pre>
+                <pre className="status-pre compact">{displayArguments}</pre>
               </div>
             ) : null}
             {event.resultContent ? (

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ChatService } from './chat-service.js';
 import type { ExecutedAssistantToolResult } from '../tools/assistant-tool-service.js';
+import type { AppConfig } from '../../config/env.js';
 
 const createDeferred = <T>() => {
   let resolve!: (value: T) => void;
@@ -27,6 +28,39 @@ const createToolResult = (tool: string, content: string): ExecutedAssistantToolR
   arguments: {},
   summary: `${tool} done`,
   content,
+});
+
+const testConfig = (): AppConfig => ({
+  NODE_ENV: 'test',
+  PORT: 3000,
+  WEB_ORIGIN: 'http://localhost:5173',
+  DATA_ROOT: '/tmp/skillchat-data',
+  SKILLS_ROOT: '/tmp/skillchat-data/skills',
+  DB_PATH: '/tmp/skillchat-data/skillchat.sqlite',
+  CWD: '/workspace/qizhi',
+  INLINE_JOBS: true,
+  JWT_SECRET: 'test-secret',
+  JWT_EXPIRES_IN: '7d',
+  DEFAULT_SESSION_ACTIVE_SKILLS: [],
+  OPENAI_BASE_URL: 'http://example.com/v1',
+  OPENAI_API_KEY: '',
+  OPENAI_MODEL_ROUTER: 'gpt-4o-mini',
+  OPENAI_MODEL_PLANNER: 'gpt-4o-mini',
+  OPENAI_MODEL_REPLY: 'gpt-5.4',
+  OPENAI_REASONING_EFFORT_REPLY: 'high',
+  LLM_MAX_OUTPUT_TOKENS: 4096,
+  TOOL_MAX_OUTPUT_TOKENS: 3072,
+  ANTHROPIC_BASE_URL: 'http://example.com',
+  ANTHROPIC_AUTH_TOKEN: '',
+  ANTHROPIC_API_KEY: '',
+  ANTHROPIC_MODEL_ROUTER: 'claude-sonnet-4-5',
+  ANTHROPIC_MODEL_PLANNER: 'claude-sonnet-4-5',
+  ANTHROPIC_MODEL_REPLY: 'claude-sonnet-4-5',
+  ENABLE_ASSISTANT_TOOLS: true,
+  LLM_REQUEST_TIMEOUT_MS: 1000,
+  MAX_CONCURRENT_RUNS: 5,
+  RUN_TIMEOUT_MS: 120000,
+  USER_STORAGE_QUOTA_MB: 1024,
 });
 
 describe('ChatService assistant tool orchestration', () => {
@@ -95,7 +129,7 @@ describe('ChatService assistant tool orchestration', () => {
         list: vi.fn().mockReturnValue([]),
         execute,
       } as never,
-      true,
+      testConfig(),
     );
 
     const task = service.processMessage(
@@ -179,7 +213,7 @@ describe('ChatService assistant tool orchestration', () => {
         list: vi.fn().mockReturnValue([]),
         execute,
       } as never,
-      true,
+      testConfig(),
     );
 
     const task = service.processMessage(
@@ -199,7 +233,7 @@ describe('ChatService assistant tool orchestration', () => {
     await task;
   });
 
-  it('emits debug tool cards when loading skill and reference files', async () => {
+  it('does not preload skill or reference files as debug tool cards', async () => {
     const appendEvent = vi.fn().mockResolvedValue(undefined);
     const service = new ChatService(
       {
@@ -263,7 +297,7 @@ describe('ChatService assistant tool orchestration', () => {
         list: vi.fn().mockReturnValue([]),
         execute: vi.fn(),
       } as never,
-      true,
+      testConfig(),
     );
 
     await service.processMessage(
@@ -279,10 +313,10 @@ describe('ChatService assistant tool orchestration', () => {
       .map((call) => call[2])
       .filter((event) => event?.kind === 'tool_result');
 
-    expect(toolCallEvents.some((event) => event.skill === 'read_skill_file')).toBe(true);
-    expect(toolCallEvents.some((event) => event.skill === 'read_reference_file')).toBe(true);
-    expect(toolResultEvents.some((event) => event.skill === 'read_skill_file' && event.content?.includes('# skill markdown'))).toBe(true);
-    expect(toolResultEvents.some((event) => event.skill === 'read_reference_file' && event.content?.includes('reference body'))).toBe(true);
+    expect(toolCallEvents.some((event) => event.skill === 'read_skill_file')).toBe(false);
+    expect(toolCallEvents.some((event) => event.skill === 'read_reference_file')).toBe(false);
+    expect(toolResultEvents.some((event) => event.skill === 'read_skill_file')).toBe(false);
+    expect(toolResultEvents.some((event) => event.skill === 'read_reference_file')).toBe(false);
   });
 
   it('passes the active skill into assistant tool execution for skill resource tools', async () => {
@@ -354,7 +388,7 @@ describe('ChatService assistant tool orchestration', () => {
         list: vi.fn().mockReturnValue([]),
         execute,
       } as never,
-      true,
+      testConfig(),
     );
 
     await service.processMessage(
@@ -437,7 +471,7 @@ describe('ChatService assistant tool orchestration', () => {
         list: vi.fn().mockReturnValue([]),
         execute,
       } as never,
-      true,
+      testConfig(),
     );
 
     await service.processMessage(
@@ -517,7 +551,7 @@ describe('ChatService assistant tool orchestration', () => {
         list: vi.fn().mockReturnValue([]),
         execute,
       } as never,
-      true,
+      testConfig(),
     );
 
     await service.processMessage(
@@ -605,7 +639,7 @@ describe('ChatService assistant tool orchestration', () => {
         list: vi.fn().mockReturnValue([]),
         execute,
       } as never,
-      true,
+      testConfig(),
     );
 
     await service.processMessage(
@@ -687,7 +721,7 @@ describe('ChatService assistant tool orchestration', () => {
         list: vi.fn().mockReturnValue([]),
         execute: vi.fn(),
       } as never,
-      true,
+      testConfig(),
     );
 
     await expect(service.processMessage(

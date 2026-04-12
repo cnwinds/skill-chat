@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import type { FileEvent, TextMessageEvent, ThinkingEvent, ToolProgressEvent } from '@skillchat/shared';
 import { MessageItem } from './components/MessageItem';
 import type { ToolTraceDisplayEvent } from './lib/timeline';
@@ -114,22 +114,63 @@ describe('MessageItem', () => {
     expect(screen.getByText(/Example News/)).toBeInTheDocument();
   });
 
-  it('renders workspace read tool traces without special casing', () => {
+  it('renders tool trace as non-expandable summary for non-admin users', () => {
+    const event: ToolTraceDisplayEvent = {
+      id: 'tool_1',
+      kind: 'tool_trace',
+      sessionId: 's1',
+      createdAt: new Date().toISOString(),
+      tool: 'web_search',
+      arguments: { query: '金融专业就业' },
+      message: '检索到 3 条网页结果',
+      resultContent: '1. Example News\nURL: https://example.com/news',
+      status: 'success',
+    };
+
+    const { container } = render(<MessageItem event={event} canExpandToolTrace={false} />);
+    expect(within(container).getByText('web_search')).toBeInTheDocument();
+    expect(within(container).getByText('检索到 3 条网页结果')).toBeInTheDocument();
+    expect(container.querySelector('details')).toBeNull();
+    expect(within(container).queryByText('返回结果')).not.toBeInTheDocument();
+  });
+
+  it('renders skill file reads with friendlier labels', () => {
     const event: ToolTraceDisplayEvent = {
       id: 'tool_2',
       kind: 'tool_trace',
       sessionId: 's1',
       createdAt: new Date().toISOString(),
       tool: 'read_workspace_path_slice',
-      arguments: { root: 'workspace', path: 'docs/guide.md' },
-      message: '已读取 当前工作区 / docs/guide.md',
+      arguments: { root: 'workspace', path: 'skills/zhangxuefeng-perspective/SKILL.md' },
+      message: '已读取 当前工作区 / skills/zhangxuefeng-perspective/SKILL.md',
       resultContent: '# Guide\n\nLine 2',
       status: 'success',
     };
 
     render(<MessageItem event={event} />);
-    expect(screen.getByText('read_workspace_path_slice')).toBeInTheDocument();
-    expect(screen.getByText('已读取 当前工作区 / docs/guide.md')).toBeInTheDocument();
+    expect(screen.getByText('读取 Skill')).toBeInTheDocument();
+    expect(screen.getByText('已读取 Skill 定义：zhangxuefeng-perspective / SKILL.md')).toBeInTheDocument();
+    expect(screen.getAllByText(/zhangxuefeng-perspective \/ SKILL.md/)).toHaveLength(2);
     expect(screen.getByText(/Line 2/)).toBeInTheDocument();
+  });
+
+  it('renders skill reference reads with friendlier labels', () => {
+    const event: ToolTraceDisplayEvent = {
+      id: 'tool_3',
+      kind: 'tool_trace',
+      sessionId: 's1',
+      createdAt: new Date().toISOString(),
+      tool: 'read_workspace_path_slice',
+      arguments: { root: 'workspace', path: 'skills/zhangxuefeng-perspective/references/majors.md' },
+      message: '已读取 当前工作区 / skills/zhangxuefeng-perspective/references/majors.md',
+      resultContent: '人工智能、口腔医学、临床医学',
+      status: 'success',
+    };
+
+    render(<MessageItem event={event} />);
+    expect(screen.getByText('读取参考资料')).toBeInTheDocument();
+    expect(screen.getByText('已读取参考资料：zhangxuefeng-perspective / references/majors.md')).toBeInTheDocument();
+    expect(screen.getAllByText(/zhangxuefeng-perspective \/ references\/majors.md/)).toHaveLength(2);
+    expect(screen.getByText(/人工智能、口腔医学、临床医学/)).toBeInTheDocument();
   });
 });

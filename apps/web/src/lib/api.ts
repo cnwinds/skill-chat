@@ -1,10 +1,15 @@
 import type {
+  AdminUserSummary,
   AuthResponse,
   FileBucket,
   FileRecord,
+  InviteCodeSummary,
   SessionSummary,
   SkillMetadata,
   StoredEvent,
+  SystemSettings,
+  SystemStatus,
+  UserPreferenceSettings,
 } from '@skillchat/shared';
 import { useAuthStore } from '../stores/auth-store';
 
@@ -59,7 +64,15 @@ const requestJson = async <T>(input: string, init: RequestInit = {}) => {
 };
 
 export const api = {
-  register: (payload: { username: string; password: string; inviteCode: string }) =>
+  getSystemStatus: () => requestJson<SystemStatus>('/api/system/status'),
+
+  bootstrapAdmin: (payload: { username: string; password: string }) =>
+    requestJson<AuthResponse>('/api/system/bootstrap-admin', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  register: (payload: { username: string; password: string; inviteCode?: string }) =>
     requestJson<AuthResponse>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -68,6 +81,14 @@ export const api = {
   login: (payload: { username: string; password: string }) =>
     requestJson<AuthResponse>('/api/auth/login', {
       method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getMySettings: () => requestJson<UserPreferenceSettings>('/api/me/settings'),
+
+  updateMySettings: (payload: UserPreferenceSettings) =>
+    requestJson<UserPreferenceSettings>('/api/me/settings', {
+      method: 'PATCH',
       body: JSON.stringify(payload),
     }),
 
@@ -124,6 +145,35 @@ export const api = {
     }),
 
   listSkills: () => requestJson<SkillMetadata[]>('/api/skills'),
+
+  getAdminSystemSettings: () => requestJson<SystemSettings>('/api/admin/system-settings'),
+
+  updateAdminSystemSettings: (payload: Partial<SystemSettings>) =>
+    requestJson<SystemSettings>('/api/admin/system-settings', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  listAdminUsers: () => requestJson<AdminUserSummary[]>('/api/admin/users'),
+
+  updateAdminUser: (userId: string, payload: { role?: 'admin' | 'member'; status?: 'active' | 'disabled' }) =>
+    requestJson<AdminUserSummary>(`/api/admin/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  listAdminInviteCodes: () => requestJson<InviteCodeSummary[]>('/api/admin/invite-codes'),
+
+  createAdminInviteCodes: (count: number) =>
+    requestJson<{ codes: string[] }>('/api/admin/invite-codes', {
+      method: 'POST',
+      body: JSON.stringify({ count }),
+    }),
+
+  deleteAdminInviteCode: (code: string) =>
+    requestJson<void>(`/api/admin/invite-codes/${encodeURIComponent(code)}`, {
+      method: 'DELETE',
+    }),
 
   downloadFile: async (file: FileRecord) => {
     const response = await fetch(`/api/files/${file.id}/download`, {

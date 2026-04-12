@@ -1,5 +1,7 @@
 # SkillChat
 
+源码仓库：<https://github.com/cnwinds/qizhi>
+
 SkillChat 是一个轻量级 Skill 驱动 Web 聊天平台。当前仓库已实现：
 
 - 邀请码注册、登录、JWT 鉴权
