@@ -1137,6 +1137,121 @@ describe('App routes', () => {
     expect(screen.getByText('当前会话只允许使用这些 skills：zhangxuefeng-perspective。未启用的 skill 不会进入上下文，也不可调用。')).toBeInTheDocument();
   });
 
+  it('keeps the newly created session active when created from an existing session', async () => {
+    let createPayload: Record<string, unknown> | null = null;
+    const sessions: Array<{
+      id: string;
+      title: string;
+      createdAt: string;
+      updatedAt: string;
+      lastMessageAt: string | null;
+      activeSkills: string[];
+    }> = [
+      {
+        id: 's1',
+        title: '旧会话',
+        createdAt: '2026-04-12T00:00:00.000Z',
+        updatedAt: '2026-04-12T00:00:00.000Z',
+        lastMessageAt: null,
+        activeSkills: [],
+      },
+    ];
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions' && method === 'GET') {
+        return jsonResponse({ body: sessions });
+      }
+      if (url === '/api/sessions' && method === 'POST') {
+        createPayload = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        const createdSession = {
+          id: 's2',
+          title: '新会话',
+          createdAt: '2026-04-12T00:01:00.000Z',
+          updatedAt: '2026-04-12T00:01:00.000Z',
+          lastMessageAt: null,
+          activeSkills: ['pdf'],
+        };
+        sessions.unshift(createdSession);
+        return jsonResponse({ body: createdSession });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/sessions/s2/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/files?sessionId=s2') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/sessions/s2/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's2',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({
+          body: [
+            {
+              name: 'pdf',
+              description: '导出 PDF',
+              entrypoint: '',
+              runtime: 'python',
+              timeoutSec: 120,
+              references: [],
+              starterPrompts: [],
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    renderApp(['/app/session/s1']);
+
+    expect(await screen.findByRole('heading', { level: 1, name: '旧会话' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '新建' }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '加入会话' }));
+    fireEvent.click(screen.getByRole('button', { name: '创建会话' }));
+
+    await waitFor(() => {
+      expect(createPayload).toEqual({
+        activeSkills: ['pdf'],
+      });
+    });
+
+    expect(await screen.findByRole('heading', { level: 1, name: '新会话' })).toBeInTheDocument();
+    const sessionButtons = screen.getAllByRole('button', { name: /新会话/ });
+    expect(sessionButtons[0]).toHaveClass('session-item', 'active');
+    expect(screen.queryByRole('heading', { level: 1, name: '旧会话' })).not.toBeInTheDocument();
+  });
+
   it('renders a unified follow-up queue and dispatches running-turn input through auto mode', async () => {
     let queueCount = 0;
     let interruptCount = 0;

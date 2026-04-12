@@ -280,7 +280,7 @@ describe('SkillChat server', () => {
       expect.objectContaining({
         name: 'zhangxuefeng-perspective',
         starterPrompts: expect.arrayContaining([
-          '扮演张雪峰，帮我分析这个专业值不值得报',
+          '扮演张雪峰',
         ]),
       }),
     ]));

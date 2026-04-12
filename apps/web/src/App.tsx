@@ -937,6 +937,10 @@ const SessionWorkspace = () => {
     onSuccess: (session) => {
       resetCreateSessionDraft();
       setIsCreateSessionOpen(false);
+      queryClient.setQueryData<SessionSummary[] | undefined>(['sessions'], (current) => {
+        const rest = (current ?? []).filter((item) => item.id !== session.id);
+        return [session, ...rest];
+      });
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       navigate(`/app/session/${session.id}`, { replace: true });
     },
