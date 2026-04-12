@@ -52,6 +52,35 @@ http://localhost:5173
 http://localhost:3000
 ```
 
+## 3.1 Docker Compose 部署
+
+如果你要在服务器上一键启动，仓库根目录已经提供：
+
+- `docker-compose.yml`
+- `Dockerfile`
+- `docker/nginx.conf`
+
+最短流程：
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+国内服务器如果拉镜像或装依赖慢，compose 已经支持国内源构建参数，详见：
+
+- `docs/Docker_Deployment.md`
+
+默认访问地址：
+
+```text
+http://localhost:8080
+```
+
+完整说明见：
+
+- `docs/Docker_Deployment.md`
+
 ## 4. 初始化邀请码
 
 ```bash

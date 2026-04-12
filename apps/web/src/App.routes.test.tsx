@@ -30,10 +30,14 @@ const systemSettings = {
   enableAssistantTools: true,
   webOrigin: 'http://localhost:5173',
   modelConfig: {
+    openaiBaseUrl: 'https://api.openai.com/v1',
+    openaiApiKey: 'sk-test',
     openaiModelRouter: 'gpt-5-mini',
     openaiModelPlanner: 'gpt-5',
     openaiModelReply: 'gpt-5.2',
     openaiReasoningEffortReply: 'medium' as const,
+    anthropicBaseUrl: 'https://api.anthropic.com',
+    anthropicApiKey: 'ak-test',
     llmMaxOutputTokens: 4096,
     toolMaxOutputTokens: 2048,
   },
@@ -276,6 +280,10 @@ describe('App routes', () => {
     fireEvent.click(screen.getByRole('button', { name: '系统' }));
     expect(await screen.findByDisplayValue('gpt-5.2')).toBeInTheDocument();
     expect(screen.getByDisplayValue('planner')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('https://api.openai.com/v1')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('sk-test')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('https://api.anthropic.com')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('ak-test')).toBeInTheDocument();
   });
 
   it('shows only the latest five sessions by default and expands progressively', async () => {

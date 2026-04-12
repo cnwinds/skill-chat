@@ -31,10 +31,14 @@ export interface SystemSettings {
   enableAssistantTools: boolean;
   webOrigin: string;
   modelConfig: {
+    openaiBaseUrl: string;
+    openaiApiKey: string;
     openaiModelRouter: string;
     openaiModelPlanner: string;
     openaiModelReply: string;
     openaiReasoningEffortReply: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+    anthropicBaseUrl: string;
+    anthropicApiKey: string;
     llmMaxOutputTokens: number;
     toolMaxOutputTokens: number;
   };

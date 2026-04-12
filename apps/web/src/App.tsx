@@ -485,6 +485,37 @@ const AdminSettingsView = ({
               </label>
               <div className="settings-grid two-columns">
                 <label className="field-group">
+                  <span>OpenAI Base URL</span>
+                  <input
+                    value={systemDraft.modelConfig.openaiBaseUrl}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          openaiBaseUrl: event.target.value,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="field-group">
+                  <span>OpenAI API Key</span>
+                  <input
+                    type="password"
+                    value={systemDraft.modelConfig.openaiApiKey}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          openaiApiKey: event.target.value,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="field-group">
                   <span>Router Model</span>
                   <input
                     value={systemDraft.modelConfig.openaiModelRouter}
@@ -550,6 +581,37 @@ const AdminSettingsView = ({
                     <option value="high">high</option>
                     <option value="xhigh">xhigh</option>
                   </select>
+                </label>
+                <label className="field-group">
+                  <span>Anthropic Base URL</span>
+                  <input
+                    value={systemDraft.modelConfig.anthropicBaseUrl}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          anthropicBaseUrl: event.target.value,
+                        },
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="field-group">
+                  <span>Anthropic API Key</span>
+                  <input
+                    type="password"
+                    value={systemDraft.modelConfig.anthropicApiKey}
+                    onChange={(event) => {
+                      updateSystemDraft((current) => ({
+                        ...current,
+                        modelConfig: {
+                          ...current.modelConfig,
+                          anthropicApiKey: event.target.value,
+                        },
+                      }));
+                    }}
+                  />
                 </label>
                 <label className="field-group">
                   <span>LLM Max Output Tokens</span>

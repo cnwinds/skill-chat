@@ -1,0 +1,14 @@
+.git
+.gitignore
+.codex
+.venv
+node_modules
+apps/*/node_modules
+packages/*/node_modules
+apps/*/dist
+packages/*/dist
+data
+coverage
+tmp
+*.log
+codex
