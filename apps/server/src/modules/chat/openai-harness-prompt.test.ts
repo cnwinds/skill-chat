@@ -15,19 +15,10 @@ const createConfig = (): AppConfig => ({
   JWT_EXPIRES_IN: '7d',
   OPENAI_BASE_URL: 'http://example.com/v1',
   OPENAI_API_KEY: 'test-token',
-  OPENAI_MODEL_ROUTER: 'gpt-4o-mini',
-  OPENAI_MODEL_PLANNER: 'gpt-4o-mini',
-  OPENAI_MODEL_REPLY: 'gpt-5.4',
-  OPENAI_REASONING_EFFORT_REPLY: 'xhigh',
+  OPENAI_MODEL: 'gpt-5.4',
+  OPENAI_REASONING_EFFORT: 'xhigh',
   LLM_MAX_OUTPUT_TOKENS: 4096,
   TOOL_MAX_OUTPUT_TOKENS: 3072,
-  ANTHROPIC_BASE_URL: 'http://example.com',
-  ANTHROPIC_AUTH_TOKEN: '',
-  ANTHROPIC_API_KEY: '',
-  ANTHROPIC_MODEL_ROUTER: 'claude-sonnet-4-5',
-  ANTHROPIC_MODEL_PLANNER: 'claude-sonnet-4-5',
-  ANTHROPIC_MODEL_REPLY: 'claude-sonnet-4-5',
-  DEFAULT_SESSION_ACTIVE_SKILLS: [],
   ENABLE_ASSISTANT_TOOLS: true,
   LLM_REQUEST_TIMEOUT_MS: 1_000,
   MAX_CONCURRENT_RUNS: 5,
@@ -40,7 +31,7 @@ describe('buildOpenAIHarnessInstructions', () => {
     const instructions = buildOpenAIHarnessInstructions({
       config: createConfig(),
       files: [],
-      skills: [{
+      availableSkills: [{
         name: 'zhangxuefeng-perspective',
         description: '以张雪峰风格给出专业和志愿建议。',
         entrypoint: '',
@@ -53,8 +44,10 @@ describe('buildOpenAIHarnessInstructions', () => {
       }],
     });
 
-    expect(instructions).toContain('Discovery: 上面的列表就是当前会话可用的 skills');
-    expect(instructions).toContain('Trigger rules: 如果用户点名某个 skill');
+    expect(instructions).toContain('以下列表是当前会话唯一可用的 skill');
+    expect(instructions).toContain('Discovery: 上面的列表就是当前会话已启用的全部 skills');
+    expect(instructions).toContain('Scope: 只有上面列出的 skill 可以被读取、参考或执行');
+    expect(instructions).toContain('Trigger rules: 如果用户点名某个已启用 skill');
     expect(instructions).toContain('How to use a skill (progressive disclosure):');
     expect(instructions).toContain('只读取当前请求需要的具体文件，不要整包加载');
     expect(instructions).toContain('Context hygiene: 保持上下文精简');

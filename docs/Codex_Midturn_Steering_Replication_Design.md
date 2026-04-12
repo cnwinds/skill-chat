@@ -1,5 +1,14 @@
 # 基于 SkillChat 复刻 Codex Mid-Turn Steering 的设计文档
 
+## 修订说明（2026-04-12）
+
+- 本文最初版本把运行中追加输入拆成 `pendingInputs` 与 `queuedInputs` 两类外显状态。
+- 当前实现已调整为“对外单队列、对内控制插入点”的模型：
+  - 前端和 runtime snapshot 只暴露一个 `followUpQueue`，严格按 FIFO 展示。
+  - UI 不再区分“继续引导当前轮”或“排到下一轮”，运行中追加消息统一提交到 `/api/sessions/:id/messages`，由服务端根据当前 turn 状态自动决定吸收到当前轮还是排到后续轮次。
+  - 只有在 `user_message_committed` 发生后，消息才会进入聊天记录；排队中的内容始终只显示在底部待处理队列。
+- 因此，下文凡是涉及“双预览区”“pending / queued 两套外显状态”的描述，应以本修订说明为准。
+
 ## 1. 目标
 
 本文档的目标，是在当前项目 `qizhi` / `SkillChat` 的既有架构上，复刻 Codex CLI 里“模型工作时仍可继续发消息引导”的能力，并且做到：

@@ -3,12 +3,17 @@ import type {
   AuthResponse,
   FileBucket,
   FileRecord,
+  FollowUpQueueMutationResponse,
   InviteCodeSummary,
+  MessageDispatchRequest,
+  MessageDispatchResponse,
+  SessionRuntimeSnapshot,
   SessionSummary,
   SkillMetadata,
   StoredEvent,
   SystemSettings,
   SystemStatus,
+  TurnInterruptResponse,
   UserPreferenceSettings,
 } from '@skillchat/shared';
 import { useAuthStore } from '../stores/auth-store';
@@ -109,10 +114,30 @@ export const api = {
   listMessages: (sessionId: string) =>
     requestJson<StoredEvent[]>(`/api/sessions/${sessionId}/messages?limit=200`),
 
-  sendMessage: (sessionId: string, content: string) =>
-    requestJson<{ accepted: boolean; messageId: string; runId: string }>(`/api/sessions/${sessionId}/messages`, {
+  sendMessage: (sessionId: string, payload: MessageDispatchRequest) =>
+    requestJson<MessageDispatchResponse>(`/api/sessions/${sessionId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  steerTurn: (sessionId: string, turnId: string, content: string) =>
+    requestJson<MessageDispatchResponse>(`/api/sessions/${sessionId}/turns/${turnId}/steer`, {
       method: 'POST',
       body: JSON.stringify({ content }),
+    }),
+
+  interruptTurn: (sessionId: string, turnId: string) =>
+    requestJson<TurnInterruptResponse>(`/api/sessions/${sessionId}/turns/${turnId}/interrupt`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  getSessionRuntime: (sessionId: string) =>
+    requestJson<SessionRuntimeSnapshot>(`/api/sessions/${sessionId}/runtime`),
+
+  removeFollowUpInput: (sessionId: string, inputId: string) =>
+    requestJson<FollowUpQueueMutationResponse>(`/api/sessions/${sessionId}/runtime/queue/${inputId}`, {
+      method: 'DELETE',
     }),
 
   listFiles: (params: { sessionId?: string; bucket?: FileBucket; type?: string } = {}) => {

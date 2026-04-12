@@ -255,8 +255,7 @@ const main = async () => {
 
   const skillRegistry = new SkillRegistry(config);
   await skillRegistry.load();
-  const registeredSkills = skillRegistry.listRegistered();
-  const activatedSkills = (meta.activeSkills ?? [])
+  const availableSkills = (meta.activeSkills ?? [])
     .map((skillName) => {
       try {
         return skillRegistry.get(skillName);
@@ -287,15 +286,13 @@ const main = async () => {
   const fullInstructions = buildOpenAIHarnessInstructions({
     config,
     files: [],
-    skills: registeredSkills,
-    activatedSkills,
+    availableSkills,
   });
 
-  const instructionsWithoutActivatedSkillPayload = buildOpenAIHarnessInstructions({
+  const instructionsWithoutEnabledSkillPayload = buildOpenAIHarnessInstructions({
     config,
     files: [],
-    skills: registeredSkills,
-    activatedSkills: [],
+    availableSkills: [],
   });
 
   const scenarios: ProbeScenario[] = [
@@ -306,7 +303,7 @@ const main = async () => {
     },
     {
       name: 'history_only_without_activated_skill_prompt',
-      instructions: instructionsWithoutActivatedSkillPayload,
+      instructions: instructionsWithoutEnabledSkillPayload,
       input: [...baseInput],
     },
     {
@@ -316,7 +313,7 @@ const main = async () => {
     },
     {
       name: 'before_read_skill_without_activated_skill_prompt',
-      instructions: instructionsWithoutActivatedSkillPayload,
+      instructions: instructionsWithoutEnabledSkillPayload,
       input: [...baseInput, ...toolReplayBeforeRead],
     },
     {
@@ -341,13 +338,13 @@ const main = async () => {
     },
     {
       name: 'after_read_skill_actual_output_without_activated_skill_prompt',
-      instructions: instructionsWithoutActivatedSkillPayload,
+      instructions: instructionsWithoutEnabledSkillPayload,
       input: [...baseInput, ...toolReplayWithActualRead],
     },
   ];
 
   console.log(`Session: ${sessionId}`);
-  console.log(`Model: ${config.OPENAI_MODEL_REPLY}`);
+  console.log(`Model: ${config.OPENAI_MODEL}`);
   console.log(`Base URL: ${config.OPENAI_BASE_URL}`);
   console.log(`Attempts per scenario: ${attempts}`);
   console.log(`Activated skills: ${(meta.activeSkills ?? []).join(', ') || '(none)'}`);
@@ -359,9 +356,9 @@ const main = async () => {
       const result = await probeScenario(
         config.OPENAI_BASE_URL,
         config.OPENAI_API_KEY,
-        config.OPENAI_MODEL_REPLY,
+        config.OPENAI_MODEL,
         scenario,
-        /^gpt-5|^o\d/i.test(config.OPENAI_MODEL_REPLY) ? config.OPENAI_REASONING_EFFORT_REPLY : undefined,
+        /^gpt-5|^o\d/i.test(config.OPENAI_MODEL) ? config.OPENAI_REASONING_EFFORT : undefined,
       );
 
       console.log([

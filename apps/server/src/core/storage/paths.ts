@@ -24,6 +24,9 @@ export const getSessionMetaPath = (config: AppConfig, userId: string, sessionId:
 export const getSessionMessagesPath = (config: AppConfig, userId: string, sessionId: string) =>
   path.join(getSessionRoot(config, userId, sessionId), 'messages.jsonl');
 
+export const getSessionTurnRuntimePath = (config: AppConfig, userId: string, sessionId: string) =>
+  path.join(getSessionRoot(config, userId, sessionId), 'turn-runtime.json');
+
 export const getSessionUploadsRoot = (config: AppConfig, userId: string, sessionId: string) =>
   path.join(getSessionRoot(config, userId, sessionId), 'uploads');
 

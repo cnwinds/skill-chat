@@ -28,13 +28,12 @@ PORT=3000
 WEB_ORIGIN=http://localhost:7070
 JWT_SECRET=请替换成长度足够的随机字符串
 OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
 ```
 
 说明：
 
 - `WEB_ORIGIN` 要改成你的实际访问地址，例如 `https://chat.example.com`。
-- 如果不配置 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`，系统会退回本地 rule-based 模式。
+- `OPENAI_API_KEY` 是必填项；当前版本只保留 OpenAI harness 单流程，不再提供 Anthropic / rule-based 回退链路。
 - `WEB_PORT` 不是应用变量，而是 `docker compose` 的端口映射变量。默认是 `7070`，如果要改成 `80`，可以在启动前执行 `export WEB_PORT=80`。
 
 ## 1.1 国内网络镜像源加速

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ChatService } from './chat-service.js';
-import type { ExecutedAssistantToolResult } from '../tools/assistant-tool-service.js';
 import type { AppConfig } from '../../config/env.js';
 
 const createDeferred = <T>() => {
@@ -23,12 +22,21 @@ const flushAsync = async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
 };
 
-const createToolResult = (tool: string, content: string): ExecutedAssistantToolResult => ({
-  tool,
-  arguments: {},
-  summary: `${tool} done`,
-  content,
-});
+const waitForCondition = async (assertion: () => void, attempts = 40) => {
+  let lastError: unknown;
+
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await flushAsync();
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Condition was not met in time');
+};
 
 const testConfig = (): AppConfig => ({
   NODE_ENV: 'test',
@@ -41,21 +49,12 @@ const testConfig = (): AppConfig => ({
   INLINE_JOBS: true,
   JWT_SECRET: 'test-secret',
   JWT_EXPIRES_IN: '7d',
-  DEFAULT_SESSION_ACTIVE_SKILLS: [],
   OPENAI_BASE_URL: 'http://example.com/v1',
-  OPENAI_API_KEY: '',
-  OPENAI_MODEL_ROUTER: 'gpt-4o-mini',
-  OPENAI_MODEL_PLANNER: 'gpt-4o-mini',
-  OPENAI_MODEL_REPLY: 'gpt-5.4',
-  OPENAI_REASONING_EFFORT_REPLY: 'high',
+  OPENAI_API_KEY: 'test-token',
+  OPENAI_MODEL: 'gpt-5.4',
+  OPENAI_REASONING_EFFORT: 'high',
   LLM_MAX_OUTPUT_TOKENS: 4096,
   TOOL_MAX_OUTPUT_TOKENS: 3072,
-  ANTHROPIC_BASE_URL: 'http://example.com',
-  ANTHROPIC_AUTH_TOKEN: '',
-  ANTHROPIC_API_KEY: '',
-  ANTHROPIC_MODEL_ROUTER: 'claude-sonnet-4-5',
-  ANTHROPIC_MODEL_PLANNER: 'claude-sonnet-4-5',
-  ANTHROPIC_MODEL_REPLY: 'claude-sonnet-4-5',
   ENABLE_ASSISTANT_TOOLS: true,
   LLM_REQUEST_TIMEOUT_MS: 1000,
   MAX_CONCURRENT_RUNS: 5,
@@ -63,767 +62,332 @@ const testConfig = (): AppConfig => ({
   USER_STORAGE_QUOTA_MB: 1024,
 });
 
-describe('ChatService assistant tool orchestration', () => {
-  it('runs consecutive web tools in parallel while preserving context order', async () => {
-    const searchDeferred = createDeferred<ExecutedAssistantToolResult>();
-    const fetchDeferred = createDeferred<ExecutedAssistantToolResult>();
-    let capturedReplyInput: { context?: string } | undefined;
-    const execute = vi.fn(({ call }: { call: { tool: string } }) => {
-      if (call.tool === 'web_search') {
-        return searchDeferred.promise;
-      }
-      return fetchDeferred.promise;
-    });
-    const replyStream = vi.fn(async function* (input: { context?: string }) {
-      capturedReplyInput = input;
-      yield '完成';
-    });
+const createSkill = (name: string, runtime: 'chat' | 'python' | 'node' = 'chat') => ({
+  name,
+  description: `${name} desc`,
+  entrypoint: runtime === 'chat' ? '' : 'scripts/run.js',
+  runtime,
+  timeoutSec: 120,
+  references: [],
+  directory: `/tmp/skills/${name}`,
+  markdown: `# ${name}`,
+  referencesContent: [],
+});
 
-    const service = new ChatService(
-      {
-        appendEvent: vi.fn().mockResolvedValue(undefined),
-        readEvents: vi.fn().mockResolvedValue([]),
-      } as never,
-      {
-        publish: vi.fn(),
-      } as never,
-      {
-        classify: vi.fn().mockResolvedValue({
-          mode: 'chat',
-          needClarification: false,
-          selectedSkills: [],
-          reason: 'test',
-        }),
-        plan: vi.fn(),
-        planToolUse: vi.fn().mockResolvedValue({
-          toolCalls: [
-            { tool: 'web_search', arguments: { query: '金融专业就业' } },
-            { tool: 'web_fetch', arguments: { url: 'https://openai.com' } },
-          ],
-        }),
-        replyStream,
-        skillReplyStream: vi.fn(),
-      } as never,
-      {
-        list: vi.fn().mockReturnValue([]),
-        get: vi.fn(),
-      } as never,
-      {
-        getFileContext: vi.fn().mockReturnValue([]),
-        list: vi.fn().mockReturnValue([]),
-      } as never,
-      {} as never,
-      {
-        requireOwned: vi.fn().mockReturnValue({
-          id: 's1',
-          title: '新会话',
-          createdAt: '',
-          updatedAt: '',
-          lastMessageAt: null,
-        }),
-        renameFromMessage: vi.fn().mockResolvedValue(undefined),
-        touch: vi.fn().mockResolvedValue(undefined),
-      } as never,
-      {
-        shouldConsiderTools: vi.fn().mockReturnValue(true),
-        list: vi.fn().mockReturnValue([]),
-        execute,
-      } as never,
-      testConfig(),
-    );
-
-    const task = service.processMessage(
-      { id: 'u1', username: 'tester', role: 'member' },
-      's1',
-      '搜索并访问网页',
-    );
-
-    await flushAsync();
-    expect(execute).toHaveBeenCalledTimes(2);
-
-    fetchDeferred.resolve(createToolResult('web_fetch', 'fetch content'));
-    searchDeferred.resolve(createToolResult('web_search', 'search content'));
-    await task;
-
-    expect(capturedReplyInput?.context).toContain('工具 1: web_search');
-    expect(capturedReplyInput?.context).toContain('search content');
-    expect(capturedReplyInput?.context).toContain('工具 2: web_fetch');
-    expect(capturedReplyInput?.context).toContain('fetch content');
+const createService = (options: {
+  config?: AppConfig;
+  activeSkills?: string[];
+  skills?: Array<ReturnType<typeof createSkill>>;
+  fileContext?: Array<Record<string, unknown>>;
+  harnessRun?: ReturnType<typeof vi.fn>;
+} = {}) => {
+  const storedEvents: Array<Record<string, unknown>> = [];
+  const appendEvent = vi.fn(async (_userId: string, _sessionId: string, event: Record<string, unknown>) => {
+    storedEvents.push(event);
+  });
+  const publish = vi.fn();
+  const config = options.config ?? testConfig();
+  const skills = options.skills ?? [];
+  const session = {
+    id: 's1',
+    title: '新会话',
+    createdAt: '',
+    updatedAt: '',
+    lastMessageAt: null,
+    activeSkills: options.activeSkills ?? [],
+  };
+  const harnessRun = options.harnessRun ?? vi.fn(async ({ callbacks }: {
+    callbacks?: { onTextDelta?: (content: string) => Promise<void> | void };
+  }) => {
+    await callbacks?.onTextDelta?.('默认回复');
+    return { finalText: '默认回复', roundsUsed: 1 };
   });
 
-  it('keeps non-web tools serial to avoid mixing local file operations', async () => {
-    const readDeferred = createDeferred<ExecutedAssistantToolResult>();
-    const searchDeferred = createDeferred<ExecutedAssistantToolResult>();
-    const execute = vi.fn(({ call }: { call: { tool: string } }) => {
-      if (call.tool === 'read_file') {
-        return readDeferred.promise;
-      }
-      return searchDeferred.promise;
-    });
-
-    const service = new ChatService(
-      {
-        appendEvent: vi.fn().mockResolvedValue(undefined),
-        readEvents: vi.fn().mockResolvedValue([]),
-      } as never,
-      {
-        publish: vi.fn(),
-      } as never,
-      {
-        classify: vi.fn().mockResolvedValue({
-          mode: 'chat',
-          needClarification: false,
-          selectedSkills: [],
-          reason: 'test',
-        }),
-        plan: vi.fn(),
-        planToolUse: vi.fn().mockResolvedValue({
-          toolCalls: [
-            { tool: 'read_file', arguments: { fileId: 'f1' } },
-            { tool: 'web_search', arguments: { query: '金融专业就业' } },
-          ],
-        }),
-        replyStream: async function* () {
-          yield '完成';
-        },
-        skillReplyStream: vi.fn(),
-      } as never,
-      {
-        list: vi.fn().mockReturnValue([]),
-        get: vi.fn(),
-      } as never,
-      {
-        getFileContext: vi.fn().mockReturnValue([]),
-        list: vi.fn().mockReturnValue([]),
-      } as never,
-      {} as never,
-      {
-        requireOwned: vi.fn().mockReturnValue({
-          id: 's1',
-          title: '新会话',
-          createdAt: '',
-          updatedAt: '',
-          lastMessageAt: null,
-        }),
-        renameFromMessage: vi.fn().mockResolvedValue(undefined),
-        touch: vi.fn().mockResolvedValue(undefined),
-      } as never,
-      {
-        shouldConsiderTools: vi.fn().mockReturnValue(true),
-        list: vi.fn().mockReturnValue([]),
-        execute,
-      } as never,
-      testConfig(),
-    );
-
-    const task = service.processMessage(
-      { id: 'u1', username: 'tester', role: 'member' },
-      's1',
-      '先读文件再搜索',
-    );
-
-    await flushAsync();
-    expect(execute).toHaveBeenCalledTimes(1);
-
-    readDeferred.resolve(createToolResult('read_file', 'file content'));
-    await flushAsync();
-    expect(execute).toHaveBeenCalledTimes(2);
-
-    searchDeferred.resolve(createToolResult('web_search', 'search content'));
-    await task;
-  });
-
-  it('does not preload skill or reference files as debug tool cards', async () => {
-    const appendEvent = vi.fn().mockResolvedValue(undefined);
-    const service = new ChatService(
-      {
-        appendEvent,
-        readEvents: vi.fn().mockResolvedValue([]),
-      } as never,
-      {
-        publish: vi.fn(),
-      } as never,
-      {
-        classify: vi.fn().mockResolvedValue({
-          mode: 'skill',
-          needClarification: false,
-          selectedSkills: ['zhangxuefeng-perspective'],
-          reason: 'test',
-        }),
-        plan: vi.fn(),
-        planToolUse: vi.fn().mockResolvedValue({ toolCalls: [] }),
-        replyStream: vi.fn(),
-        skillReplyStream: async function* () {
-          yield '完成';
-        },
-      } as never,
-      {
-        list: vi.fn().mockReturnValue([]),
-        get: vi.fn().mockReturnValue({
-          name: 'zhangxuefeng-perspective',
-          description: 'desc',
-          entrypoint: '',
-          runtime: 'chat',
-          timeoutSec: 120,
-          references: ['jobs.md'],
-          directory: '/tmp/skills/zhangxuefeng-perspective',
-          markdown: '# skill markdown',
-          referencesContent: [
-            {
-              name: 'jobs.md',
-              content: 'reference body',
-            },
-          ],
-        }),
-      } as never,
-      {
-        getFileContext: vi.fn().mockReturnValue([]),
-        list: vi.fn().mockReturnValue([]),
-      } as never,
-      {} as never,
-      {
-        requireOwned: vi.fn().mockReturnValue({
-          id: 's1',
-          title: '新会话',
-          createdAt: '',
-          updatedAt: '',
-          lastMessageAt: null,
-        }),
-        renameFromMessage: vi.fn().mockResolvedValue(undefined),
-        touch: vi.fn().mockResolvedValue(undefined),
-      } as never,
-      {
-        shouldConsiderTools: vi.fn().mockReturnValue(false),
-        list: vi.fn().mockReturnValue([]),
-        execute: vi.fn(),
-      } as never,
-      testConfig(),
-    );
-
-    await service.processMessage(
-      { id: 'u1', username: 'tester', role: 'member' },
-      's1',
-      '用张雪峰视角回答',
-    );
-
-    const toolCallEvents = appendEvent.mock.calls
-      .map((call) => call[2])
-      .filter((event) => event?.kind === 'tool_call');
-    const toolResultEvents = appendEvent.mock.calls
-      .map((call) => call[2])
-      .filter((event) => event?.kind === 'tool_result');
-
-    expect(toolCallEvents.some((event) => event.skill === 'read_skill_file')).toBe(false);
-    expect(toolCallEvents.some((event) => event.skill === 'read_reference_file')).toBe(false);
-    expect(toolResultEvents.some((event) => event.skill === 'read_skill_file')).toBe(false);
-    expect(toolResultEvents.some((event) => event.skill === 'read_reference_file')).toBe(false);
-  });
-
-  it('passes the active skill into assistant tool execution for skill resource tools', async () => {
-    const execute = vi.fn().mockResolvedValue(createToolResult('read_skill_resource_slice', 'skill content'));
-
-    const service = new ChatService(
-      {
-        appendEvent: vi.fn().mockResolvedValue(undefined),
-        readEvents: vi.fn().mockResolvedValue([]),
-      } as never,
-      {
-        publish: vi.fn(),
-      } as never,
-      {
-        classify: vi.fn().mockResolvedValue({
-          mode: 'skill',
-          needClarification: false,
-          selectedSkills: ['zhangxuefeng-perspective'],
-          reason: 'test',
-        }),
-        plan: vi.fn(),
-        planToolUse: vi.fn().mockResolvedValue({
-          toolCalls: [
-            { tool: 'read_skill_resource_slice', arguments: { resource: 'jobs.md' } },
-          ],
-        }),
-        replyStream: vi.fn(),
-        skillReplyStream: async function* () {
-          yield '完成';
-        },
-      } as never,
-      {
-        list: vi.fn().mockReturnValue([]),
-        get: vi.fn().mockReturnValue({
-          name: 'zhangxuefeng-perspective',
-          description: 'desc',
-          entrypoint: '',
-          runtime: 'chat',
-          timeoutSec: 120,
-          references: ['jobs.md'],
-          directory: '/tmp/skills/zhangxuefeng-perspective',
-          markdown: '# skill markdown',
-          referencesContent: [
-            {
-              name: 'jobs.md',
-              content: 'reference body',
-            },
-          ],
-        }),
-      } as never,
-      {
-        getFileContext: vi.fn().mockReturnValue([]),
-        list: vi.fn().mockReturnValue([]),
-      } as never,
-      {} as never,
-      {
-        requireOwned: vi.fn().mockReturnValue({
-          id: 's1',
-          title: '新会话',
-          createdAt: '',
-          updatedAt: '',
-          lastMessageAt: null,
-        }),
-        renameFromMessage: vi.fn().mockResolvedValue(undefined),
-        touch: vi.fn().mockResolvedValue(undefined),
-      } as never,
-      {
-        shouldConsiderTools: vi.fn().mockReturnValue(true),
-        list: vi.fn().mockReturnValue([]),
-        execute,
-      } as never,
-      testConfig(),
-    );
-
-    await service.processMessage(
-      { id: 'u1', username: 'tester', role: 'member' },
-      's1',
-      '读取一下这个 skill 的参考文件',
-    );
-
-    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 'u1',
-      sessionId: 's1',
-      call: expect.objectContaining({
-        tool: 'read_skill_resource_slice',
+  const service = new ChatService(
+    {
+      appendEvent,
+      readEvents: vi.fn(async () => storedEvents),
+    } as never,
+    {
+      publish,
+    } as never,
+    {
+      get: vi.fn((skillName: string) => {
+        const skill = skills.find((item) => item.name === skillName);
+        if (!skill) {
+          throw new Error(`missing skill ${skillName}`);
+        }
+        return skill;
       }),
-      skill: expect.objectContaining({
-        name: 'zhangxuefeng-perspective',
-      }),
-    }));
-  });
+    } as never,
+    {
+      getFileContext: vi.fn().mockReturnValue(options.fileContext ?? []),
+    } as never,
+    {
+      requireOwned: vi.fn().mockReturnValue(session),
+      renameFromMessage: vi.fn().mockResolvedValue(undefined),
+      touch: vi.fn().mockResolvedValue(undefined),
+    } as never,
+    config,
+    {
+      run: harnessRun,
+    } as never,
+  );
 
-  it('forces web_search for zhangxuefeng fact questions when the planner omits it', async () => {
-    const execute = vi.fn().mockResolvedValue(createToolResult('web_search', 'search content'));
-    let capturedSkillReplyInput: { context?: string } | undefined;
+  return {
+    service,
+    storedEvents,
+    appendEvent,
+    publish,
+    harnessRun,
+  };
+};
 
-    const service = new ChatService(
-      {
-        appendEvent: vi.fn().mockResolvedValue(undefined),
-        readEvents: vi.fn().mockResolvedValue([]),
-      } as never,
-      {
-        publish: vi.fn(),
-      } as never,
-      {
-        classify: vi.fn().mockResolvedValue({
-          mode: 'skill',
-          needClarification: false,
-          selectedSkills: ['zhangxuefeng-perspective'],
-          reason: 'test',
-        }),
-        plan: vi.fn(),
-        planToolUse: vi.fn().mockResolvedValue({ toolCalls: [] }),
-        replyStream: vi.fn(),
-        skillReplyStream: async function* (input: { context?: string }) {
-          capturedSkillReplyInput = input;
-          yield '完成';
-        },
-      } as never,
-      {
-        list: vi.fn().mockReturnValue([]),
-        get: vi.fn().mockReturnValue({
-          name: 'zhangxuefeng-perspective',
-          description: 'desc',
-          entrypoint: '',
-          runtime: 'chat',
-          timeoutSec: 120,
-          references: [],
-          directory: '/tmp/skills/zhangxuefeng-perspective',
-          markdown: '# skill markdown',
-          referencesContent: [],
-        }),
-      } as never,
-      {
-        getFileContext: vi.fn().mockReturnValue([]),
-        list: vi.fn().mockReturnValue([]),
-      } as never,
-      {} as never,
-      {
-        requireOwned: vi.fn().mockReturnValue({
-          id: 's1',
-          title: '新会话',
-          createdAt: '',
-          updatedAt: '',
-          lastMessageAt: null,
-        }),
-        renameFromMessage: vi.fn().mockResolvedValue(undefined),
-        touch: vi.fn().mockResolvedValue(undefined),
-      } as never,
-      {
-        shouldConsiderTools: vi.fn().mockReturnValue(true),
-        list: vi.fn().mockReturnValue([]),
-        execute,
-      } as never,
-      testConfig(),
-    );
-
-    await service.processMessage(
-      { id: 'u1', username: 'tester', role: 'member' },
-      's1',
-      '帮我分析人工智能专业就业前景',
-    );
-
-    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
-      call: expect.objectContaining({
+describe('ChatService harness-only flow', () => {
+  it('streams harness tool callbacks, artifacts, and final assistant text', async () => {
+    const skill = createSkill('zhangxuefeng-perspective');
+    const harnessRun = vi.fn(async ({ availableSkills, callbacks }: {
+      availableSkills?: Array<{ name: string }>;
+      callbacks?: {
+        onToolCall?: (event: {
+          callId: string;
+          tool: string;
+          arguments: Record<string, unknown>;
+        }) => Promise<void> | void;
+        onToolProgress?: (event: {
+          callId: string;
+          tool: string;
+          message: string;
+          status?: string;
+        }) => Promise<void> | void;
+        onToolResult?: (event: {
+          callId: string;
+          tool: string;
+          summary: string;
+          content?: string;
+        }) => Promise<void> | void;
+        onArtifact?: (file: Record<string, unknown>) => Promise<void> | void;
+        onTextDelta?: (content: string) => Promise<void> | void;
+      };
+    }) => {
+      expect(availableSkills?.map((item) => item.name)).toEqual(['zhangxuefeng-perspective']);
+      await callbacks?.onToolCall?.({
+        callId: 'call_web',
         tool: 'web_search',
-        arguments: expect.objectContaining({
-          query: '帮我分析人工智能专业就业前景',
-        }),
-      }),
-    }));
-    expect(capturedSkillReplyInput?.context).toContain('工具 1: web_search');
-  });
-
-  it('does not force web_search for abstract zhangxuefeng framework questions', async () => {
-    const execute = vi.fn();
-
-    const service = new ChatService(
-      {
-        appendEvent: vi.fn().mockResolvedValue(undefined),
-        readEvents: vi.fn().mockResolvedValue([]),
-      } as never,
-      {
-        publish: vi.fn(),
-      } as never,
-      {
-        classify: vi.fn().mockResolvedValue({
-          mode: 'skill',
-          needClarification: false,
-          selectedSkills: ['zhangxuefeng-perspective'],
-          reason: 'test',
-        }),
-        plan: vi.fn(),
-        planToolUse: vi.fn().mockResolvedValue({ toolCalls: [] }),
-        replyStream: vi.fn(),
-        skillReplyStream: async function* () {
-          yield '完成';
-        },
-      } as never,
-      {
-        list: vi.fn().mockReturnValue([]),
-        get: vi.fn().mockReturnValue({
-          name: 'zhangxuefeng-perspective',
-          description: 'desc',
-          entrypoint: '',
-          runtime: 'chat',
-          timeoutSec: 120,
-          references: [],
-          directory: '/tmp/skills/zhangxuefeng-perspective',
-          markdown: '# skill markdown',
-          referencesContent: [],
-        }),
-      } as never,
-      {
-        getFileContext: vi.fn().mockReturnValue([]),
-        list: vi.fn().mockReturnValue([]),
-      } as never,
-      {} as never,
-      {
-        requireOwned: vi.fn().mockReturnValue({
-          id: 's1',
-          title: '新会话',
-          createdAt: '',
-          updatedAt: '',
-          lastMessageAt: null,
-        }),
-        renameFromMessage: vi.fn().mockResolvedValue(undefined),
-        touch: vi.fn().mockResolvedValue(undefined),
-      } as never,
-      {
-        shouldConsiderTools: vi.fn().mockReturnValue(true),
-        list: vi.fn().mockReturnValue([]),
-        execute,
-      } as never,
-      testConfig(),
-    );
-
-    await service.processMessage(
-      { id: 'u1', username: 'tester', role: 'member' },
-      's1',
-      '用张雪峰的视角聊聊普通家庭怎么平衡理想和现实',
-    );
-
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it('publishes file events when an assistant tool writes an artifact', async () => {
-    const appendEvent = vi.fn().mockResolvedValue(undefined);
-    const publish = vi.fn();
-    const execute = vi.fn().mockResolvedValue({
-      tool: 'write_artifact_file',
-      arguments: { fileName: 'report.md' },
-      summary: '已写入产物 report.md',
-      content: 'artifact content',
-      artifacts: [
-        {
-          id: 'file_1',
-          userId: 'u1',
-          sessionId: 's1',
-          displayName: 'report.md',
-          relativePath: 'sessions/s1/outputs/report.md',
-          mimeType: 'text/markdown',
-          size: 128,
-          bucket: 'outputs',
-          source: 'generated',
-          createdAt: new Date().toISOString(),
-          downloadUrl: '/api/files/file_1/download',
-        },
-      ],
+        arguments: { query: '人工智能专业 就业 薪资' },
+      });
+      await callbacks?.onToolProgress?.({
+        callId: 'call_web',
+        tool: 'web_search',
+        message: '正在联网搜索',
+        status: 'running',
+      });
+      await callbacks?.onToolResult?.({
+        callId: 'call_web',
+        tool: 'web_search',
+        summary: '已完成联网搜索',
+        content: '找到 3 条最新结果',
+      });
+      await callbacks?.onArtifact?.({
+        id: 'file_1',
+        userId: 'u1',
+        sessionId: 's1',
+        displayName: 'report.md',
+        relativePath: 'sessions/s1/outputs/report.md',
+        mimeType: 'text/markdown',
+        size: 128,
+        bucket: 'outputs',
+        source: 'generated',
+        createdAt: new Date().toISOString(),
+        downloadUrl: '/api/files/file_1/download',
+      });
+      await callbacks?.onTextDelta?.('先看数据。');
+      await callbacks?.onTextDelta?.('再给结论。');
+      return { finalText: '先看数据。再给结论。', roundsUsed: 1 };
     });
 
-    const service = new ChatService(
-      {
-        appendEvent,
-        readEvents: vi.fn().mockResolvedValue([]),
-      } as never,
-      {
-        publish,
-      } as never,
-      {
-        classify: vi.fn().mockResolvedValue({
-          mode: 'chat',
-          needClarification: false,
-          selectedSkills: [],
-          reason: 'test',
-        }),
-        plan: vi.fn(),
-        planToolUse: vi.fn().mockResolvedValue({
-          toolCalls: [
-            { tool: 'write_artifact_file', arguments: { fileName: 'report.md', content: '# Report' } },
-          ],
-        }),
-        replyStream: async function* () {
-          yield '完成';
-        },
-        skillReplyStream: vi.fn(),
-      } as never,
-      {
-        list: vi.fn().mockReturnValue([]),
-        get: vi.fn(),
-      } as never,
-      {
-        getFileContext: vi.fn().mockReturnValue([]),
-        list: vi.fn().mockReturnValue([]),
-      } as never,
-      {} as never,
-      {
-        requireOwned: vi.fn().mockReturnValue({
-          id: 's1',
-          title: '新会话',
-          createdAt: '',
-          updatedAt: '',
-          lastMessageAt: null,
-        }),
-        renameFromMessage: vi.fn().mockResolvedValue(undefined),
-        touch: vi.fn().mockResolvedValue(undefined),
-      } as never,
-      {
-        shouldConsiderTools: vi.fn().mockReturnValue(true),
-        list: vi.fn().mockReturnValue([]),
-        execute,
-      } as never,
-      testConfig(),
-    );
+    const { service, storedEvents, publish } = createService({
+      skills: [skill],
+      activeSkills: [skill.name],
+      harnessRun,
+    });
 
     await service.processMessage(
       { id: 'u1', username: 'tester', role: 'member' },
       's1',
-      '把结果保存成文件',
+      '帮我分析人工智能专业',
     );
 
-    const fileEvents = appendEvent.mock.calls
-      .map((call) => call[2])
-      .filter((event) => event?.kind === 'file');
-
-    expect(fileEvents).toHaveLength(1);
-    expect(fileEvents[0]?.file.displayName).toBe('report.md');
+    expect(storedEvents.map((event) => event.kind)).toEqual([
+      'message',
+      'tool_call',
+      'tool_progress',
+      'tool_result',
+      'file',
+      'message',
+    ]);
+    expect(storedEvents[5]).toMatchObject({
+      kind: 'message',
+      role: 'assistant',
+      content: '先看数据。再给结论。',
+    });
     expect(publish).toHaveBeenCalledWith('s1', expect.objectContaining({
       event: 'file_ready',
     }));
+    expect(
+      publish.mock.calls
+        .map(([_, event]) => event.event)
+        .filter((name) => name === 'text_delta'),
+    ).toHaveLength(2);
   });
 
-  it('allows reply failures to be caught and persisted without crashing queue cleanup', async () => {
-    const appendEvent = vi.fn().mockResolvedValue(undefined);
+  it('continues the same turn when harness drains a steer input between rounds', async () => {
+    const releaseFirstRound = createDeferred<void>();
+    const roundStarts: number[] = [];
+    const harnessRun = vi.fn(async ({ startingRound, drainPendingInputs, callbacks }: {
+      startingRound?: number;
+      drainPendingInputs?: () => Promise<Array<{ content: string }>>;
+      callbacks?: {
+        onRoundStart?: (round: number) => Promise<void> | void;
+        onTextDelta?: (content: string) => Promise<void> | void;
+      };
+    }) => {
+      const firstRound = startingRound ?? 1;
+      await callbacks?.onRoundStart?.(firstRound);
+      roundStarts.push(firstRound);
+      await callbacks?.onTextDelta?.('第一轮回复\n');
+      await releaseFirstRound.promise;
 
-    const service = new ChatService(
-      {
-        appendEvent,
-        readEvents: vi.fn().mockResolvedValue([]),
-      } as never,
-      {
-        publish: vi.fn(),
-      } as never,
-      {
-        classify: vi.fn().mockResolvedValue({
-          mode: 'skill',
-          needClarification: false,
-          selectedSkills: ['zhangxuefeng-perspective'],
-          reason: 'test',
-        }),
-        plan: vi.fn(),
-        planToolUse: vi.fn().mockResolvedValue({
-          toolCalls: [],
-        }),
-        replyStream: vi.fn(),
-        skillReplyStream: async function* () {
-          throw new Error('reply timeout');
-        },
-      } as never,
-      {
-        list: vi.fn().mockReturnValue([]),
-        get: vi.fn().mockReturnValue({
-          name: 'zhangxuefeng-perspective',
-          description: 'desc',
-          entrypoint: '',
-          runtime: 'chat',
-          timeoutSec: 120,
-          references: [],
-          directory: '/tmp/skills/zhangxuefeng-perspective',
-          markdown: '# skill markdown',
-          referencesContent: [],
-        }),
-      } as never,
-      {
-        getFileContext: vi.fn().mockReturnValue([]),
-        list: vi.fn().mockReturnValue([]),
-      } as never,
-      {} as never,
-      {
-        requireOwned: vi.fn().mockReturnValue({
-          id: 's1',
-          title: '新会话',
-          createdAt: '',
-          updatedAt: '',
-          lastMessageAt: null,
-        }),
-        renameFromMessage: vi.fn().mockResolvedValue(undefined),
-        touch: vi.fn().mockResolvedValue(undefined),
-      } as never,
-      {
-        shouldConsiderTools: vi.fn().mockReturnValue(false),
-        list: vi.fn().mockReturnValue([]),
-        execute: vi.fn(),
-      } as never,
-      testConfig(),
+      const pendingInputs = await drainPendingInputs?.() ?? [];
+      if (pendingInputs.length > 0) {
+        await callbacks?.onRoundStart?.(firstRound + 1);
+        roundStarts.push(firstRound + 1);
+        await callbacks?.onTextDelta?.(`跟进回复：${pendingInputs.map((item) => item.content).join('\n')}`);
+        return {
+          finalText: `第一轮回复\n跟进回复：${pendingInputs.map((item) => item.content).join('\n')}`,
+          roundsUsed: 2,
+        };
+      }
+
+      return { finalText: '第一轮回复', roundsUsed: 1 };
+    });
+
+    const { service, storedEvents } = createService({ harnessRun });
+
+    const started = await service.dispatchMessage(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      { content: '第一轮请求' },
     );
+
+    await waitForCondition(() => {
+      expect(harnessRun).toHaveBeenCalledTimes(1);
+    });
+
+    const steer = await service.steerTurn(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      started.response.turnId!,
+      '补充：先看失败测试',
+    );
+    expect(steer.response.dispatch).toBe('steer_accepted');
+
+    releaseFirstRound.resolve();
+    await started.task;
+
+    expect(roundStarts).toEqual([1, 2]);
+    expect(
+      storedEvents
+        .filter((event) => event.kind === 'message' && event.role === 'user')
+        .map((event) => event.content),
+    ).toEqual(['第一轮请求', '补充：先看失败测试']);
+    expect(
+      storedEvents
+        .filter((event) => event.kind === 'message' && event.role === 'assistant')
+        .map((event) => event.content),
+    ).toEqual(['第一轮回复\n跟进回复：补充：先看失败测试']);
+  });
+
+  it('merges multiple steer inputs into one committed follow-up when harness drains them', async () => {
+    const releaseFirstRound = createDeferred<void>();
+    const harnessRun = vi.fn(async ({ drainPendingInputs, callbacks }: {
+      drainPendingInputs?: () => Promise<Array<{ content: string }>>;
+      callbacks?: {
+        onTextDelta?: (content: string) => Promise<void> | void;
+      };
+    }) => {
+      await callbacks?.onTextDelta?.('第一轮回复\n');
+      await releaseFirstRound.promise;
+      const pendingInputs = await drainPendingInputs?.() ?? [];
+      await callbacks?.onTextDelta?.(`合并跟进：${pendingInputs.map((item) => item.content).join(' | ')}`);
+      return {
+        finalText: `第一轮回复\n合并跟进：${pendingInputs.map((item) => item.content).join(' | ')}`,
+        roundsUsed: pendingInputs.length > 0 ? 2 : 1,
+      };
+    });
+
+    const { service, storedEvents } = createService({ harnessRun });
+
+    const started = await service.dispatchMessage(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      { content: '第一轮请求' },
+    );
+
+    await waitForCondition(() => {
+      expect(harnessRun).toHaveBeenCalledTimes(1);
+    });
+
+    await service.steerTurn(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      started.response.turnId!,
+      '510分，年级排名199/400',
+    );
+    await service.steerTurn(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      started.response.turnId!,
+      '文科 政史地',
+    );
+
+    releaseFirstRound.resolve();
+    await started.task;
+
+    expect(
+      storedEvents
+        .filter((event) => event.kind === 'message' && event.role === 'user')
+        .map((event) => event.content),
+    ).toEqual(['第一轮请求', '510分，年级排名199/400\n文科 政史地']);
+  });
+
+  it('surfaces harness errors and persists failure events without falling back', async () => {
+    const config = testConfig();
+    config.OPENAI_API_KEY = '';
+    const harnessRun = vi.fn(async () => {
+      throw new Error('OpenAI API key is not configured');
+    });
+
+    const { service, appendEvent } = createService({
+      config,
+      harnessRun,
+    });
 
     await expect(service.processMessage(
       { id: 'u1', username: 'tester', role: 'member' },
       's1',
-      '用张雪峰的视角帮我分析一下人工智能专业',
-    )).rejects.toThrow('reply timeout');
+      '你好',
+    )).rejects.toThrow('OpenAI API key is not configured');
 
-    await service.handleFailure('u1', 's1', new Error('reply timeout'));
+    await service.handleFailure('u1', 's1', new Error('OpenAI API key is not configured'));
 
     expect(appendEvent).toHaveBeenCalledWith(
       'u1',
       's1',
       expect.objectContaining({
         kind: 'error',
-        message: 'reply timeout',
+        message: 'OpenAI API key is not configured',
       }),
     );
-  });
-
-  it('falls back to the model client until an OpenAI API key is configured, then uses the harness immediately', async () => {
-    const config = testConfig();
-    const classify = vi.fn().mockResolvedValue({
-      mode: 'chat',
-      needClarification: false,
-      selectedSkills: [],
-      reason: 'test',
-    });
-    const replyStream = vi.fn(async function* () {
-      yield '模型回复';
-    });
-    const harnessRun = vi.fn(async ({ callbacks }: { callbacks?: { onTextDelta?: (content: string) => Promise<void> | void } }) => {
-      await callbacks?.onTextDelta?.('Harness 回复');
-    });
-
-    const service = new ChatService(
-      {
-        appendEvent: vi.fn().mockResolvedValue(undefined),
-        readEvents: vi.fn().mockResolvedValue([]),
-      } as never,
-      {
-        publish: vi.fn(),
-      } as never,
-      {
-        classify,
-        plan: vi.fn(),
-        planToolUse: vi.fn().mockResolvedValue({ toolCalls: [] }),
-        replyStream,
-        skillReplyStream: vi.fn(),
-      } as never,
-      {
-        list: vi.fn().mockReturnValue([]),
-        get: vi.fn(),
-      } as never,
-      {
-        getFileContext: vi.fn().mockReturnValue([]),
-        list: vi.fn().mockReturnValue([]),
-      } as never,
-      {} as never,
-      {
-        requireOwned: vi.fn().mockReturnValue({
-          id: 's1',
-          title: '新会话',
-          createdAt: '',
-          updatedAt: '',
-          lastMessageAt: null,
-          activeSkills: [],
-        }),
-        renameFromMessage: vi.fn().mockResolvedValue(undefined),
-        touch: vi.fn().mockResolvedValue(undefined),
-      } as never,
-      {
-        shouldConsiderTools: vi.fn().mockReturnValue(false),
-        list: vi.fn().mockReturnValue([]),
-        execute: vi.fn(),
-      } as never,
-      config,
-      {
-        run: harnessRun,
-      } as never,
-    );
-
-    await service.processMessage(
-      { id: 'u1', username: 'tester', role: 'member' },
-      's1',
-      '先用普通模型回复',
-    );
-
-    expect(classify).toHaveBeenCalledTimes(1);
-    expect(replyStream).toHaveBeenCalledTimes(1);
-    expect(harnessRun).not.toHaveBeenCalled();
-
-    config.OPENAI_API_KEY = 'openai-token';
-
-    await service.processMessage(
-      { id: 'u1', username: 'tester', role: 'member' },
-      's1',
-      '现在切到 OpenAI',
-    );
-
-    expect(harnessRun).toHaveBeenCalledTimes(1);
-    expect(classify).toHaveBeenCalledTimes(1);
-    expect(replyStream).toHaveBeenCalledTimes(1);
   });
 });

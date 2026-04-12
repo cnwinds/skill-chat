@@ -6,6 +6,10 @@ runtime: python
 timeout_sec: 120
 references:
   - usage.md
+starter_prompts:
+  - 帮我生成一份本周销售报告 PDF
+  - 把这段内容整理成一份可下载 PDF
+  - 根据上传材料生成一份摘要 PDF
 ---
 
 # PDF Skill

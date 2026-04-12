@@ -13,7 +13,9 @@ import {
   fileBucketSchema,
   loginSchema,
   registerRequestSchema,
+  steerMessageSchema,
   systemSettingsPatchSchema,
+  turnParamsSchema,
   updateSessionSchema,
   userPreferenceSettingsSchema,
   type AuthResponse,
@@ -26,7 +28,6 @@ import { ensureBaseDirectories } from './core/storage/fs-utils.js';
 import { MessageStore } from './core/storage/message-store.js';
 import { StreamHub } from './core/stream/stream-hub.js';
 import { SkillRegistry } from './modules/skills/skill-registry.js';
-import { DynamicModelClient } from './core/llm/dynamic-model-client.js';
 import { AuthService } from './modules/auth/auth-service.js';
 import { SessionService } from './modules/sessions/session-service.js';
 import { FileService } from './modules/files/file-service.js';
@@ -186,18 +187,14 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   const sessionService = new SessionService(db, config);
   const fileService = new FileService(db, config);
   const runnerManager = new RunnerManager(config, fileService);
-  const assistantToolService = new AssistantToolService(config, fileService, skillRegistry);
-  const modelClient = new DynamicModelClient(config);
-  const openAIHarness = new OpenAIHarness(config, assistantToolService, runnerManager, skillRegistry);
+  const assistantToolService = new AssistantToolService(config, fileService);
+  const openAIHarness = new OpenAIHarness(config, assistantToolService, runnerManager);
   const chatService = new ChatService(
     messageStore,
     streamHub,
-    modelClient,
     skillRegistry,
     fileService,
-    runnerManager,
     sessionService,
-    assistantToolService,
     config,
     openAIHarness,
   );
@@ -339,13 +336,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   app.patch('/api/admin/system-settings', { preHandler: [app.authenticate, ensureAdmin] }, async (request, reply) => {
     try {
       const input = systemSettingsPatchSchema.parse(request.body ?? {});
-      const payload = {
-        ...input,
-        defaultSessionActiveSkills: typeof input.defaultSessionActiveSkills === 'undefined'
-          ? undefined
-          : normalizeActiveSkills(input.defaultSessionActiveSkills, knownSkillNames),
-      };
-      return systemSettingsService.updateSettings(payload, request.user.sub);
+      return systemSettingsService.updateSettings(input, request.user.sub);
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '更新系统配置失败') });
     }
@@ -407,11 +398,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   app.post('/api/sessions', { preHandler: app.authenticate }, async (request, reply) => {
     try {
       const input = createSessionSchema.parse(request.body ?? {});
-      const defaultSessionActiveSkills = normalizeActiveSkills(
-        systemSettingsService.getSettings().defaultSessionActiveSkills,
-        knownSkillNames,
-      );
-      const activeSkills = normalizeActiveSkills(input.activeSkills ?? defaultSessionActiveSkills, knownSkillNames);
+      const activeSkills = normalizeActiveSkills(input.activeSkills, knownSkillNames);
       return await sessionService.create(request.user.sub, input.title, activeSkills);
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '创建会话失败') });
@@ -456,28 +443,93 @@ export const createApp = async (options: CreateAppOptions = {}) => {
       const input = createMessageSchema.parse(request.body);
       sessionService.requireOwned(request.user.sub, params.id);
 
-      const runId = `run_${Date.now()}`;
-      const task = chatService.processMessage(
+      const result = await chatService.dispatchMessage(
         {
           id: request.user.sub,
           username: request.user.username,
           role: request.user.role,
         },
         params.id,
-        input.content,
-      ).catch((error) => chatService.handleFailure(request.user.sub, params.id, error));
+        input,
+      );
 
-      if (config.INLINE_JOBS) {
-        await task;
+      if (config.INLINE_JOBS && result.task) {
+        await result.task;
       }
 
-      return {
-        accepted: true,
-        messageId: `msg_${Date.now()}`,
-        runId,
-      };
+      return result.response;
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '发送消息失败') });
+    }
+  });
+
+  app.get('/api/sessions/:id/runtime', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      const params = z.object({ id: z.string().min(1) }).parse(request.params);
+      return await chatService.getRuntime(request.user.sub, params.id);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取运行态失败') });
+    }
+  });
+
+  app.delete('/api/sessions/:id/runtime/queue/:inputId', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      const params = z.object({
+        id: z.string().min(1),
+        inputId: z.string().min(1),
+      }).parse(request.params);
+      return await chatService.removeFollowUpInput(
+        {
+          id: request.user.sub,
+          username: request.user.username,
+          role: request.user.role,
+        },
+        params.id,
+        params.inputId,
+      );
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '取消待处理输入失败') });
+    }
+  });
+
+  app.post('/api/sessions/:id/turns/:turnId/steer', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      const params = z.object({
+        id: z.string().min(1),
+      }).merge(turnParamsSchema).parse(request.params);
+      const input = steerMessageSchema.parse(request.body);
+      const result = await chatService.steerTurn(
+        {
+          id: request.user.sub,
+          username: request.user.username,
+          role: request.user.role,
+        },
+        params.id,
+        params.turnId,
+        input.content,
+      );
+      return result.response;
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '追加引导失败') });
+    }
+  });
+
+  app.post('/api/sessions/:id/turns/:turnId/interrupt', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      const params = z.object({
+        id: z.string().min(1),
+      }).merge(turnParamsSchema).parse(request.params);
+      return await chatService.interruptTurn(
+        {
+          id: request.user.sub,
+          username: request.user.username,
+          role: request.user.role,
+        },
+        params.id,
+        params.turnId,
+      );
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '中断失败') });
     }
   });
 

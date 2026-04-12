@@ -11,32 +11,12 @@ const envSchema = z.object({
   SKILLS_ROOT: z.string().default('./skills'),
   JWT_SECRET: z.string().min(8).default('change-me-now'),
   JWT_EXPIRES_IN: z.string().default('7d'),
-  DEFAULT_SESSION_ACTIVE_SKILLS: z.preprocess((value) => {
-    if (Array.isArray(value)) {
-      return value;
-    }
-    if (typeof value === 'string') {
-      return value
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-    }
-    return [];
-  }, z.array(z.string())).default([]),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_API_KEY: z.string().optional().default(''),
-  OPENAI_MODEL_ROUTER: z.string().default('gpt-4o-mini'),
-  OPENAI_MODEL_PLANNER: z.string().default('gpt-4o-mini'),
-  OPENAI_MODEL_REPLY: z.string().default('gpt-5.4'),
-  OPENAI_REASONING_EFFORT_REPLY: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).default('xhigh'),
+  OPENAI_MODEL: z.string().default('gpt-5.4'),
+  OPENAI_REASONING_EFFORT: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).default('xhigh'),
   LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(10240),
   TOOL_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(4096),
-  ANTHROPIC_BASE_URL: z.string().url().default('https://api.anthropic.com'),
-  ANTHROPIC_AUTH_TOKEN: z.string().optional().default(''),
-  ANTHROPIC_API_KEY: z.string().optional().default(''),
-  ANTHROPIC_MODEL_ROUTER: z.string().default('claude-sonnet-4-5'),
-  ANTHROPIC_MODEL_PLANNER: z.string().default('claude-sonnet-4-5'),
-  ANTHROPIC_MODEL_REPLY: z.string().default('claude-sonnet-4-5'),
   ENABLE_ASSISTANT_TOOLS: z.coerce.boolean().default(true),
   LLM_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(45000),
   MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(5),
@@ -65,6 +45,8 @@ export const loadConfig = (cwd: string, overrides: ConfigOverrides = {}): AppCon
   const raw = envSchema.parse({
     ...process.env,
     ...overrides,
+    OPENAI_MODEL: overrides.OPENAI_MODEL ?? process.env.OPENAI_MODEL,
+    OPENAI_REASONING_EFFORT: overrides.OPENAI_REASONING_EFFORT ?? process.env.OPENAI_REASONING_EFFORT,
   });
 
   const dataRoot = path.resolve(cwd, raw.DATA_ROOT);

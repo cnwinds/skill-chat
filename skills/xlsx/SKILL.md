@@ -6,6 +6,10 @@ runtime: python
 timeout_sec: 120
 references:
   - usage.md
+starter_prompts:
+  - 把上传的 CSV 整理成 Excel
+  - 生成一份带汇总 sheet 的 Excel 表
+  - 把这份数据做成 Excel 并加一个简单图表
 ---
 
 # XLSX Skill

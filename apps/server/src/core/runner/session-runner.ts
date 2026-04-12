@@ -37,6 +37,7 @@ export class SessionRunner {
     prompt: string;
     toolArguments: Record<string, unknown>;
     files: Array<{ name: string; path: string; mimeType: string | null }>;
+    signal?: AbortSignal;
     callbacks: RunnerCallbacks;
   }) {
     const workDir = getSessionRoot(this.config, this.userId, this.sessionId);
@@ -71,6 +72,12 @@ export class SessionRunner {
     };
 
     await fs.writeFile(requestPath, JSON.stringify(requestPayload, null, 2), 'utf8');
+
+    if (args.signal?.aborted) {
+      throw args.signal.reason instanceof Error
+        ? args.signal.reason
+        : new DOMException('Turn interrupted', 'AbortError');
+    }
 
     const entryPath = path.join(args.skill.directory, args.skill.entrypoint);
     const venvPython = path.join(this.config.CWD, '.venv', 'bin', 'python');
@@ -145,14 +152,68 @@ export class SessionRunner {
     });
 
     await new Promise<void>((resolve, reject) => {
-      child.once('error', reject);
-      child.once('close', (code) => {
-        if (code === 0) {
-          resolve();
-        } else {
-          reject(new Error(`Skill exited with code ${code}`));
+      let settled = false;
+      let abortTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const finalize = (callback: () => void) => {
+        if (settled) {
+          return;
         }
+        settled = true;
+        if (abortTimer) {
+          clearTimeout(abortTimer);
+        }
+        args.signal?.removeEventListener('abort', onAbort);
+        callback();
+      };
+
+      const onAbort = () => {
+        if (child.exitCode === null) {
+          child.kill('SIGTERM');
+          abortTimer = setTimeout(() => {
+            if (child.exitCode === null) {
+              child.kill('SIGKILL');
+            }
+          }, 250);
+        }
+
+        finalize(() => {
+          reject(
+            args.signal?.reason instanceof Error
+              ? args.signal.reason
+              : new DOMException('Turn interrupted', 'AbortError'),
+          );
+        });
+      };
+
+      child.once('error', (error) => {
+        finalize(() => reject(error));
       });
+      child.once('close', (code) => {
+        finalize(() => {
+          if (args.signal?.aborted) {
+            reject(
+              args.signal.reason instanceof Error
+                ? args.signal.reason
+                : new DOMException('Turn interrupted', 'AbortError'),
+            );
+            return;
+          }
+
+          if (code === 0) {
+            resolve();
+            return;
+          }
+
+          reject(new Error(`Skill exited with code ${code}`));
+        });
+      });
+
+      if (args.signal?.aborted) {
+        onAbort();
+      } else {
+        args.signal?.addEventListener('abort', onAbort, { once: true });
+      }
     });
 
     await Promise.allSettled(linePromises);

@@ -230,29 +230,26 @@ CREATE TABLE IF NOT EXISTS system_settings (
 
 - 第一批
   - `registration_requires_invite_code`
-  - `default_session_active_skills`
   - `enable_assistant_tools`
   - `web_origin`
-  - `openai_model_router`
-  - `openai_model_planner`
-  - `openai_model_reply`
-  - `openai_reasoning_effort_reply`
+  - `openai_base_url`
+  - `openai_api_key`
+  - `openai_model`
+  - `openai_reasoning_effort`
+  - `anthropic_base_url`
+  - `anthropic_api_key`
+  - `anthropic_model`
   - `llm_max_output_tokens`
   - `tool_max_output_tokens`
 - 第二批
-  - `anthropic_model_router`
-  - `anthropic_model_planner`
-  - `anthropic_model_reply`
   - `run_timeout_ms`
   - `max_concurrent_runs`
 - 不建议放入系统配置页的项
   - `jwt_secret`
-  - `openai_api_key`
-  - `anthropic_api_key`
   - `db_path`
   - `data_root`
   - `cwd`
-  - 其他涉及部署路径、密钥、进程级启动参数的配置
+  - 其他涉及部署路径、进程级启动参数的配置
 
 存储建议：
 
@@ -428,14 +425,16 @@ CREATE TABLE IF NOT EXISTS user_settings (
 ```json
 {
   "registrationRequiresInviteCode": true,
-  "defaultSessionActiveSkills": ["pdf", "docx"],
   "enableAssistantTools": true,
   "webOrigin": "http://localhost:5173",
   "modelConfig": {
-    "openaiModelRouter": "gpt-4o-mini",
-    "openaiModelPlanner": "gpt-4o-mini",
-    "openaiModelReply": "gpt-5.4",
-    "openaiReasoningEffortReply": "high",
+    "openaiBaseUrl": "https://api.openai.com/v1",
+    "openaiApiKey": "",
+    "openaiModel": "gpt-5.4",
+    "openaiReasoningEffort": "high",
+    "anthropicBaseUrl": "https://api.anthropic.com",
+    "anthropicApiKey": "",
+    "anthropicModel": "claude-sonnet-4-5",
     "llmMaxOutputTokens": 4096,
     "toolMaxOutputTokens": 3072
   }
@@ -458,7 +457,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
 - 仅管理员可访问
 - 修改后立即生效
 - 仅允许修改白名单配置项
-- 密钥、数据库路径、目录路径等敏感或进程级配置不允许在线修改
+- 模型 `baseUrl` / `apiKey` / `model` / `reasoningEffort` 支持在线修改，但接口仍必须限制为管理员使用，并在前端做脱敏展示
+- 数据库路径、目录路径等进程级配置不允许在线修改
 - 模型配置、token 上限等常用运行参数属于第一批可在线修改项
 
 ---
@@ -674,8 +674,8 @@ CREATE TABLE IF NOT EXISTS user_settings (
 
 并明确说明：
 
-- 密钥与路径类配置仍保留在 `.env`
-- 系统配置页不会展示也不会修改这些敏感项
+- 模型接入配置（`baseUrl` / `apiKey` / `model` / `reasoningEffort`）可在系统配置页维护，并对管理员以脱敏方式展示
+- 路径类与其他进程级启动参数仍保留在 `.env`
 
 ### 当前用户偏好设置
 

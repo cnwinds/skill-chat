@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import type { FileEvent, TextMessageEvent, ThinkingEvent, ToolProgressEvent } from '@skillchat/shared';
 import { MessageItem } from './components/MessageItem';
 import type { ToolTraceDisplayEvent } from './lib/timeline';
 
 describe('MessageItem', () => {
   afterEach(() => {
+    cleanup();
     vi.useRealTimers();
   });
 

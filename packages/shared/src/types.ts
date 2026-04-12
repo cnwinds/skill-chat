@@ -6,6 +6,17 @@ export type MessageKind = (typeof MESSAGE_KINDS)[number];
 export type SSEEventName = (typeof SSE_EVENT_NAMES)[number];
 
 export type MessageRole = 'user' | 'assistant' | 'system';
+export type MessageDispatchMode = 'auto' | 'new_turn' | 'steer' | 'queue_next';
+export type MessageDispatchResult = 'turn_started' | 'steer_accepted' | 'queued';
+export type TurnKind = 'regular' | 'review' | 'compact' | 'maintenance';
+export type TurnStatus = 'running' | 'interrupting' | 'completed' | 'failed' | 'interrupted';
+export type TurnPhase =
+  | 'sampling'
+  | 'tool_call'
+  | 'waiting_tool_result'
+  | 'streaming_assistant'
+  | 'finalizing'
+  | 'non_steerable';
 
 export interface UserSummary {
   id: string;
@@ -27,18 +38,13 @@ export interface SystemStatus {
 
 export interface SystemSettings {
   registrationRequiresInviteCode: boolean;
-  defaultSessionActiveSkills: string[];
   enableAssistantTools: boolean;
   webOrigin: string;
   modelConfig: {
     openaiBaseUrl: string;
     openaiApiKey: string;
-    openaiModelRouter: string;
-    openaiModelPlanner: string;
-    openaiModelReply: string;
-    openaiReasoningEffortReply: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-    anthropicBaseUrl: string;
-    anthropicApiKey: string;
+    openaiModel: string;
+    openaiReasoningEffort: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
     llmMaxOutputTokens: number;
     toolMaxOutputTokens: number;
   };
@@ -77,6 +83,7 @@ export interface SkillMetadata {
   runtime: 'python' | 'node' | 'chat';
   timeoutSec: number;
   references: string[];
+  starterPrompts?: string[];
 }
 
 export interface FileRecord {
@@ -167,24 +174,6 @@ export interface SSEvent<T = unknown> {
   data: T;
 }
 
-export interface RouterDecision {
-  mode: 'chat' | 'skill';
-  needClarification: boolean;
-  selectedSkills: string[];
-  reason: string;
-}
-
-export interface ToolCall {
-  skill: string;
-  action: 'run';
-  arguments: Record<string, unknown>;
-}
-
-export interface PlannerResult {
-  assistantMessage: string;
-  toolCalls: ToolCall[];
-}
-
 export interface SessionFileContext {
   id: string;
   name: string;
@@ -192,4 +181,90 @@ export interface SessionFileContext {
   size: number;
   bucket: FileBucket;
   relativePath: string;
+}
+
+export interface RuntimeInputPreview {
+  inputId: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface ActiveTurnRuntime {
+  turnId: string;
+  kind: TurnKind;
+  status: TurnStatus;
+  phase: TurnPhase;
+  phaseStartedAt: string;
+  canSteer: boolean;
+  startedAt: string;
+  round: number;
+}
+
+export interface SessionRuntimeRecovery {
+  recoveredAt: string;
+  previousTurnId: string;
+  previousTurnKind: TurnKind;
+  reason: 'process_restarted';
+}
+
+export interface SessionRuntimeSnapshot {
+  sessionId: string;
+  activeTurn: ActiveTurnRuntime | null;
+  followUpQueue: RuntimeInputPreview[];
+  recovery: SessionRuntimeRecovery | null;
+}
+
+export interface MessageDispatchRequest {
+  content: string;
+  dispatch?: MessageDispatchMode;
+  turnId?: string;
+  kind?: TurnKind;
+}
+
+export interface MessageDispatchResponse {
+  accepted: boolean;
+  dispatch: MessageDispatchResult;
+  messageId: string;
+  runId: string;
+  turnId?: string;
+  inputId: string;
+  runtime: SessionRuntimeSnapshot;
+}
+
+export interface TurnInterruptResponse {
+  accepted: boolean;
+  turnId: string;
+  runtime: SessionRuntimeSnapshot;
+}
+
+export interface FollowUpQueueMutationResponse {
+  accepted: boolean;
+  inputId: string;
+  runtime: SessionRuntimeSnapshot;
+}
+
+export interface TurnLifecyclePayload {
+  turnId: string;
+  kind: TurnKind;
+  status: TurnStatus;
+  phase: TurnPhase;
+  phaseStartedAt: string;
+  canSteer: boolean;
+  startedAt?: string;
+  round: number;
+  followUpQueueCount: number;
+}
+
+export interface UserMessageCommittedPayload {
+  turnId: string;
+  inputId: string;
+  content: string;
+  createdAt: string;
+  consumedInputIds?: string[];
+}
+
+export interface TurnCompletedPayload {
+  turnId: string;
+  kind: TurnKind;
+  status: TurnStatus;
 }

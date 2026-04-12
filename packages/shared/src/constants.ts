@@ -9,6 +9,10 @@ export const SSE_EVENT_NAMES = [
   'tool_progress',
   'tool_result',
   'file_ready',
+  'turn_started',
+  'turn_status',
+  'user_message_committed',
+  'turn_completed',
   'done',
   'error',
 ] as const;

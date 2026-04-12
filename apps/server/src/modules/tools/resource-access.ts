@@ -58,7 +58,7 @@ export const resolveWorkspaceRoot = ({
 
   if (root === 'skill') {
     if (!skill) {
-      throw new Error('当前没有激活的 Skill，无法读取 skill 工作区');
+      throw new Error('当前没有已启用的 Skill，无法读取 skill 工作区');
     }
 
     return {

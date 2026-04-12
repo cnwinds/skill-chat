@@ -15,22 +15,13 @@ const createConfig = (): AppConfig => ({
   JWT_EXPIRES_IN: '7d',
   OPENAI_BASE_URL: 'http://example.com/v1',
   OPENAI_API_KEY: 'test-token',
-  OPENAI_MODEL_ROUTER: 'gpt-4o-mini',
-  OPENAI_MODEL_PLANNER: 'gpt-4o-mini',
-  OPENAI_MODEL_REPLY: 'gpt-5.4',
-  OPENAI_REASONING_EFFORT_REPLY: 'xhigh',
+  OPENAI_MODEL: 'gpt-5.4',
+  OPENAI_REASONING_EFFORT: 'xhigh',
   LLM_MAX_OUTPUT_TOKENS: 4096,
   TOOL_MAX_OUTPUT_TOKENS: 3072,
-      ANTHROPIC_BASE_URL: 'http://example.com',
-      ANTHROPIC_AUTH_TOKEN: '',
-      ANTHROPIC_API_KEY: '',
-      ANTHROPIC_MODEL_ROUTER: 'claude-sonnet-4-5',
-      ANTHROPIC_MODEL_PLANNER: 'claude-sonnet-4-5',
-      ANTHROPIC_MODEL_REPLY: 'claude-sonnet-4-5',
-      DEFAULT_SESSION_ACTIVE_SKILLS: [],
-      ENABLE_ASSISTANT_TOOLS: true,
-      LLM_REQUEST_TIMEOUT_MS: 1_000,
-      MAX_CONCURRENT_RUNS: 5,
+  ENABLE_ASSISTANT_TOOLS: true,
+  LLM_REQUEST_TIMEOUT_MS: 1_000,
+  MAX_CONCURRENT_RUNS: 5,
   RUN_TIMEOUT_MS: 120_000,
   USER_STORAGE_QUOTA_MB: 1024,
 });
@@ -152,10 +143,6 @@ describe('OpenAIHarness', () => {
         execute,
       } as never,
       {} as never,
-      {
-        listRegistered: vi.fn().mockReturnValue([zhangXuefengSkill, pdfSkill]),
-        get: vi.fn(),
-      } as never,
     );
 
     const toolCalls: string[] = [];
@@ -168,7 +155,7 @@ describe('OpenAIHarness', () => {
       message: '扮演张雪峰帮我分析人工智能专业',
       history: [],
       files: [],
-      activatedSkills: [zhangXuefengSkill],
+      availableSkills: [zhangXuefengSkill],
       callbacks: {
         onToolCall: ({ tool }) => {
           toolCalls.push(tool);
@@ -190,8 +177,9 @@ describe('OpenAIHarness', () => {
 
     const firstRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(String(firstRequest.instructions)).toContain('skills/zhangxuefeng-perspective/SKILL.md');
-    expect(String(firstRequest.instructions)).toContain('## Explicitly Activated Skills');
-    expect(String(firstRequest.instructions)).toContain('- zhangxuefeng-perspective (file: skills/zhangxuefeng-perspective/SKILL.md)');
+    expect(String(firstRequest.instructions)).toContain('## Enabled Skills');
+    expect(String(firstRequest.instructions)).toContain('- zhangxuefeng-perspective: 以张雪峰风格给出专业和志愿建议。');
+    expect(String(firstRequest.instructions)).not.toContain('- pdf: 生成 PDF 文件。');
     expect(String(firstRequest.instructions)).not.toContain('# 张雪峰风格');
 
     const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
@@ -201,6 +189,89 @@ describe('OpenAIHarness', () => {
         call_id: 'call_read_skill',
       }),
     ]));
+  });
+
+  it('streams text deltas before the local tool round finishes', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '先看就业数据，',
+          },
+        },
+        {
+          event: 'response.output_item.done',
+          data: {
+            type: 'response.output_item.done',
+            item: {
+              id: 'fc_1',
+              type: 'function_call',
+              call_id: 'call_read_skill',
+              name: 'read_workspace_path_slice',
+              arguments: JSON.stringify({
+                root: 'workspace',
+                path: 'skills/zhangxuefeng-perspective/SKILL.md',
+                startLine: 1,
+                endLine: 40,
+              }),
+            },
+          },
+        },
+      ]))
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '再给你结论。',
+          },
+        },
+      ]));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const textDeltas: string[] = [];
+    const execute = vi.fn(async () => {
+      expect(textDeltas).toEqual(['先看就业数据，']);
+      return {
+        tool: 'read_workspace_path_slice',
+        arguments: {
+          root: 'workspace',
+          path: 'skills/zhangxuefeng-perspective/SKILL.md',
+        },
+        summary: '已读取 zhangxuefeng skill',
+        content: '文件内容：先看就业，再看城市。',
+        context: '文件内容：先看就业，再看城市。',
+      };
+    });
+
+    const harness = new OpenAIHarness(
+      createConfig(),
+      {
+        execute,
+      } as never,
+      {} as never,
+    );
+
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '分析人工智能专业',
+      history: [],
+      files: [],
+      availableSkills: [zhangXuefengSkill],
+      callbacks: {
+        onTextDelta: (delta) => {
+          textDeltas.push(delta);
+        },
+      },
+    });
+
+    expect(result.finalText).toBe('先看就业数据，再给你结论。');
+    expect(textDeltas).toEqual(['先看就业数据，', '再给你结论。']);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it('uses local web_search function tool inside the harness loop', async () => {
@@ -255,10 +326,6 @@ describe('OpenAIHarness', () => {
         execute,
       } as never,
       {} as never,
-      {
-        listRegistered: vi.fn().mockReturnValue([zhangXuefengSkill]),
-        get: vi.fn(),
-      } as never,
     );
 
     const result = await harness.run({
@@ -267,7 +334,7 @@ describe('OpenAIHarness', () => {
       message: '帮我看下人工智能专业的最新就业情况',
       history: [],
       files: [],
-      activatedSkills: [zhangXuefengSkill],
+      availableSkills: [zhangXuefengSkill],
       callbacks: {
         onToolCall: ({ tool, arguments: toolArguments }) => {
           toolCalls.push({ tool, arguments: toolArguments });
@@ -317,6 +384,79 @@ describe('OpenAIHarness', () => {
       }),
     ]));
     expect(secondRequest.input.some((item: { type?: string }) => item.type === 'web_search_call')).toBe(false);
+  });
+
+  it('drains pending steer inputs at a round boundary and continues within the same turn', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '先给出第一部分分析。',
+          },
+        },
+      ]))
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '再根据你的补充继续完善。',
+          },
+        },
+      ]));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const harness = new OpenAIHarness(
+      createConfig(),
+      {
+        execute: vi.fn(),
+      } as never,
+      {} as never,
+    );
+
+    const drainPendingInputs = vi.fn()
+      .mockResolvedValueOnce([
+        {
+          inputId: 'input_steer_1',
+          content: '补充：优先看失败测试',
+          createdAt: '2026-04-12T00:00:00.000Z',
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const textDeltas: string[] = [];
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '分析这个问题',
+      history: [],
+      files: [],
+      drainPendingInputs,
+      callbacks: {
+        onTextDelta: (delta) => {
+          textDeltas.push(delta);
+        },
+      },
+    });
+
+    expect(result.finalText).toBe('先给出第一部分分析。再根据你的补充继续完善。');
+    expect(textDeltas).toEqual(['先给出第一部分分析。', '再根据你的补充继续完善。']);
+    expect(drainPendingInputs).toHaveBeenCalledTimes(2);
+
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(secondRequest.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'assistant',
+        content: '先给出第一部分分析。',
+      }),
+      expect.objectContaining({
+        role: 'user',
+        content: '补充：优先看失败测试',
+      }),
+    ]));
   });
 
   it('replays only function_call items into follow-up requests', async () => {
@@ -396,10 +536,6 @@ describe('OpenAIHarness', () => {
         execute,
       } as never,
       {} as never,
-      {
-        listRegistered: vi.fn().mockReturnValue([zhangXuefengSkill]),
-        get: vi.fn(),
-      } as never,
     );
 
     const result = await harness.run({
@@ -408,7 +544,7 @@ describe('OpenAIHarness', () => {
       message: '帮我看下就业情况',
       history: [],
       files: [],
-      activatedSkills: [zhangXuefengSkill],
+      availableSkills: [zhangXuefengSkill],
     });
 
     expect(result.finalText).toContain('skill');
@@ -511,10 +647,6 @@ describe('OpenAIHarness', () => {
         execute,
       } as never,
       {} as never,
-      {
-        listRegistered: vi.fn().mockReturnValue([zhangXuefengSkill]),
-        get: vi.fn(),
-      } as never,
     );
 
     const result = await harness.run({
@@ -523,7 +655,7 @@ describe('OpenAIHarness', () => {
       message: '扮演张雪峰，帮我分析人工智能专业值不值得报',
       history: [],
       files: [],
-      activatedSkills: [zhangXuefengSkill],
+      availableSkills: [zhangXuefengSkill],
     });
 
     expect(result.finalText).toContain('补充读取了专业参考资料');
@@ -683,10 +815,6 @@ describe('OpenAIHarness', () => {
         execute,
       } as never,
       {} as never,
-      {
-        listRegistered: vi.fn().mockReturnValue([zhangXuefengSkill]),
-        get: vi.fn(),
-      } as never,
     );
 
     const result = await harness.run({
@@ -695,7 +823,7 @@ describe('OpenAIHarness', () => {
       message: '扮演张雪峰，结合时间线背景回答',
       history: [],
       files: [],
-      activatedSkills: [zhangXuefengSkill],
+      availableSkills: [zhangXuefengSkill],
     });
 
     expect(result.finalText).toContain('先读了 skill 总纲');
@@ -824,15 +952,6 @@ describe('OpenAIHarness', () => {
       {
         execute: runnerExecute,
       } as never,
-      {
-        listRegistered: vi.fn().mockReturnValue([zhangXuefengSkill, pdfSkill]),
-        get: vi.fn().mockImplementation((name: string) => {
-          if (name === 'pdf') {
-            return pdfSkill;
-          }
-          return zhangXuefengSkill;
-        }),
-      } as never,
     );
 
     const result = await harness.run({
@@ -841,7 +960,7 @@ describe('OpenAIHarness', () => {
       message: '帮我生成一份周报 PDF',
       history: [],
       files: [],
-      activatedSkills: [pdfSkill],
+      availableSkills: [pdfSkill],
       callbacks: {
         onToolProgress: ({ message }) => {
           progressMessages.push(message);
@@ -967,10 +1086,6 @@ describe('OpenAIHarness', () => {
       {
         execute: runnerExecute,
       } as never,
-      {
-        listRegistered: vi.fn().mockReturnValue([pdfSkill]),
-        get: vi.fn().mockReturnValue(pdfSkill),
-      } as never,
     );
 
     const result = await harness.run({
@@ -979,7 +1094,7 @@ describe('OpenAIHarness', () => {
       message: '列院校策略，帮我生成 pdf',
       history: [],
       files: [],
-      activatedSkills: [pdfSkill],
+      availableSkills: [pdfSkill],
     });
 
     expect(result.finalText).toContain('最终内容生成');

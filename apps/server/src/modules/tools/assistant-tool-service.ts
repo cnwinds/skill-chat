@@ -5,15 +5,10 @@ import { z } from 'zod';
 import type { FileRecord, SessionFileContext } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
 import { FileService } from '../files/file-service.js';
-import type {
-  AssistantToolDefinition,
-  PlannedAssistantToolCall,
-} from '../../core/llm/model-client.js';
 import { isOpenAIResponsesRecord, streamOpenAIResponsesEvents } from '../../core/llm/openai-responses.js';
 import { assertPathInside, sanitizeFilename } from '../../core/storage/fs-utils.js';
 import { getUserRoot, resolveUserPath } from '../../core/storage/paths.js';
-import type { RegisteredSkill, SkillRegistry } from '../skills/skill-registry.js';
-import { buildAssistantToolCatalog } from './tool-catalog.js';
+import type { RegisteredSkill } from '../skills/skill-registry.js';
 import {
   ensureArtifactPath,
   formatListedWorkspaceEntries,
@@ -49,6 +44,11 @@ type NativeWebSearchAction = {
   queries?: string[];
   url?: string;
   pattern?: string;
+};
+
+type PlannedAssistantToolCall = {
+  tool: string;
+  arguments: Record<string, unknown>;
 };
 
 export interface ExecutedAssistantToolResult {
@@ -312,33 +312,21 @@ const extractHtmlExcerpt = (html: string, maxChars: number) => {
   ].filter(Boolean).join('\n\n');
 };
 
+const normalizeWorkspaceToolPath = (value?: string) => value
+  ? value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  : '';
+
 export class AssistantToolService {
   constructor(
     private readonly config: AppConfig,
     private readonly fileService: FileService,
-    private readonly skillRegistry: SkillRegistry,
   ) {}
-
-  list(_skill?: RegisteredSkill): AssistantToolDefinition[] {
-    return buildAssistantToolCatalog({
-      includeSkillTools: true,
-    });
-  }
-
-  shouldConsiderTools(message: string, files: SessionFileContext[], skillName?: string) {
-    return (
-      /https?:\/\/|最新|最近|今天|今年|当前|数据|排名|分数线|政策|新闻|搜索|搜一下|查一下|官网|网页|网址|链接|就业|薪资|录取/.test(message) ||
-      /文件|附件|上传|文档|pdf|word|excel|csv|表格|内容|看看|读取|总结|分析|目录|工作区|模板|脚本|本地文件|参考资料|参考文件|skill/i.test(message) ||
-      /保存成|写入文件|生成报告|导出成|输出到文件|落盘|写到输出目录/i.test(message) ||
-      (skillName === 'zhangxuefeng-perspective' && /(专业|学校|院校|就业|薪资|录取|分数|参考|资料)/.test(message)) ||
-      files.length > 0
-    );
-  }
 
   async execute(args: {
     userId: string;
     sessionId: string;
     call: PlannedAssistantToolCall;
+    availableSkills?: RegisteredSkill[];
     skill?: RegisteredSkill;
   }): Promise<ExecutedAssistantToolResult> {
     switch (args.call.tool) {
@@ -351,13 +339,25 @@ export class AssistantToolService {
       case 'read_file':
         return this.executeReadFile(args.userId, args.sessionId, args.call.arguments);
       case 'list_workspace_paths':
-        return this.executeListWorkspacePaths(args.userId, args.sessionId, args.call.arguments, args.skill);
+        return this.executeListWorkspacePaths(
+          args.userId,
+          args.sessionId,
+          args.call.arguments,
+          args.availableSkills ?? [],
+          args.skill,
+        );
       case 'read_workspace_path_slice':
-        return this.executeReadWorkspacePathSlice(args.userId, args.sessionId, args.call.arguments, args.skill);
+        return this.executeReadWorkspacePathSlice(
+          args.userId,
+          args.sessionId,
+          args.call.arguments,
+          args.availableSkills ?? [],
+          args.skill,
+        );
       case 'list_skill_resources':
-        return this.executeListSkillResources(args.call.arguments, args.skill);
+        return this.executeListSkillResources(args.call.arguments, args.availableSkills ?? [], args.skill);
       case 'read_skill_resource_slice':
-        return this.executeReadSkillResourceSlice(args.call.arguments, args.skill);
+        return this.executeReadSkillResourceSlice(args.call.arguments, args.availableSkills ?? [], args.skill);
       case 'write_artifact_file':
         return this.executeWriteArtifactFile(args.userId, args.sessionId, args.call.arguments);
       default:
@@ -365,16 +365,87 @@ export class AssistantToolService {
     }
   }
 
-  private resolveTargetSkill(skill: RegisteredSkill | undefined, requestedName?: string) {
+  private resolveTargetSkill(
+    availableSkills: RegisteredSkill[],
+    skill: RegisteredSkill | undefined,
+    requestedName?: string,
+  ) {
     if (requestedName) {
-      return this.skillRegistry.get(requestedName);
+      const requestedSkill = availableSkills.find((item) => item.name === requestedName);
+      if (!requestedSkill) {
+        throw new Error(`当前会话未启用 Skill：${requestedName}`);
+      }
+      return requestedSkill;
     }
 
     if (skill) {
       return skill;
     }
 
-    throw new Error('当前没有激活的 Skill，请先指定 skillName');
+    throw new Error('当前没有已启用的 Skill，请先指定 skillName');
+  }
+
+  private assertWorkspaceSkillPathAccess(
+    root: WorkspaceRootName,
+    requestedPath: string | undefined,
+    availableSkills: RegisteredSkill[],
+  ) {
+    if (root !== 'workspace') {
+      return;
+    }
+
+    const normalizedPath = normalizeWorkspaceToolPath(requestedPath);
+    if (!normalizedPath) {
+      return;
+    }
+
+    const segments = normalizedPath.split('/').filter(Boolean);
+    if (segments[0] !== 'skills') {
+      return;
+    }
+
+    if (segments.length === 1) {
+      if (availableSkills.length === 0) {
+        throw new Error('当前会话未启用任何 Skill，不能访问 skills 目录');
+      }
+      return;
+    }
+
+    const requestedSkillName = segments[1]!;
+    if (!availableSkills.some((item) => item.name === requestedSkillName)) {
+      throw new Error(`当前会话未启用 Skill：${requestedSkillName}`);
+    }
+  }
+
+  private filterWorkspaceEntriesForSkillScope(
+    requestedPath: string | undefined,
+    entries: Awaited<ReturnType<typeof listWorkspaceEntries>>['entries'],
+    availableSkills: RegisteredSkill[],
+  ) {
+    const normalizedBasePath = normalizeWorkspaceToolPath(requestedPath);
+    const allowedSkillNames = new Set(availableSkills.map((skill) => skill.name));
+
+    return entries.filter((entry) => {
+      const fullPath = [normalizedBasePath, normalizeWorkspaceToolPath(entry.relativePath)]
+        .filter(Boolean)
+        .join('/');
+
+      if (!fullPath.startsWith('skills')) {
+        return true;
+      }
+
+      if (fullPath === 'skills') {
+        return allowedSkillNames.size > 0;
+      }
+
+      const segments = fullPath.split('/');
+      if (segments[0] !== 'skills') {
+        return true;
+      }
+
+      const skillName = segments[1];
+      return typeof skillName === 'string' && allowedSkillNames.has(skillName);
+    });
   }
 
   private formatFetchError(url: string, error: unknown, action: string) {
@@ -628,7 +699,7 @@ export class AssistantToolService {
           baseUrl: this.config.OPENAI_BASE_URL,
           timeoutMs: Math.max(this.config.LLM_REQUEST_TIMEOUT_MS, NATIVE_WEB_SEARCH_TIMEOUT_MS),
           body: {
-            model: this.config.OPENAI_MODEL_REPLY,
+            model: this.config.OPENAI_MODEL,
             instructions,
             input: [
               {
@@ -692,7 +763,7 @@ export class AssistantToolService {
           content: [
             `原始问题：${input.query}`,
             `执行方式：OpenAI Responses API 原生 web_search`,
-            `模型：${this.config.OPENAI_MODEL_REPLY}`,
+            `模型：${this.config.OPENAI_MODEL}`,
             suggestedQueries.length > 0
               ? `建议检索词：\n${suggestedQueries.map((query, index) => `${index + 1}. ${query}`).join('\n')}`
               : '',
@@ -937,9 +1008,11 @@ export class AssistantToolService {
     userId: string,
     sessionId: string,
     rawArguments: Record<string, unknown>,
+    availableSkills: RegisteredSkill[],
     skill?: RegisteredSkill,
   ): Promise<ExecutedAssistantToolResult> {
     const input = listWorkspacePathsSchema.parse(rawArguments);
+    this.assertWorkspaceSkillPathAccess(input.root as WorkspaceRootName, input.path, availableSkills);
     const descriptor = resolveWorkspaceRoot({
       config: this.config,
       userId,
@@ -954,20 +1027,23 @@ export class AssistantToolService {
       offset: input.offset,
       limit: input.limit,
     });
+    const visibleEntries = input.root === 'workspace'
+      ? this.filterWorkspaceEntriesForSkillScope(input.path, listed.entries, availableSkills)
+      : listed.entries;
 
     return {
       tool: 'list_workspace_paths',
       arguments: input,
-      summary: `${descriptor.label} 命中 ${listed.entries.length} 项${listed.hasMore ? '（已分页）' : ''}`,
+      summary: `${descriptor.label} 命中 ${visibleEntries.length} 项${listed.hasMore ? '（已分页）' : ''}`,
       content: [
         `根目录：${descriptor.label}`,
         `根路径：${descriptor.absoluteRoot}`,
         input.path ? `子路径：${input.path}` : '',
-        `总条目：${listed.total}`,
+        `总条目：${input.root === 'workspace' ? visibleEntries.length : listed.total}`,
         listed.hasMore ? `分页：offset=${input.offset}, limit=${input.limit}` : '',
-        listed.entries.length > 0 ? `目录内容：\n${formatListedWorkspaceEntries(listed.entries)}` : '目录为空。',
+        visibleEntries.length > 0 ? `目录内容：\n${formatListedWorkspaceEntries(visibleEntries)}` : '目录为空。',
       ].filter(Boolean).join('\n\n'),
-      context: listed.entries.map((entry) => `${entry.kind}:${entry.relativePath}`).join('\n'),
+      context: visibleEntries.map((entry) => `${entry.kind}:${entry.relativePath}`).join('\n'),
     };
   }
 
@@ -975,9 +1051,11 @@ export class AssistantToolService {
     userId: string,
     sessionId: string,
     rawArguments: Record<string, unknown>,
+    availableSkills: RegisteredSkill[],
     skill?: RegisteredSkill,
   ): Promise<ExecutedAssistantToolResult> {
     const input = readWorkspacePathSliceSchema.parse(rawArguments);
+    this.assertWorkspaceSkillPathAccess(input.root as WorkspaceRootName, input.path, availableSkills);
     const descriptor = resolveWorkspaceRoot({
       config: this.config,
       userId,
@@ -1037,10 +1115,11 @@ export class AssistantToolService {
 
   private async executeListSkillResources(
     rawArguments: Record<string, unknown>,
+    availableSkills: RegisteredSkill[],
     activeSkill?: RegisteredSkill,
   ): Promise<ExecutedAssistantToolResult> {
     const input = listSkillResourcesSchema.parse(rawArguments);
-    const skill = this.resolveTargetSkill(activeSkill, input.skillName);
+    const skill = this.resolveTargetSkill(availableSkills, activeSkill, input.skillName);
     const references = skill.referencesContent.map((item) => item.name);
 
     return {
@@ -1063,10 +1142,11 @@ export class AssistantToolService {
 
   private async executeReadSkillResourceSlice(
     rawArguments: Record<string, unknown>,
+    availableSkills: RegisteredSkill[],
     activeSkill?: RegisteredSkill,
   ): Promise<ExecutedAssistantToolResult> {
     const input = readSkillResourceSliceSchema.parse(rawArguments);
-    const skill = this.resolveTargetSkill(activeSkill, input.skillName);
+    const skill = this.resolveTargetSkill(availableSkills, activeSkill, input.skillName);
     const resource = input.resource === 'SKILL.md' ? 'SKILL.md' : input.resource.replace(/^references\//, '');
 
     if (resource === 'SKILL.md') {

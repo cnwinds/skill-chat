@@ -17,6 +17,7 @@ type StreamResponsesOptions = {
   baseUrl: string;
   timeoutMs: number;
   body: Record<string, unknown>;
+  signal?: AbortSignal;
 };
 
 const isRecord = (value: unknown): value is JsonObject => typeof value === 'object' && value !== null;
@@ -90,15 +91,19 @@ export const isOpenAIResponsesRecord = isRecord;
 
 export async function* streamOpenAIResponsesEvents(options: StreamResponsesOptions): AsyncIterable<OpenAIResponsesStreamEvent> {
   const controller = new AbortController();
+  const forwardAbort = () => {
+    controller.abort(options.signal?.reason);
+  };
+  options.signal?.addEventListener('abort', forwardAbort, { once: true });
   const response = await runWithInactivityTimeout({
     timeoutMs: options.timeoutMs,
     controller,
     task: () => fetch(`${options.baseUrl.replace(/\/+$/, '')}/responses`, {
       method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'content-type': 'application/json',
-        Authorization: `Bearer ${options.apiKey}`,
+          signal: controller.signal,
+          headers: {
+            'content-type': 'application/json',
+            Authorization: `Bearer ${options.apiKey}`,
       },
       body: JSON.stringify({
         ...options.body,
@@ -120,42 +125,46 @@ export async function* streamOpenAIResponsesEvents(options: StreamResponsesOptio
   const decoder = new TextDecoder();
   let buffer = '';
 
-  while (true) {
-    const { value, done } = await runWithInactivityTimeout({
-      timeoutMs: options.timeoutMs,
-      controller,
-      task: () => reader.read(),
-    });
-    if (done) {
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-
-    let separatorIndex = buffer.indexOf('\n\n');
-    while (separatorIndex >= 0) {
-      const block = buffer.slice(0, separatorIndex).trim();
-      buffer = buffer.slice(separatorIndex + 2);
-
-      if (block) {
-        const parsed = parseEventBlock(block);
-        if (parsed) {
-          maybeThrowStreamError(parsed);
-          yield parsed;
-        }
+  try {
+    while (true) {
+      const { value, done } = await runWithInactivityTimeout({
+        timeoutMs: options.timeoutMs,
+        controller,
+        task: () => reader.read(),
+      });
+      if (done) {
+        break;
       }
 
-      separatorIndex = buffer.indexOf('\n\n');
-    }
-  }
+      buffer += decoder.decode(value, { stream: true });
 
-  const tail = buffer.trim();
-  if (tail) {
-    const parsed = parseEventBlock(tail);
-    if (parsed) {
-      maybeThrowStreamError(parsed);
-      yield parsed;
+      let separatorIndex = buffer.indexOf('\n\n');
+      while (separatorIndex >= 0) {
+        const block = buffer.slice(0, separatorIndex).trim();
+        buffer = buffer.slice(separatorIndex + 2);
+
+        if (block) {
+          const parsed = parseEventBlock(block);
+          if (parsed) {
+            maybeThrowStreamError(parsed);
+            yield parsed;
+          }
+        }
+
+        separatorIndex = buffer.indexOf('\n\n');
+      }
     }
+
+    const tail = buffer.trim();
+    if (tail) {
+      const parsed = parseEventBlock(tail);
+      if (parsed) {
+        maybeThrowStreamError(parsed);
+        yield parsed;
+      }
+    }
+  } finally {
+    options.signal?.removeEventListener('abort', forwardAbort);
   }
 }
 

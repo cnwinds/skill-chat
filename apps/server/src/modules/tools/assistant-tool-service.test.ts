@@ -16,21 +16,12 @@ const createConfig = (dataRoot: string): AppConfig => ({
   INLINE_JOBS: true,
   JWT_SECRET: 'test-secret',
   JWT_EXPIRES_IN: '7d',
-  DEFAULT_SESSION_ACTIVE_SKILLS: [],
   OPENAI_BASE_URL: 'http://example.com/v1',
   OPENAI_API_KEY: 'test-token',
-  OPENAI_MODEL_ROUTER: 'gpt-4o-mini',
-  OPENAI_MODEL_PLANNER: 'gpt-4o-mini',
-  OPENAI_MODEL_REPLY: 'gpt-5.4',
-  OPENAI_REASONING_EFFORT_REPLY: 'xhigh',
+  OPENAI_MODEL: 'gpt-5.4',
+  OPENAI_REASONING_EFFORT: 'xhigh',
   LLM_MAX_OUTPUT_TOKENS: 8192,
   TOOL_MAX_OUTPUT_TOKENS: 3072,
-  ANTHROPIC_BASE_URL: 'http://example.com',
-  ANTHROPIC_AUTH_TOKEN: '',
-  ANTHROPIC_API_KEY: '',
-  ANTHROPIC_MODEL_ROUTER: 'claude-sonnet-4-5',
-  ANTHROPIC_MODEL_PLANNER: 'claude-sonnet-4-5',
-  ANTHROPIC_MODEL_REPLY: 'claude-sonnet-4-5',
   ENABLE_ASSISTANT_TOOLS: true,
   LLM_REQUEST_TIMEOUT_MS: 1000,
   MAX_CONCURRENT_RUNS: 5,
@@ -87,9 +78,6 @@ describe('AssistantToolService', () => {
         getFileContext: () => fileContext,
         recordGeneratedFile: vi.fn(),
       } as never,
-      {
-        get: vi.fn(),
-      } as never,
     );
 
     const listed = await service.execute({
@@ -132,9 +120,6 @@ describe('AssistantToolService', () => {
       {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
-      } as never,
-      {
-        get: vi.fn(),
       } as never,
     );
 
@@ -185,9 +170,6 @@ describe('AssistantToolService', () => {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
       } as never,
-      {
-        get: vi.fn(),
-      } as never,
     );
 
     await expect(service.execute({
@@ -230,9 +212,6 @@ describe('AssistantToolService', () => {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
       } as never,
-      {
-        get: vi.fn().mockReturnValue(skill),
-      } as never,
     );
 
     const listed = await service.execute({
@@ -266,6 +245,61 @@ describe('AssistantToolService', () => {
     await fs.rm(tempRoot, { recursive: true, force: true });
   });
 
+  it('rejects access to a skill resource when the skill is not enabled in the session', async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-skill-scope-'));
+    const service = new AssistantToolService(
+      createConfig(tempRoot),
+      {
+        getFileContext: () => [],
+        recordGeneratedFile: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.execute({
+      userId: 'u1',
+      sessionId: 's1',
+      availableSkills: [],
+      call: {
+        tool: 'read_skill_resource_slice',
+        arguments: {
+          skillName: 'zhangxuefeng-perspective',
+          resource: 'SKILL.md',
+        },
+      },
+    })).rejects.toThrow('当前会话未启用 Skill：zhangxuefeng-perspective');
+
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it('blocks workspace access to skills outside the session allowlist', async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-skill-workspace-scope-'));
+    await fs.mkdir(path.join(tempRoot, 'skills', 'pdf'), { recursive: true });
+    await fs.writeFile(path.join(tempRoot, 'skills', 'pdf', 'SKILL.md'), '# PDF Skill', 'utf8');
+
+    const service = new AssistantToolService(
+      createConfig(tempRoot),
+      {
+        getFileContext: () => [],
+        recordGeneratedFile: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.execute({
+      userId: 'u1',
+      sessionId: 's1',
+      availableSkills: [],
+      call: {
+        tool: 'read_workspace_path_slice',
+        arguments: {
+          root: 'workspace',
+          path: 'skills/pdf/SKILL.md',
+        },
+      },
+    })).rejects.toThrow('当前会话未启用 Skill：pdf');
+
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  });
+
   it('writes text artifacts into session outputs', async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-artifacts-'));
     const userId = 'u1';
@@ -292,9 +326,6 @@ describe('AssistantToolService', () => {
       {
         getFileContext: () => [],
         recordGeneratedFile,
-      } as never,
-      {
-        get: vi.fn(),
       } as never,
     );
 
@@ -365,9 +396,6 @@ describe('AssistantToolService', () => {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
       } as never,
-      {
-        get: vi.fn(),
-      } as never,
     );
 
     const result = await service.execute({
@@ -428,9 +456,6 @@ describe('AssistantToolService', () => {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
       } as never,
-      {
-        get: vi.fn(),
-      } as never,
     );
 
     await service.execute({
@@ -462,9 +487,6 @@ describe('AssistantToolService', () => {
       {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
-      } as never,
-      {
-        get: vi.fn(),
       } as never,
     );
 
@@ -522,9 +544,6 @@ describe('AssistantToolService', () => {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
       } as never,
-      {
-        get: vi.fn(),
-      } as never,
     );
 
     const result = await service.execute({
@@ -558,9 +577,6 @@ describe('AssistantToolService', () => {
       {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
-      } as never,
-      {
-        get: vi.fn(),
       } as never,
     );
 
@@ -604,9 +620,6 @@ describe('AssistantToolService', () => {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
       } as never,
-      {
-        get: vi.fn(),
-      } as never,
     );
 
     const result = await service.execute({
@@ -646,9 +659,6 @@ describe('AssistantToolService', () => {
       {
         getFileContext: () => [],
         recordGeneratedFile: vi.fn(),
-      } as never,
-      {
-        get: vi.fn(),
       } as never,
     );
 

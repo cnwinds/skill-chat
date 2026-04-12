@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
+import type { StoredEvent } from '@skillchat/shared';
 import { useAuthStore } from '../stores/auth-store';
 import { useUiStore } from '../stores/ui-store';
 
@@ -15,8 +16,11 @@ export const useSessionStream = (sessionId: string | null) => {
   const pushToolResult = useUiStore((state) => state.pushToolResult);
   const pushError = useUiStore((state) => state.pushError);
   const setStreamStatus = useUiStore((state) => state.setStreamStatus);
+  const applyTurnStarted = useUiStore((state) => state.applyTurnStarted);
+  const applyTurnStatus = useUiStore((state) => state.applyTurnStatus);
+  const applyUserMessageCommitted = useUiStore((state) => state.applyUserMessageCommitted);
+  const applyTurnCompleted = useUiStore((state) => state.applyTurnCompleted);
   const clearStreamContent = useUiStore((state) => state.clearStreamContent);
-  const resetStream = useUiStore((state) => state.resetStream);
 
   useEffect(() => {
     if (!sessionId || !token) {
@@ -24,7 +28,6 @@ export const useSessionStream = (sessionId: string | null) => {
     }
 
     const controller = new AbortController();
-    resetStream(sessionId);
     setStreamStatus(sessionId, 'connecting');
 
     void fetchEventSource(`/api/sessions/${sessionId}/stream`, {
@@ -124,6 +127,129 @@ export const useSessionStream = (sessionId: string | null) => {
           return;
         }
 
+        if (event.event === 'turn_started') {
+          applyTurnStarted(sessionId, {
+            turnId: String(payload.turnId ?? ''),
+            kind: (payload.kind as 'regular' | 'review' | 'compact' | 'maintenance' | undefined) ?? 'regular',
+            status: (payload.status as 'running' | 'completed' | 'failed' | 'interrupted' | undefined) ?? 'running',
+            phase: (
+              payload.phase as
+                | 'sampling'
+                | 'tool_call'
+                | 'waiting_tool_result'
+                | 'streaming_assistant'
+                | 'finalizing'
+                | 'non_steerable'
+                | undefined
+            ) ?? 'sampling',
+            phaseStartedAt: typeof payload.phaseStartedAt === 'string'
+              ? payload.phaseStartedAt
+              : (typeof payload.startedAt === 'string' ? payload.startedAt : new Date().toISOString()),
+            canSteer: Boolean(payload.canSteer),
+            startedAt: typeof payload.startedAt === 'string' ? payload.startedAt : undefined,
+            round: typeof payload.round === 'number' ? payload.round : 1,
+            followUpQueueCount: typeof payload.followUpQueueCount === 'number' ? payload.followUpQueueCount : 0,
+          });
+          return;
+        }
+
+        if (event.event === 'turn_status') {
+          applyTurnStatus(sessionId, {
+            turnId: String(payload.turnId ?? ''),
+            kind: (payload.kind as 'regular' | 'review' | 'compact' | 'maintenance' | undefined) ?? 'regular',
+            status: (
+              payload.status as
+                | 'running'
+                | 'interrupting'
+                | 'completed'
+                | 'failed'
+                | 'interrupted'
+                | undefined
+            ) ?? 'running',
+            phase: (
+              payload.phase as
+                | 'sampling'
+                | 'tool_call'
+                | 'waiting_tool_result'
+                | 'streaming_assistant'
+                | 'finalizing'
+                | 'non_steerable'
+                | undefined
+            ) ?? 'sampling',
+            phaseStartedAt: typeof payload.phaseStartedAt === 'string'
+              ? payload.phaseStartedAt
+              : (typeof payload.startedAt === 'string' ? payload.startedAt : new Date().toISOString()),
+            canSteer: Boolean(payload.canSteer),
+            startedAt: typeof payload.startedAt === 'string' ? payload.startedAt : undefined,
+            round: typeof payload.round === 'number' ? payload.round : 1,
+            followUpQueueCount: typeof payload.followUpQueueCount === 'number' ? payload.followUpQueueCount : 0,
+          });
+          return;
+        }
+
+        if (event.event === 'user_message_committed') {
+          const inputId = String(payload.inputId ?? '');
+          const content = String(payload.content ?? '');
+          const createdAt = typeof payload.createdAt === 'string' ? payload.createdAt : new Date().toISOString();
+          const consumedInputIds = Array.isArray(payload.consumedInputIds)
+            ? payload.consumedInputIds.filter((value): value is string => typeof value === 'string')
+            : undefined;
+
+          applyUserMessageCommitted(sessionId, {
+            turnId: String(payload.turnId ?? ''),
+            inputId,
+            content,
+            createdAt,
+            consumedInputIds,
+          });
+          queryClient.setQueryData<StoredEvent[]>(['messages', sessionId], (current = []) => {
+            const exists = current.some((item) => (
+              item.kind === 'message' &&
+              item.role === 'user' &&
+              item.type === 'text' &&
+              item.content === content &&
+              item.createdAt === createdAt
+            ));
+            if (exists) {
+              return current;
+            }
+
+            return [
+              ...current,
+              {
+                id: `committed-${inputId}`,
+                sessionId,
+                kind: 'message',
+                role: 'user',
+                type: 'text',
+                content,
+                createdAt,
+              },
+            ];
+          });
+          void queryClient.invalidateQueries({ queryKey: ['messages', sessionId] });
+          void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+          return;
+        }
+
+        if (event.event === 'turn_completed') {
+          applyTurnCompleted(sessionId, {
+            turnId: String(payload.turnId ?? ''),
+            kind: (payload.kind as 'regular' | 'review' | 'compact' | 'maintenance' | undefined) ?? 'regular',
+            status: (
+              payload.status as
+                | 'running'
+                | 'interrupting'
+                | 'completed'
+                | 'failed'
+                | 'interrupted'
+                | undefined
+            ) ?? 'completed',
+          });
+          void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+          return;
+        }
+
         if (event.event === 'error') {
           pushError(sessionId, {
             id: event.id || crypto.randomUUID(),
@@ -168,6 +294,10 @@ export const useSessionStream = (sessionId: string | null) => {
     };
   }, [
     appendTextDelta,
+    applyTurnCompleted,
+    applyTurnStarted,
+    applyTurnStatus,
+    applyUserMessageCommitted,
     clearStreamContent,
     pushError,
     pushThinking,
@@ -175,7 +305,6 @@ export const useSessionStream = (sessionId: string | null) => {
     pushToolProgress,
     pushToolResult,
     queryClient,
-    resetStream,
     sessionId,
     setStreamStatus,
     token,
@@ -186,5 +315,14 @@ export const useSessionStream = (sessionId: string | null) => {
     transientEvents: [],
     status: 'idle' as const,
     lastError: null,
+    activeTurnId: null,
+    activeTurnKind: null,
+    activeTurnStatus: null,
+    activeTurnPhase: null,
+    activeTurnPhaseStartedAt: null,
+    activeTurnCanSteer: false,
+    activeTurnRound: null,
+    followUpQueue: [],
+    recovery: null,
   };
 };

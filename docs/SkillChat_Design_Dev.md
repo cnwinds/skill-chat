@@ -335,17 +335,22 @@ apps/web/
 ```ts
 interface ChatModelClient {
   classify(input: RouterPrompt): Promise<RouterResult>;
-  plan(input: PlannerPrompt): Promise<PlannerResult>;
+  planToolUse(input: ToolPlanningInput): Promise<ToolPlanningResult>;
   replyStream(input: ReplyPrompt): AsyncIterable<string>;
+  skillReplyStream(input: SkillReplyPrompt): AsyncIterable<string>;
 }
 ```
 
-当前实现为 `AnthropicClient`。模型名称通过环境变量配置，例如：
+当前实现以单模型为核心：
+
+- 路由判断优先走本地启发式，不再区分 router model
+- runtime skill 的执行计划由服务端本地生成，不再额外请求 planner model
+- OpenAI / Anthropic 主要负责回复采样；工具调用规划优先使用本地启发式
+
+模型名称通过环境变量配置，例如：
 
 - `ANTHROPIC_API_KEY`
-- `ANTHROPIC_MODEL_ROUTER`
-- `ANTHROPIC_MODEL_PLANNER`
-- `ANTHROPIC_MODEL_REPLY`
+- `ANTHROPIC_MODEL`
 
 ### 5.5 SessionRunner 设计
 
@@ -1115,9 +1120,7 @@ DATA_ROOT=/data
 SKILLS_ROOT=/skills
 JWT_SECRET=...
 ANTHROPIC_API_KEY=...
-ANTHROPIC_MODEL_ROUTER=...
-ANTHROPIC_MODEL_PLANNER=...
-ANTHROPIC_MODEL_REPLY=...
+ANTHROPIC_MODEL=...
 MAX_CONCURRENT_RUNS=5
 RUN_TIMEOUT_MS=120000
 USER_STORAGE_QUOTA_MB=1024

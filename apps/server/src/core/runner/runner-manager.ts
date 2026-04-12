@@ -25,6 +25,7 @@ export class RunnerManager {
     prompt: string;
     toolArguments: Record<string, unknown>;
     files: Array<{ name: string; relativePath: string; mimeType: string | null }>;
+    signal?: AbortSignal;
     onQueued?: () => Promise<void> | void;
     onProgress: (message: string, percent?: number, status?: string) => Promise<void> | void;
     onArtifact: (file: FileRecord) => Promise<void> | void;
@@ -35,8 +36,14 @@ export class RunnerManager {
     const task = previous
       .catch(() => undefined)
       .then(async () => {
+        if (args.signal?.aborted) {
+          throw args.signal.reason instanceof Error ? args.signal.reason : new DOMException('Turn interrupted', 'AbortError');
+        }
         await args.onQueued?.();
         return this.semaphore.withLock(async () => {
+          if (args.signal?.aborted) {
+            throw args.signal.reason instanceof Error ? args.signal.reason : new DOMException('Turn interrupted', 'AbortError');
+          }
           const runner = new SessionRunner(this.config, args.userId, args.sessionId);
           const seenPaths = new Set<string>();
 
@@ -49,6 +56,7 @@ export class RunnerManager {
               path: resolveUserPath(this.config, args.userId, file.relativePath),
               mimeType: file.mimeType,
             })),
+            signal: args.signal,
             callbacks: {
               onProgress: args.onProgress,
               onArtifact: async (artifact) => {
@@ -68,7 +76,7 @@ export class RunnerManager {
               },
             },
           });
-        });
+        }, args.signal);
       });
 
     this.sessionQueues.set(queueKey, task);

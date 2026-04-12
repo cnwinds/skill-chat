@@ -1,8 +1,9 @@
-import type { FormEvent, ReactNode } from 'react';
+import type { ChangeEvent, ClipboardEvent as ReactClipboardEvent, FormEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   bootstrapAdminSchema,
+  createSessionSchema,
   loginSchema,
   registerRequestSchema,
   type AdminUserSummary,
@@ -12,6 +13,7 @@ import {
   type SkillMetadata,
   type StoredEvent,
   type SystemSettings,
+  type ThinkingEvent,
 } from '@skillchat/shared';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, api } from './lib/api';
@@ -24,6 +26,66 @@ import { buildRenderableTimeline, type TimelineItem } from './lib/timeline';
 import { applyThemeMode, usePreferencesStore } from './stores/preferences-store';
 
 const firstIssueMessage = (issues: Array<{ message: string }>) => issues[0]?.message ?? '输入不合法';
+
+type ComposerAttachment = {
+  localId: string;
+  displayName: string;
+  mimeType: string | null;
+  size: number;
+  status: 'uploading' | 'uploaded';
+};
+
+const createComposerAttachmentId = () => `attachment_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const normalizeAttachmentFile = (file: File, index: number) => {
+  if (file.name.trim()) {
+    return file;
+  }
+
+  const extension = file.type.startsWith('image/') ? file.type.replace('image/', '') || 'png' : 'bin';
+  return new File(
+    [file],
+    `pasted-image-${Date.now()}-${index + 1}.${extension}`,
+    {
+      type: file.type || 'application/octet-stream',
+      lastModified: Date.now(),
+    },
+  );
+};
+
+const buildRuntimeThinkingEvent = (args: {
+  sessionId: string;
+  phase: string | null;
+  phaseStartedAt: string | null;
+  round: number | null;
+}): ThinkingEvent | undefined => {
+  if (!args.phaseStartedAt) {
+    return undefined;
+  }
+
+  let content: string | null = null;
+  if (args.phase === 'sampling') {
+    content = args.round && args.round > 1 ? '继续处理追加引导' : '正在分析需求';
+  } else if (args.phase === 'tool_call') {
+    content = '正在调用工具';
+  } else if (args.phase === 'waiting_tool_result') {
+    content = '等待工具结果';
+  } else if (args.phase === 'finalizing') {
+    content = '正在整理最终回复';
+  }
+
+  if (!content) {
+    return undefined;
+  }
+
+  return {
+    id: `runtime-thinking-${args.sessionId}`,
+    sessionId: args.sessionId,
+    kind: 'thinking',
+    content,
+    createdAt: args.phaseStartedAt,
+  };
+};
 
 const AuthCard = ({
   title,
@@ -280,6 +342,108 @@ const EmptyState = ({ title, detail, action }: { title: string; detail: string; 
   </div>
 );
 
+const CreateSessionDialog = ({
+  open,
+  title,
+  selectedSkills,
+  skills,
+  loading,
+  onTitleChange,
+  onToggleSkill,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  title: string;
+  selectedSkills: string[];
+  skills: SkillMetadata[];
+  loading: boolean;
+  onTitleChange: (value: string) => void;
+  onToggleSkill: (skillName: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) => {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="dialog-overlay" role="presentation" onClick={onClose}>
+      <div
+        className="dialog-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-session-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="dialog-header">
+          <div>
+            <div className="eyebrow">Session Scope</div>
+            <h2 id="create-session-title">新建会话</h2>
+            <p>项目里可以安装很多 skill，但只有你现在选中的这些，才会进入本会话上下文并允许调用。</p>
+          </div>
+          <button type="button" className="subtle-button" onClick={onClose}>
+            关闭
+          </button>
+        </div>
+
+        <div className="dialog-body">
+          <label className="field-group">
+            <span>会话标题</span>
+            <input
+              value={title}
+              onChange={(event) => onTitleChange(event.target.value)}
+              placeholder="可选，不填则自动使用“新会话”"
+            />
+          </label>
+
+          <div className="settings-stack">
+            <div>
+              <strong>为当前会话选择可用 Skills</strong>
+              <div className="panel-caption">未选择的 skill 不会进入模型上下文，也不允许读取或执行。</div>
+            </div>
+            <div className="skill-picker-grid">
+              {skills.map((skill) => (
+                <article key={skill.name} className="skill-card">
+                  <div className="skill-card-header">
+                    <div className="skill-title">{skill.name}</div>
+                    <button
+                      type="button"
+                      className={cn('subtle-button', selectedSkills.includes(skill.name) && 'is-active-skill')}
+                      onClick={() => onToggleSkill(skill.name)}
+                    >
+                      {selectedSkills.includes(skill.name) ? '本会话已启用' : '加入会话'}
+                    </button>
+                  </div>
+                  <p>{skill.description}</p>
+                  <div className="skill-meta">
+                    <span>{skill.runtime}</span>
+                    <span>{skill.timeoutSec}s</span>
+                  </div>
+                </article>
+              ))}
+              {skills.length === 0 ? (
+                <div className="inline-empty">项目中还没有可选的 skill。</div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="dialog-footer">
+          <div className="panel-caption">
+            {selectedSkills.length > 0
+              ? `本次会话已选择：${selectedSkills.join(' · ')}`
+              : '本次会话未启用任何 skill，将按普通对话和通用工具运行。'}
+          </div>
+          <button type="button" className="primary-button" disabled={loading} onClick={onSubmit}>
+            {loading ? '创建中...' : '创建会话'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AdminSettingsView = ({
   pageError,
   setPageError,
@@ -468,21 +632,6 @@ const AdminSettingsView = ({
                   }}
                 />
               </label>
-              <label className="field-group">
-                <span>默认激活 Skills</span>
-                <input
-                  value={systemDraft.defaultSessionActiveSkills.join(', ')}
-                  onChange={(event) => {
-                    updateSystemDraft((current) => ({
-                      ...current,
-                      defaultSessionActiveSkills: event.target.value
-                        .split(',')
-                        .map((item) => item.trim())
-                        .filter(Boolean),
-                    }));
-                  }}
-                />
-              </label>
               <div className="settings-grid two-columns">
                 <label className="field-group">
                   <span>OpenAI Base URL</span>
@@ -516,45 +665,15 @@ const AdminSettingsView = ({
                   />
                 </label>
                 <label className="field-group">
-                  <span>Router Model</span>
+                  <span>OpenAI Model</span>
                   <input
-                    value={systemDraft.modelConfig.openaiModelRouter}
+                    value={systemDraft.modelConfig.openaiModel}
                     onChange={(event) => {
                       updateSystemDraft((current) => ({
                         ...current,
                         modelConfig: {
                           ...current.modelConfig,
-                          openaiModelRouter: event.target.value,
-                        },
-                      }));
-                    }}
-                  />
-                </label>
-                <label className="field-group">
-                  <span>Planner Model</span>
-                  <input
-                    value={systemDraft.modelConfig.openaiModelPlanner}
-                    onChange={(event) => {
-                      updateSystemDraft((current) => ({
-                        ...current,
-                        modelConfig: {
-                          ...current.modelConfig,
-                          openaiModelPlanner: event.target.value,
-                        },
-                      }));
-                    }}
-                  />
-                </label>
-                <label className="field-group">
-                  <span>Reply Model</span>
-                  <input
-                    value={systemDraft.modelConfig.openaiModelReply}
-                    onChange={(event) => {
-                      updateSystemDraft((current) => ({
-                        ...current,
-                        modelConfig: {
-                          ...current.modelConfig,
-                          openaiModelReply: event.target.value,
+                          openaiModel: event.target.value,
                         },
                       }));
                     }}
@@ -564,13 +683,13 @@ const AdminSettingsView = ({
                   <span>Reasoning Effort</span>
                   <select
                     className="select-field"
-                    value={systemDraft.modelConfig.openaiReasoningEffortReply}
+                    value={systemDraft.modelConfig.openaiReasoningEffort}
                     onChange={(event) => {
                       updateSystemDraft((current) => ({
                         ...current,
                         modelConfig: {
                           ...current.modelConfig,
-                          openaiReasoningEffortReply: event.target.value as SystemSettings['modelConfig']['openaiReasoningEffortReply'],
+                          openaiReasoningEffort: event.target.value as SystemSettings['modelConfig']['openaiReasoningEffort'],
                         },
                       }));
                     }}
@@ -581,37 +700,6 @@ const AdminSettingsView = ({
                     <option value="high">high</option>
                     <option value="xhigh">xhigh</option>
                   </select>
-                </label>
-                <label className="field-group">
-                  <span>Anthropic Base URL</span>
-                  <input
-                    value={systemDraft.modelConfig.anthropicBaseUrl}
-                    onChange={(event) => {
-                      updateSystemDraft((current) => ({
-                        ...current,
-                        modelConfig: {
-                          ...current.modelConfig,
-                          anthropicBaseUrl: event.target.value,
-                        },
-                      }));
-                    }}
-                  />
-                </label>
-                <label className="field-group">
-                  <span>Anthropic API Key</span>
-                  <input
-                    type="password"
-                    value={systemDraft.modelConfig.anthropicApiKey}
-                    onChange={(event) => {
-                      updateSystemDraft((current) => ({
-                        ...current,
-                        modelConfig: {
-                          ...current.modelConfig,
-                          anthropicApiKey: event.target.value,
-                        },
-                      }));
-                    }}
-                  />
                 </label>
                 <label className="field-group">
                   <span>LLM Max Output Tokens</span>
@@ -753,11 +841,18 @@ const SessionWorkspace = () => {
   const drafts = useUiStore((state) => state.drafts);
   const setDraft = useUiStore((state) => state.setDraft);
   const clearStreamContent = useUiStore((state) => state.clearStreamContent);
+  const hydrateRuntime = useUiStore((state) => state.hydrateRuntime);
+  const confirmRemovedFollowUpInput = useUiStore((state) => state.confirmRemovedFollowUpInput);
   const stream = useSessionStream(activeSessionId);
   const [inspectorTab, setInspectorTab] = useState<'files' | 'skills'>('files');
   const [pageError, setPageError] = useState<string | null>(null);
   const [visibleSessionCount, setVisibleSessionCount] = useState(5);
+  const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
+  const [newSessionTitle, setNewSessionTitle] = useState('');
+  const [newSessionSkills, setNewSessionSkills] = useState<string[]>([]);
+  const [composerAttachmentsBySession, setComposerAttachmentsBySession] = useState<Record<string, ComposerAttachment[]>>({});
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const themeMode = usePreferencesStore((state) => state.themeMode);
@@ -826,9 +921,22 @@ const SessionWorkspace = () => {
   );
   const hiddenSessionCount = Math.max(0, (sessionsQuery.data?.length ?? 0) - visibleSessionCount);
 
+  const resetCreateSessionDraft = () => {
+    setNewSessionTitle('');
+    setNewSessionSkills([]);
+  };
+
+  const openCreateSessionDialog = () => {
+    resetCreateSessionDraft();
+    setPageError(null);
+    setIsCreateSessionOpen(true);
+  };
+
   const createSessionMutation = useMutation({
-    mutationFn: () => api.createSession(),
+    mutationFn: (payload: { title?: string; activeSkills?: string[] }) => api.createSession(payload),
     onSuccess: (session) => {
+      resetCreateSessionDraft();
+      setIsCreateSessionOpen(false);
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       navigate(`/app/session/${session.id}`, { replace: true });
     },
@@ -853,14 +961,19 @@ const SessionWorkspace = () => {
       return;
     }
 
-    if (!activeSessionId) {
+    if (!activeSessionId && sessionsQuery.data.length > 0) {
+      navigate(`/app/session/${sessionsQuery.data[0].id}`, { replace: true });
+      return;
+    }
+
+    if (activeSessionId && !sessionsQuery.data.some((session) => session.id === activeSessionId)) {
       if (sessionsQuery.data.length > 0) {
         navigate(`/app/session/${sessionsQuery.data[0].id}`, { replace: true });
-      } else if (!createSessionMutation.isPending) {
-        createSessionMutation.mutate();
+      } else {
+        navigate('/app', { replace: true });
       }
     }
-  }, [activeSessionId, createSessionMutation, isSettingsView, location.pathname, navigate, sessionsQuery.data, sessionsQuery.isSuccess]);
+  }, [activeSessionId, isSettingsView, location.pathname, navigate, sessionsQuery.data, sessionsQuery.isSuccess]);
 
   useEffect(() => {
     if (!sessionsQuery.data) {
@@ -875,56 +988,142 @@ const SessionWorkspace = () => {
   const messagesQuery = useQuery({
     queryKey: ['messages', activeSessionId],
     queryFn: () => api.listMessages(activeSessionId!),
-    enabled: Boolean(activeSessionId),
+    enabled: Boolean(activeSessionId && activeSession),
   });
 
   const filesQuery = useQuery({
     queryKey: ['files', activeSessionId],
     queryFn: () => api.listFiles({ sessionId: activeSessionId! }),
-    enabled: Boolean(activeSessionId),
+    enabled: Boolean(activeSessionId && activeSession),
+  });
+
+  const runtimeQuery = useQuery({
+    queryKey: ['runtime', activeSessionId],
+    queryFn: () => api.getSessionRuntime(activeSessionId!),
+    enabled: Boolean(activeSessionId && activeSession) && !isSettingsView,
+    refetchOnMount: 'always',
   });
 
   const skillsQuery = useQuery({
     queryKey: ['skills'],
     queryFn: api.listSkills,
   });
+  const installedSkills = skillsQuery.data ?? [];
+
+  const handleCreateSession = () => {
+    const validation = createSessionSchema.safeParse({
+      title: newSessionTitle.trim() ? newSessionTitle.trim() : undefined,
+      activeSkills: newSessionSkills,
+    });
+    if (!validation.success) {
+      setPageError(firstIssueMessage(validation.error.issues));
+      return;
+    }
+
+    setPageError(null);
+    createSessionMutation.mutate(validation.data);
+  };
+
+  const toggleNewSessionSkill = (skillName: string) => {
+    setNewSessionSkills((current) => (
+      current.includes(skillName)
+        ? current.filter((item) => item !== skillName)
+        : [...current, skillName]
+    ));
+  };
+
+  useEffect(() => {
+    if (activeSessionId && runtimeQuery.data && runtimeQuery.isFetchedAfterMount) {
+      hydrateRuntime(activeSessionId, runtimeQuery.data);
+    }
+  }, [activeSessionId, hydrateRuntime, runtimeQuery.data, runtimeQuery.isFetchedAfterMount]);
 
   const sendMessageMutation = useMutation({
-    mutationFn: (content: string) => api.sendMessage(activeSessionId!, content),
-    onMutate: async (content) => {
-      if (activeSessionId) {
-        clearStreamContent(activeSessionId);
-        const previous = queryClient.getQueryData<StoredEvent[]>(['messages', activeSessionId]) ?? [];
-        queryClient.setQueryData<StoredEvent[]>(['messages', activeSessionId], [
-          ...previous,
-          {
-            id: `optimistic-${Date.now()}`,
-            sessionId: activeSessionId,
-            kind: 'message',
-            role: 'user',
-            type: 'text',
-            content,
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-        return { previous };
+    mutationFn: (payload: { sessionId: string; content: string; activeTurnId: string | null }) => {
+      if (payload.activeTurnId) {
+        return api.sendMessage(payload.sessionId, {
+          content: payload.content,
+          dispatch: 'auto',
+          turnId: payload.activeTurnId,
+        });
       }
-      return { previous: [] as StoredEvent[] };
+      return api.sendMessage(payload.sessionId, {
+        content: payload.content,
+        dispatch: 'new_turn',
+      });
     },
-    onError: (error, _variables, context) => {
-      if (activeSessionId && context?.previous) {
-        queryClient.setQueryData(['messages', activeSessionId], context.previous);
+    onMutate: async (payload) => {
+      if (payload.sessionId) {
+        const shouldOptimisticallyAppend = !stream.activeTurnId;
+        if (shouldOptimisticallyAppend) {
+          clearStreamContent(payload.sessionId);
+        }
+        const previous = queryClient.getQueryData<StoredEvent[]>(['messages', payload.sessionId]) ?? [];
+        if (shouldOptimisticallyAppend) {
+          queryClient.setQueryData<StoredEvent[]>(['messages', payload.sessionId], [
+            ...previous,
+            {
+              id: `optimistic-${Date.now()}`,
+              sessionId: payload.sessionId,
+              kind: 'message',
+              role: 'user',
+              type: 'text',
+              content: payload.content,
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        }
+        return { previous, shouldOptimisticallyAppend };
+      }
+      return { previous: [] as StoredEvent[], shouldOptimisticallyAppend: false };
+    },
+    onSuccess: (payload, variables) => {
+      if (variables.sessionId) {
+        queryClient.setQueryData(['runtime', variables.sessionId], payload.runtime);
+        hydrateRuntime(variables.sessionId, payload.runtime);
+        setComposerAttachmentsBySession((current) => {
+          const { [variables.sessionId]: _removed, ...rest } = current;
+          return rest;
+        });
+      }
+    },
+    onError: (error, variables, context) => {
+      if (variables.sessionId && context?.previous && context.shouldOptimisticallyAppend) {
+        queryClient.setQueryData(['messages', variables.sessionId], context.previous);
       }
       setPageError(error instanceof ApiError ? error.message : '发送消息失败');
     },
   });
 
+  const interruptMutation = useMutation({
+    mutationFn: () => api.interruptTurn(activeSessionId!, stream.activeTurnId!),
+    onSuccess: (payload) => {
+      if (activeSessionId) {
+        queryClient.setQueryData(['runtime', activeSessionId], payload.runtime);
+        hydrateRuntime(activeSessionId, payload.runtime);
+      }
+    },
+    onError: (error) => setPageError(error instanceof ApiError ? error.message : '中断失败'),
+  });
+
+  const removeFollowUpInputMutation = useMutation({
+    mutationFn: (inputId: string) => api.removeFollowUpInput(activeSessionId!, inputId),
+    onSuccess: (payload) => {
+      if (activeSessionId) {
+        confirmRemovedFollowUpInput(activeSessionId, payload.inputId);
+        queryClient.setQueryData(['runtime', activeSessionId], payload.runtime);
+        hydrateRuntime(activeSessionId, payload.runtime);
+      }
+    },
+    onError: (error) => setPageError(error instanceof ApiError ? error.message : '取消待处理输入失败'),
+  });
+
   const uploadMutation = useMutation({
-    mutationFn: (file: File) => api.uploadFile(activeSessionId!, file),
-    onSuccess: async () => {
+    mutationFn: ({ sessionId, file }: { sessionId: string; file: File }) => api.uploadFile(sessionId, file),
+    onSuccess: async (_record, variables) => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['files', activeSessionId] }),
-        queryClient.invalidateQueries({ queryKey: ['messages', activeSessionId] }),
+        queryClient.invalidateQueries({ queryKey: ['files', variables.sessionId] }),
+        queryClient.invalidateQueries({ queryKey: ['messages', variables.sessionId] }),
       ]);
     },
     onError: (error) => setPageError(error instanceof ApiError ? error.message : '上传失败'),
@@ -953,6 +1152,19 @@ const SessionWorkspace = () => {
     ]),
     [messagesQuery.data, stream.transientEvents],
   );
+  const thinkingEvent = useMemo(
+    () => activeThinking ?? (
+      activeSessionId
+        ? buildRuntimeThinkingEvent({
+          sessionId: activeSessionId,
+          phase: stream.activeTurnPhase,
+          phaseStartedAt: stream.activeTurnPhaseStartedAt,
+          round: stream.activeTurnRound,
+        })
+        : undefined
+    ),
+    [activeSessionId, activeThinking, stream.activeTurnPhase, stream.activeTurnPhaseStartedAt, stream.activeTurnRound],
+  );
 
   useEffect(() => {
     const target = messageListRef.current;
@@ -960,24 +1172,140 @@ const SessionWorkspace = () => {
       return;
     }
     target.scrollTop = target.scrollHeight;
-  }, [timeline, activeThinking, stream.pendingText, activeSessionId]);
+  }, [timeline, thinkingEvent, stream.pendingText, stream.followUpQueue, activeSessionId]);
 
-  const draft = activeSessionId ? drafts[activeSessionId] ?? '' : '';
+  const hasActiveSession = Boolean(activeSessionId && activeSession);
+  const draft = hasActiveSession ? drafts[activeSessionId!] ?? '' : '';
+  const composerAttachments = hasActiveSession ? composerAttachmentsBySession[activeSessionId!] ?? [] : [];
   const groupedFiles = useMemo(
     () => groupBy(filesQuery.data ?? [], (file) => file.bucket),
     [filesQuery.data],
   );
   const activeSkills = activeSession?.activeSkills ?? [];
+  const activeSkillEntries = useMemo(
+    () => installedSkills.filter((skill) => activeSkills.includes(skill.name)),
+    [activeSkills, installedSkills],
+  );
+  const emptyStateStarterPrompts = useMemo(
+    () => Array.from(new Set(activeSkillEntries.flatMap((skill) => skill.starterPrompts ?? []))).slice(0, 6),
+    [activeSkillEntries],
+  );
+  const emptyStateStarterCaption = activeSkillEntries.length > 0
+    ? `当前会话已启用：${activeSkillEntries.map((skill) => skill.name).join(' · ')}`
+    : null;
   const isWechat = isWechatBrowser();
+  const isTurnRunning = Boolean(stream.activeTurnId) && (
+    stream.activeTurnStatus === 'running' || stream.activeTurnStatus === 'interrupting'
+  );
+  const hasUploadingAttachments = composerAttachments.some((item) => item.status === 'uploading');
+
+  const updateComposerAttachments = (sessionKey: string, updater: (current: ComposerAttachment[]) => ComposerAttachment[]) => {
+    setComposerAttachmentsBySession((current) => {
+      const nextAttachments = updater(current[sessionKey] ?? []);
+      if (nextAttachments.length === 0) {
+        const { [sessionKey]: _removed, ...rest } = current;
+        return rest;
+      }
+      return {
+        ...current,
+        [sessionKey]: nextAttachments,
+      };
+    });
+  };
+
+  const uploadComposerFiles = async (files: File[]) => {
+    if (!activeSessionId || files.length === 0) {
+      return;
+    }
+
+    setPageError(null);
+    for (const [index, rawFile] of files.entries()) {
+      const file = normalizeAttachmentFile(rawFile, index);
+      const localId = createComposerAttachmentId();
+      updateComposerAttachments(activeSessionId, (current) => [
+        ...current,
+        {
+          localId,
+          displayName: file.name,
+          mimeType: file.type || null,
+          size: file.size,
+          status: 'uploading',
+        },
+      ]);
+
+      try {
+        const record = await uploadMutation.mutateAsync({
+          sessionId: activeSessionId,
+          file,
+        });
+        updateComposerAttachments(activeSessionId, (current) => current.map((item) => (
+          item.localId === localId
+            ? {
+              ...item,
+              displayName: record.displayName,
+              mimeType: record.mimeType,
+              size: record.size,
+              status: 'uploaded',
+            }
+            : item
+        )));
+      } catch {
+        updateComposerAttachments(activeSessionId, (current) => current.filter((item) => item.localId !== localId));
+      }
+    }
+  };
+
+  const handleComposerFileSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    event.currentTarget.value = '';
+    void uploadComposerFiles(files);
+  };
+
+  const handleComposerPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedImagesFromItems = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    const pastedImages = pastedImagesFromItems.length > 0
+      ? pastedImagesFromItems
+      : Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
+
+    if (pastedImages.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    void uploadComposerFiles(pastedImages);
+  };
 
   const handleSend = () => {
-    if (!activeSessionId || !draft.trim() || sendMessageMutation.isPending) {
+    if (!activeSessionId || !draft.trim() || hasUploadingAttachments || sendMessageMutation.isPending || interruptMutation.isPending) {
       return;
     }
     const value = draft.trim();
     setDraft(activeSessionId, '');
     setPageError(null);
-    sendMessageMutation.mutate(value);
+    sendMessageMutation.mutate({
+      sessionId: activeSessionId,
+      content: value,
+      activeTurnId: stream.activeTurnId,
+    });
+  };
+
+  const handleEmptyStatePromptClick = (prompt: string) => {
+    if (!activeSessionId) {
+      return;
+    }
+    setDraft(activeSessionId, prompt);
+    const focusComposer = () => {
+      composerTextareaRef.current?.focus();
+      composerTextareaRef.current?.setSelectionRange(prompt.length, prompt.length);
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(focusComposer);
+      return;
+    }
+    focusComposer();
   };
 
   if (!user) {
@@ -995,7 +1323,7 @@ const SessionWorkspace = () => {
             <div className="eyebrow">Sessions</div>
             <h2>会话</h2>
           </div>
-          <button type="button" className="subtle-button" onClick={() => createSessionMutation.mutate()}>
+          <button type="button" className="subtle-button" onClick={openCreateSessionDialog}>
             新建
           </button>
         </div>
@@ -1049,17 +1377,31 @@ const SessionWorkspace = () => {
         <header className="workspace-header">
           <div>
             <div className="eyebrow">SkillChat</div>
-            <h1>{isSettingsView ? '设置中心' : (activeSession?.title ?? 'SkillChat Workspace')}</h1>
+            <h1>{isSettingsView ? '设置中心' : (activeSession?.title ?? '选择或创建会话')}</h1>
             <p>
               当前用户：{user.username}
-              {!isSettingsView ? (
+              {!isSettingsView && hasActiveSession ? (
                 <>
                   {' '}· 连接状态：
                   <span className={cn('stream-pill', `is-${stream.status}`)}>{stream.status}</span>
+                  {isTurnRunning ? (
+                    <>
+                      {' '}· 当前 turn：
+                      <span className="stream-pill is-open">
+                        {stream.activeTurnKind ?? 'regular'} / {stream.activeTurnPhase ?? 'running'}
+                        {stream.activeTurnRound ? ` / round ${stream.activeTurnRound}` : ''}
+                      </span>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
+              {!isSettingsView && !hasActiveSession ? (
+                <>
+                  {' '}· 暂未进入会话，请先创建会话并选择本会话允许使用的 skills。
                 </>
               ) : null}
             </p>
-            {!isSettingsView && activeSkills.length > 0 ? (
+            {!isSettingsView && hasActiveSession && activeSkills.length > 0 ? (
               <div className="skill-badge-list">
                 {activeSkills.map((skillName) => (
                   <span key={skillName} className="skill-badge active">
@@ -1117,86 +1459,231 @@ const SessionWorkspace = () => {
           </section>
         ) : (
           <>
-            <section className="message-stage">
-              <div className="message-list" ref={messageListRef}>
-                {timeline.length === 0 && !stream.pendingText ? (
+            {hasActiveSession ? (
+              <>
+                <section className="message-stage">
+                  <div className="message-list" ref={messageListRef}>
+                    {stream.recovery ? (
+                      <div className="notice-card">
+                        已从重启中恢复：之前的 {stream.recovery.previousTurnKind} turn
+                        （{stream.recovery.previousTurnId}）已中断，未提交输入已恢复到待处理队列。
+                      </div>
+                    ) : null}
+                    {timeline.length === 0 && !stream.pendingText && !thinkingEvent && stream.followUpQueue.length === 0 ? (
+                      <EmptyState
+                        title="开始一个任务"
+                        detail={emptyStateStarterPrompts.length > 0
+                          ? '你可以先点一个预设开场白，内容会直接进入聊天框，随后继续修改或发送。'
+                          : '可以直接聊天或上传文件；如果要启用特定 skill，先在右侧面板把它加入当前会话。'}
+                        action={emptyStateStarterPrompts.length > 0 ? (
+                          <div className="empty-state-actions">
+                            {emptyStateStarterCaption ? <div className="empty-state-caption">{emptyStateStarterCaption}</div> : null}
+                            <div className="empty-state-suggestions">
+                              {emptyStateStarterPrompts.map((prompt) => (
+                                <button
+                                  key={prompt}
+                                  type="button"
+                                  className="empty-state-suggestion"
+                                  onClick={() => handleEmptyStatePromptClick(prompt)}
+                                >
+                                  {prompt}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : undefined}
+                      />
+                    ) : null}
+                    {timeline.map((event) => (
+                      <MessageItem
+                        key={event.id}
+                        event={event}
+                        onDownload={(file) => downloadMutation.mutate(file)}
+                        downloading={downloadMutation.isPending}
+                        canExpandToolTrace={user.role === 'admin'}
+                      />
+                    ))}
+                    {stream.pendingText ? (
+                      <MessageItem
+                        event={{ kind: 'pending_text', content: stream.pendingText }}
+                        onDownload={(file) => downloadMutation.mutate(file)}
+                        downloading={downloadMutation.isPending}
+                        canExpandToolTrace={user.role === 'admin'}
+                      />
+                    ) : null}
+                    {thinkingEvent ? (
+                      <MessageItem
+                        key={thinkingEvent.id}
+                        event={thinkingEvent}
+                        onDownload={(file) => downloadMutation.mutate(file)}
+                        downloading={downloadMutation.isPending}
+                        canExpandToolTrace={user.role === 'admin'}
+                      />
+                    ) : null}
+                  </div>
+                </section>
+
+                <footer
+                  className="composer"
+                  style={{
+                    paddingBottom: `calc(14px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
+                  }}
+                >
+                  {stream.followUpQueue.length > 0 ? (
+                    <div className="runtime-preview-stack">
+                      <div className="runtime-preview-card is-queued">
+                        <div className="status-label">待处理队列（按顺序处理）</div>
+                        <ol className="runtime-preview-list">
+                          {stream.followUpQueue.map((input, index) => (
+                            <li key={`follow-up-input-${input.inputId}`} className="runtime-preview-list-item">
+                              <div className="runtime-preview-list-row">
+                                <span className="runtime-preview-index">{index + 1}</span>{' '}
+                                <span className="runtime-preview-list-content">{input.content}</span>
+                                <button
+                                  type="button"
+                                  className="runtime-preview-remove"
+                                  onClick={() => removeFollowUpInputMutation.mutate(input.inputId)}
+                                  disabled={removeFollowUpInputMutation.isPending}
+                                  aria-label={`取消待处理项：${input.content}`}
+                                  title="取消这条待处理输入"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="composer-shell">
+                    {composerAttachments.length > 0 ? (
+                      <div className="composer-attachments" aria-live="polite">
+                        {composerAttachments.map((attachment) => (
+                          <div
+                            key={attachment.localId}
+                            className={`composer-attachment-chip is-${attachment.status}`}
+                          >
+                            <div className="composer-attachment-name">{attachment.displayName}</div>
+                            <div className="composer-attachment-meta">
+                              {attachment.status === 'uploading'
+                                ? '上传中...'
+                                : `${attachment.mimeType?.startsWith('image/') ? '图片附件' : '已附加'} · ${formatBytes(attachment.size)}`}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                    <label className="sr-only" htmlFor="chat-composer-input">聊天输入框</label>
+                    <textarea
+                      id="chat-composer-input"
+                      className="composer-textarea"
+                      ref={composerTextareaRef}
+                      value={draft}
+                      onChange={(event) => activeSessionId && setDraft(activeSessionId, event.target.value)}
+                      onPaste={handleComposerPaste}
+                      placeholder={isTurnRunning
+                        ? '继续补充信息，系统会按顺序处理'
+                        : '给 SkillChat 发送消息'}
+                      rows={3}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey && window.innerWidth >= 900) {
+                          event.preventDefault();
+                          handleSend();
+                        }
+                      }}
+                    />
+                    <div className="composer-footer">
+                      <div className="composer-status">
+                        {hasUploadingAttachments ? <span>附件上传中...</span> : null}
+                        {!hasUploadingAttachments && isTurnRunning ? <span>当前轮处理中</span> : null}
+                      </div>
+                      <div className="composer-actions">
+                        {isTurnRunning ? (
+                          <button
+                            type="button"
+                            className="composer-icon-button is-warning"
+                            aria-label={interruptMutation.isPending ? '中断中...' : '中断当前 turn'}
+                            title={interruptMutation.isPending ? '中断中...' : '中断当前 turn'}
+                            onClick={() => interruptMutation.mutate()}
+                            disabled={interruptMutation.isPending}
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+                            </svg>
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="composer-icon-button"
+                          aria-label={hasUploadingAttachments ? '附件上传中' : '上传附件'}
+                          title={hasUploadingAttachments ? '附件上传中' : '上传附件'}
+                          onClick={() => uploadInputRef.current?.click()}
+                          disabled={!activeSessionId || hasUploadingAttachments}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                              d="M15.5 6.5 8.4 13.6a3 3 0 1 0 4.2 4.2l7.1-7.1a5 5 0 1 0-7.1-7.1L5.8 10.4"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="1.8"
+                            />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          className="composer-send-button"
+                          onClick={handleSend}
+                          aria-label={sendMessageMutation.isPending ? '提交中...' : isTurnRunning ? '补充信息' : '发送'}
+                          title={sendMessageMutation.isPending ? '提交中...' : isTurnRunning ? '补充信息' : '发送'}
+                          disabled={!draft.trim() || hasUploadingAttachments || sendMessageMutation.isPending || interruptMutation.isPending}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path
+                              d="M12 5v14M12 5l-5.5 5.5M12 5l5.5 5.5"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <input
+                      ref={uploadInputRef}
+                      type="file"
+                      hidden
+                      multiple
+                      onChange={handleComposerFileSelection}
+                    />
+                  </div>
+                </footer>
+              </>
+            ) : (
+              <section className="message-stage">
+                <div className="message-list">
                   <EmptyState
-                    title="开始一个任务"
-                    detail="可以直接说“帮我生成一份本周销售报告 PDF”，也可以先上传 CSV、Markdown 或文本文件。"
+                    title="还没有会话"
+                    detail="先创建一个会话，并明确选择这个会话允许使用哪些 skill。未选择的 skill 不会进入上下文，也不可调用。"
+                    action={(
+                      <div className="empty-state-actions">
+                        <button type="button" className="primary-button" onClick={openCreateSessionDialog}>
+                          新建会话
+                        </button>
+                        <div className="empty-state-caption">
+                          会话创建后，你仍然可以在右侧面板调整当前会话启用的 skill 范围。
+                        </div>
+                      </div>
+                    )}
                   />
-                ) : null}
-                {timeline.map((event) => (
-                  <MessageItem
-                    key={event.id}
-                    event={event}
-                    onDownload={(file) => downloadMutation.mutate(file)}
-                    downloading={downloadMutation.isPending}
-                    canExpandToolTrace={user.role === 'admin'}
-                  />
-                ))}
-                {stream.pendingText ? (
-                  <MessageItem
-                    event={{ kind: 'pending_text', content: stream.pendingText }}
-                    onDownload={(file) => downloadMutation.mutate(file)}
-                    downloading={downloadMutation.isPending}
-                    canExpandToolTrace={user.role === 'admin'}
-                  />
-                ) : null}
-                {activeThinking ? (
-                  <MessageItem
-                    key={activeThinking.id}
-                    event={activeThinking}
-                    onDownload={(file) => downloadMutation.mutate(file)}
-                    downloading={downloadMutation.isPending}
-                    canExpandToolTrace={user.role === 'admin'}
-                  />
-                ) : null}
-              </div>
-            </section>
-
-            <footer
-              className="composer"
-              style={{
-                paddingBottom: `calc(14px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
-              }}
-            >
-              <div className="composer-tools">
-                <button type="button" className="subtle-button" onClick={() => uploadInputRef.current?.click()} disabled={!activeSessionId || uploadMutation.isPending}>
-                  {uploadMutation.isPending ? '上传中...' : '上传文件'}
-                </button>
-                <input
-                  ref={uploadInputRef}
-                  type="file"
-                  hidden
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file && activeSessionId) {
-                      uploadMutation.mutate(file);
-                    }
-                    event.currentTarget.value = '';
-                  }}
-                />
-                <span className="composer-hint">微信内建议使用 16px 以上字体输入，避免页面缩放。</span>
-              </div>
-
-              <div className="composer-box">
-                <textarea
-                  value={draft}
-                  onChange={(event) => activeSessionId && setDraft(activeSessionId, event.target.value)}
-                  placeholder="输入你的需求，例如：把上传的 CSV 生成 Excel 并加上柱状图"
-                  rows={3}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey && window.innerWidth >= 900) {
-                      event.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                />
-                <button type="button" className="primary-button" onClick={handleSend} disabled={!draft.trim() || sendMessageMutation.isPending}>
-                  {sendMessageMutation.isPending ? '处理中...' : '发送'}
-                </button>
-              </div>
-            </footer>
+                </div>
+              </section>
+            )}
           </>
         )}
       </main>
@@ -1226,6 +1713,9 @@ const SessionWorkspace = () => {
           <div className="panel-section">
             {isWechat ? (
               <div className="notice-card">微信内若下载受限，请点击文件后在系统浏览器中打开或使用桌面端下载。</div>
+            ) : null}
+            {!hasActiveSession ? (
+              <div className="inline-empty">先进入一个会话，当前会话的文件才会显示在这里。</div>
             ) : null}
             {(['uploads', 'outputs', 'shared'] as const).map((bucket) => (
               <section key={bucket} className="file-group">
@@ -1262,11 +1752,21 @@ const SessionWorkspace = () => {
           </div>
         ) : (
           <div className="panel-section">
-            {(skillsQuery.data ?? []).map((skill: SkillMetadata) => (
+            <div className="status-card muted">
+              <strong>{hasActiveSession ? '当前会话 Skill 作用域' : '已安装 Skills'}</strong>
+              <div className="file-meta">
+                {hasActiveSession
+                  ? (activeSkills.length > 0
+                    ? `当前会话只允许使用这些 skills：${activeSkills.join(' · ')}。未启用的 skill 不会进入上下文，也不可调用。`
+                    : '当前会话未启用任何 skill。未启用的 skill 不会进入上下文，也不可调用。')
+                  : '项目中可以安装很多 skill，但只有加入当前会话的 skill 才会被读取、参考或执行。'}
+              </div>
+            </div>
+            {installedSkills.map((skill: SkillMetadata) => (
               <article key={skill.name} className="skill-card">
                 <div className="skill-card-header">
                   <div className="skill-title">{skill.name}</div>
-                  {activeSessionId ? (
+                  {hasActiveSession ? (
                     <button
                       type="button"
                       className={cn('subtle-button', activeSkills.includes(skill.name) && 'is-active-skill')}
@@ -1276,14 +1776,16 @@ const SessionWorkspace = () => {
                           ? activeSkills.filter((item) => item !== skill.name)
                           : [...activeSkills, skill.name];
                         updateSessionMutation.mutate({
-                          sessionId: activeSessionId,
+                          sessionId: activeSessionId!,
                           activeSkills: nextSkills,
                         });
                       }}
                     >
-                      {activeSkills.includes(skill.name) ? '已激活' : '激活'}
+                      {activeSkills.includes(skill.name) ? '本会话已启用' : '加入会话'}
                     </button>
-                  ) : null}
+                  ) : (
+                    <span className="stream-pill">已安装</span>
+                  )}
                 </div>
                 <p>{skill.description}</p>
                 <div className="skill-meta">
@@ -1292,10 +1794,24 @@ const SessionWorkspace = () => {
                 </div>
               </article>
             ))}
+            {installedSkills.length === 0 ? (
+              <div className="inline-empty">项目中还没有安装 skill。</div>
+            ) : null}
           </div>
         )}
         </aside>
       ) : null}
+      <CreateSessionDialog
+        open={isCreateSessionOpen}
+        title={newSessionTitle}
+        selectedSkills={newSessionSkills}
+        skills={installedSkills}
+        loading={createSessionMutation.isPending}
+        onTitleChange={setNewSessionTitle}
+        onToggleSkill={toggleNewSessionSkill}
+        onClose={() => setIsCreateSessionOpen(false)}
+        onSubmit={handleCreateSession}
+      />
     </div>
   );
 };

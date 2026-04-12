@@ -3,13 +3,133 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
-import { getSessionMessagesPath } from './core/storage/paths.js';
+import { getSessionMessagesPath, getSessionTurnRuntimePath } from './core/storage/paths.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const skillsRoot = path.join(repoRoot, 'skills');
+const originalFetch = globalThis.fetch.bind(globalThis);
+
+const createResponsesStreamResponse = (events: Array<{ event: string; data: unknown }>) => new Response(
+  new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      for (const item of events) {
+        controller.enqueue(encoder.encode(`event: ${item.event}\n`));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(item.data)}\n\n`));
+      }
+      controller.close();
+    },
+  }),
+  {
+    status: 200,
+    headers: {
+      'content-type': 'text/event-stream',
+    },
+  },
+);
+
+const createHarnessResponsesResponse = (body: BodyInit | null | undefined) => {
+  const payload = JSON.parse(typeof body === 'string' ? body : String(body ?? '{}')) as {
+    input?: Array<Record<string, unknown>>;
+  };
+  const inputItems = payload.input ?? [];
+  const latestUserMessage = [...inputItems]
+    .reverse()
+    .find((item) => item.role === 'user' && typeof item.content === 'string')?.content as string | undefined;
+  const hasFunctionOutput = inputItems.some((item) => item.type === 'function_call_output');
+
+  if (hasFunctionOutput) {
+    const finalDelta = latestUserMessage?.includes('张雪峰')
+      ? '我跟你说，这事得看数据和就业。'
+      : '产物已经生成。';
+    return createResponsesStreamResponse([
+      {
+        event: 'response.output_text.delta',
+        data: {
+          type: 'response.output_text.delta',
+          delta: finalDelta,
+        },
+      },
+    ]);
+  }
+
+  if (latestUserMessage?.includes('PDF')) {
+    return createResponsesStreamResponse([
+      {
+        event: 'response.output_item.done',
+        data: {
+          type: 'response.output_item.done',
+          item: {
+            id: 'fc_pdf',
+            type: 'function_call',
+            call_id: 'call_run_pdf',
+            name: 'run_skill',
+            arguments: JSON.stringify({
+              skillName: 'pdf',
+              prompt: '渲染最终文档为 PDF',
+              arguments: {
+                title: '本周销售报告',
+                summary: '基于当前会话内容生成的销售周报。',
+                documentMarkdown: '# 本周销售报告\n\n## 摘要\n- 本周整体销售稳定增长。\n\n## 重点\n- 华东区域表现最好\n- 新客户转化率提升\n',
+                fileName: 'weekly-sales-report.pdf',
+              },
+            }),
+          },
+        },
+      },
+    ]);
+  }
+
+  if (latestUserMessage?.includes('Excel') || latestUserMessage?.includes('CSV')) {
+    return createResponsesStreamResponse([
+      {
+        event: 'response.output_item.done',
+        data: {
+          type: 'response.output_item.done',
+          item: {
+            id: 'fc_xlsx',
+            type: 'function_call',
+            call_id: 'call_run_xlsx',
+            name: 'run_skill',
+            arguments: JSON.stringify({
+              skillName: 'xlsx',
+              prompt: '把当前会话里的 CSV 整理成 Excel 并生成一个简单图表',
+              arguments: {
+                title: '销售数据汇总',
+                fileName: 'sales-chart.xlsx',
+              },
+            }),
+          },
+        },
+      },
+    ]);
+  }
+
+  if (latestUserMessage?.includes('张雪峰')) {
+    return createResponsesStreamResponse([
+      {
+        event: 'response.output_text.delta',
+        data: {
+          type: 'response.output_text.delta',
+          delta: '我跟你说，这个专业不能只看名字，得先看就业。',
+        },
+      },
+    ]);
+  }
+
+  return createResponsesStreamResponse([
+    {
+      event: 'response.output_text.delta',
+      data: {
+        type: 'response.output_text.delta',
+        delta: '测试回复',
+      },
+    },
+  ]);
+};
 
 const seedInviteCode = (dbPath: string, code: string) => {
   const db = new Database(dbPath);
@@ -49,18 +169,21 @@ const registerAndLogin = async (app: FastifyInstance, username: string) => {
   return registerResponse.json() as { token: string; user: { id: string; username: string } };
 };
 
-const createSession = async (app: FastifyInstance, token: string, title?: string) => {
+const createSession = async (app: FastifyInstance, token: string, title?: string, activeSkills?: string[]) => {
   const response = await app.inject({
     method: 'POST',
     url: '/api/sessions',
     headers: {
       authorization: `Bearer ${token}`,
     },
-    payload: title ? { title } : {},
+    payload: {
+      ...(title ? { title } : {}),
+      ...(activeSkills ? { activeSkills } : {}),
+    },
   });
 
   expect(response.statusCode).toBe(200);
-  return response.json() as { id: string; title: string };
+  return response.json() as { id: string; title: string; activeSkills: string[] };
 };
 
 describe('SkillChat server', () => {
@@ -69,6 +192,17 @@ describe('SkillChat server', () => {
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-test-'));
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      if (/\/responses$/.test(url)) {
+        return createHarnessResponsesResponse(init?.body);
+      }
+      return originalFetch(input as RequestInfo | URL, init);
+    }));
     app = await createApp({
       cwd: repoRoot,
       inlineJobs: true,
@@ -78,11 +212,8 @@ describe('SkillChat server', () => {
         SKILLS_ROOT: skillsRoot,
         WEB_ORIGIN: 'http://localhost:5173',
         JWT_SECRET: 'test-secret-123',
-        DEFAULT_SESSION_ACTIVE_SKILLS: ['zhangxuefeng-perspective'],
         ENABLE_ASSISTANT_TOOLS: false,
-        OPENAI_API_KEY: '',
-        ANTHROPIC_API_KEY: '',
-        ANTHROPIC_AUTH_TOKEN: '',
+        OPENAI_API_KEY: 'test-token',
       },
     });
   });
@@ -90,6 +221,7 @@ describe('SkillChat server', () => {
   afterEach(async () => {
     await app?.close();
     await fs.rm(tempDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
   });
 
   it('registers, creates a session, and completes a plain chat response', async () => {
@@ -122,12 +254,225 @@ describe('SkillChat server', () => {
     expect(messages.some((message) => message.kind === 'message' && message.role === 'assistant')).toBe(true);
   });
 
-  it('creates sessions with configured default active skills', async () => {
+  it('creates sessions without enabled skills unless explicitly selected', async () => {
     const auth = await registerAndLogin(app, 'default_skill_user');
     const session = await createSession(app, auth.token, '默认技能会话');
 
     expect(session).toMatchObject({
-      activeSkills: ['zhangxuefeng-perspective'],
+      activeSkills: [],
+    });
+  });
+
+  it('returns skill starter prompts for the client empty state', async () => {
+    const auth = await registerAndLogin(app, 'skills_user');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/skills',
+      headers: {
+        authorization: `Bearer ${auth.token}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const skills = response.json() as Array<{ name: string; starterPrompts?: string[] }>;
+    expect(skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'zhangxuefeng-perspective',
+        starterPrompts: expect.arrayContaining([
+          '扮演张雪峰，帮我分析这个专业值不值得报',
+        ]),
+      }),
+    ]));
+  });
+
+  it('exposes idle runtime snapshots and rejects explicit steer or interrupt without an active turn', async () => {
+    const auth = await registerAndLogin(app, 'runtime_user');
+    const session = await createSession(app, auth.token, '运行态测试');
+
+    const runtimeResponse = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${session.id}/runtime`,
+      headers: {
+        authorization: `Bearer ${auth.token}`,
+      },
+    });
+
+    expect(runtimeResponse.statusCode).toBe(200);
+    expect(runtimeResponse.json()).toEqual({
+      sessionId: session.id,
+      activeTurn: null,
+      followUpQueue: [],
+      recovery: null,
+    });
+
+    const steerResponse = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${session.id}/turns/turn_missing/steer`,
+      headers: {
+        authorization: `Bearer ${auth.token}`,
+      },
+      payload: {
+        content: '补充说明',
+      },
+    });
+
+    expect(steerResponse.statusCode).toBe(404);
+    expect(steerResponse.json()).toEqual({
+      message: '当前 turn 不存在',
+    });
+
+    const interruptResponse = await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${session.id}/turns/turn_missing/interrupt`,
+      headers: {
+        authorization: `Bearer ${auth.token}`,
+      },
+      payload: {},
+    });
+
+    expect(interruptResponse.statusCode).toBe(404);
+    expect(interruptResponse.json()).toEqual({
+      message: '当前 turn 不存在',
+    });
+  });
+
+  it('recovers a persisted runtime snapshot after process restart', async () => {
+    const auth = await registerAndLogin(app, 'recovery_user');
+    const session = await createSession(app, auth.token, '恢复测试');
+    const runtimePath = getSessionTurnRuntimePath(app.config, auth.user.id, session.id);
+
+    await fs.writeFile(runtimePath, JSON.stringify({
+      sessionId: session.id,
+      activeTurn: {
+        turnId: 'turn_recover',
+        kind: 'regular',
+        status: 'running',
+        phase: 'streaming_assistant',
+        phaseStartedAt: '2026-04-12T00:00:00.000Z',
+        canSteer: true,
+        startedAt: '2026-04-12T00:00:00.000Z',
+        round: 2,
+        pendingInputs: [
+          {
+            inputId: 'input_pending',
+            content: '先看失败测试',
+            createdAt: '2026-04-12T00:00:01.000Z',
+            source: 'steer',
+            requestedKind: 'regular',
+          },
+        ],
+      },
+      queuedInputs: [
+        {
+          inputId: 'input_queued',
+          content: '下一轮整理文档',
+          createdAt: '2026-04-12T00:00:02.000Z',
+          source: 'queued',
+          requestedKind: 'regular',
+        },
+      ],
+      recovery: null,
+    }, null, 2), 'utf8');
+
+    await app.close();
+    app = await createApp({
+      cwd: repoRoot,
+      inlineJobs: true,
+      configOverrides: {
+        NODE_ENV: 'test',
+        DATA_ROOT: tempDir,
+        SKILLS_ROOT: skillsRoot,
+        WEB_ORIGIN: 'http://localhost:5173',
+        JWT_SECRET: 'test-secret-123',
+        ENABLE_ASSISTANT_TOOLS: false,
+        OPENAI_API_KEY: 'test-token',
+      },
+    });
+
+    const runtimeResponse = await app.inject({
+      method: 'GET',
+      url: `/api/sessions/${session.id}/runtime`,
+      headers: {
+        authorization: `Bearer ${auth.token}`,
+      },
+    });
+
+    expect(runtimeResponse.statusCode).toBe(200);
+    expect(runtimeResponse.json()).toMatchObject({
+      sessionId: session.id,
+      activeTurn: null,
+      followUpQueue: [
+        {
+          inputId: 'input_pending',
+          content: '先看失败测试',
+          createdAt: '2026-04-12T00:00:01.000Z',
+        },
+        {
+          inputId: 'input_queued',
+          content: '下一轮整理文档',
+          createdAt: '2026-04-12T00:00:02.000Z',
+        },
+      ],
+      recovery: {
+        previousTurnId: 'turn_recover',
+        previousTurnKind: 'regular',
+        reason: 'process_restarted',
+      },
+    });
+  });
+
+  it('removes a queued follow-up input through the runtime api', async () => {
+    const auth = await registerAndLogin(app, 'remove_runtime_user');
+    const session = await createSession(app, auth.token, '删除待处理输入');
+    const runtimePath = getSessionTurnRuntimePath(app.config, auth.user.id, session.id);
+
+    await fs.writeFile(runtimePath, JSON.stringify({
+      sessionId: session.id,
+      activeTurn: null,
+      queuedInputs: [
+        {
+          inputId: 'input_queued_1',
+          content: '可以考公务员',
+          createdAt: '2026-04-12T00:00:02.000Z',
+          source: 'queued',
+          requestedKind: 'regular',
+        },
+        {
+          inputId: 'input_queued_2',
+          content: '读文科',
+          createdAt: '2026-04-12T00:00:03.000Z',
+          source: 'queued',
+          requestedKind: 'regular',
+        },
+      ],
+      recovery: null,
+    }, null, 2), 'utf8');
+
+    const removeResponse = await app.inject({
+      method: 'DELETE',
+      url: `/api/sessions/${session.id}/runtime/queue/input_queued_1`,
+      headers: {
+        authorization: `Bearer ${auth.token}`,
+      },
+    });
+
+    expect(removeResponse.statusCode).toBe(200);
+    expect(removeResponse.json()).toEqual({
+      accepted: true,
+      inputId: 'input_queued_1',
+      runtime: {
+        sessionId: session.id,
+        activeTurn: null,
+        followUpQueue: [
+          {
+            inputId: 'input_queued_2',
+            content: '读文科',
+            createdAt: '2026-04-12T00:00:03.000Z',
+          },
+        ],
+        recovery: null,
+      },
     });
   });
 
@@ -226,14 +571,14 @@ describe('SkillChat server', () => {
       payload: {
         registrationRequiresInviteCode: false,
         modelConfig: {
-          openaiModelReply: 'gpt-4o-mini',
+          openaiModel: 'gpt-4o-mini',
           llmMaxOutputTokens: 2048,
         },
       },
     });
 
     expect(patchResponse.statusCode).toBe(200);
-    expect(app.config.OPENAI_MODEL_REPLY).toBe('gpt-4o-mini');
+    expect(app.config.OPENAI_MODEL).toBe('gpt-4o-mini');
     expect(app.config.LLM_MAX_OUTPUT_TOKENS).toBe(2048);
 
     const registerResponse = await app.inject({
@@ -483,7 +828,7 @@ describe('SkillChat server', () => {
 
   it('generates a PDF file and supports sharing and downloading it', async () => {
     const auth = await registerAndLogin(app, 'pdf_user');
-    const session = await createSession(app, auth.token, '测试会话');
+    const session = await createSession(app, auth.token, '测试会话', ['pdf']);
 
     const messageResponse = await app.inject({
       method: 'POST',
@@ -537,7 +882,7 @@ describe('SkillChat server', () => {
 
   it('uploads CSV and generates an XLSX artifact through the skill pipeline', async () => {
     const auth = await registerAndLogin(app, 'xlsx_user');
-    const session = await createSession(app, auth.token, '测试会话');
+    const session = await createSession(app, auth.token, '测试会话', ['xlsx']);
 
     const address = await app.listen({ host: '127.0.0.1', port: 0 });
     const form = new FormData();

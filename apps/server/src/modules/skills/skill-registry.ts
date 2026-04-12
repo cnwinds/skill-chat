@@ -32,6 +32,11 @@ const toMetadata = (
   references: Array.isArray(frontmatter.references)
     ? frontmatter.references.map((item) => String(item))
     : [],
+  starterPrompts: Array.isArray(frontmatter.starter_prompts)
+    ? frontmatter.starter_prompts
+      .map((item) => String(item).trim())
+      .filter(Boolean)
+    : [],
 });
 
 export class SkillRegistry {
@@ -92,6 +97,7 @@ export class SkillRegistry {
       runtime: skill.runtime,
       timeoutSec: skill.timeoutSec,
       references: [...skill.references],
+      starterPrompts: [...(skill.starterPrompts ?? [])],
     }));
   }
 

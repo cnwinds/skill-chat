@@ -5,7 +5,10 @@ import { cn, formatBytes } from '../lib/utils';
 import type { ToolTraceDisplayEvent } from '../lib/timeline';
 
 type Props = {
-  event: StoredEvent | ToolTraceDisplayEvent | { kind: 'pending_text'; content: string };
+  event:
+    | StoredEvent
+    | ToolTraceDisplayEvent
+    | { kind: 'pending_text'; content: string };
   onDownload?: (file: FileRecord) => void;
   downloading?: boolean;
   canExpandToolTrace?: boolean;

@@ -66,18 +66,13 @@ export const adminInviteCreateSchema = z.object({
 
 export const systemSettingsPatchSchema = z.object({
   registrationRequiresInviteCode: z.boolean().optional(),
-  defaultSessionActiveSkills: z.array(z.string().trim().min(1)).max(16).optional(),
   enableAssistantTools: z.boolean().optional(),
   webOrigin: z.string().url().optional(),
   modelConfig: z.object({
     openaiBaseUrl: z.string().url().optional(),
     openaiApiKey: z.string().optional(),
-    openaiModelRouter: z.string().min(1).optional(),
-    openaiModelPlanner: z.string().min(1).optional(),
-    openaiModelReply: z.string().min(1).optional(),
-    openaiReasoningEffortReply: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
-    anthropicBaseUrl: z.string().url().optional(),
-    anthropicApiKey: z.string().optional(),
+    openaiModel: z.string().min(1).optional(),
+    openaiReasoningEffort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
     llmMaxOutputTokens: z.number().int().positive().optional(),
     toolMaxOutputTokens: z.number().int().positive().optional(),
   }).optional(),
@@ -118,9 +113,59 @@ export const createMessageSchema = z.object({
     .trim()
     .min(1, '消息内容不能为空')
     .max(20_000, '消息内容过长，请精简后再发送'),
+  dispatch: z.enum(['auto', 'new_turn', 'steer', 'queue_next']).optional(),
+  turnId: z.string().trim().min(1, 'turnId 不能为空').optional(),
+  kind: z.enum(['regular', 'review', 'compact', 'maintenance']).optional(),
+});
+
+export const steerMessageSchema = z.object({
+  content: z.string()
+    .trim()
+    .min(1, '消息内容不能为空')
+    .max(20_000, '消息内容过长，请精简后再发送'),
+});
+
+export const turnParamsSchema = z.object({
+  turnId: z.string().trim().min(1, 'turnId 不能为空'),
 });
 
 export const fileBucketSchema = z.enum(FILE_BUCKETS);
 export const fileSourceSchema = z.enum(FILE_SOURCES);
 export const messageKindSchema = z.enum(MESSAGE_KINDS);
 export const sseEventSchema = z.enum(SSE_EVENT_NAMES);
+export const turnKindSchema = z.enum(['regular', 'review', 'compact', 'maintenance']);
+export const turnStatusSchema = z.enum(['running', 'interrupting', 'completed', 'failed', 'interrupted']);
+export const turnPhaseSchema = z.enum([
+  'sampling',
+  'tool_call',
+  'waiting_tool_result',
+  'streaming_assistant',
+  'finalizing',
+  'non_steerable',
+]);
+export const runtimeInputPreviewSchema = z.object({
+  inputId: z.string().trim().min(1),
+  content: z.string(),
+  createdAt: z.string(),
+});
+export const sessionRuntimeRecoverySchema = z.object({
+  recoveredAt: z.string(),
+  previousTurnId: z.string().trim().min(1),
+  previousTurnKind: turnKindSchema,
+  reason: z.literal('process_restarted'),
+});
+export const sessionRuntimeSnapshotSchema = z.object({
+  sessionId: z.string().trim().min(1),
+  activeTurn: z.object({
+    turnId: z.string().trim().min(1),
+    kind: turnKindSchema,
+    status: turnStatusSchema,
+    phase: turnPhaseSchema,
+    phaseStartedAt: z.string(),
+    canSteer: z.boolean(),
+    startedAt: z.string(),
+    round: z.number().int().nonnegative(),
+  }).nullable(),
+  followUpQueue: z.array(runtimeInputPreviewSchema),
+  recovery: sessionRuntimeRecoverySchema.nullable(),
+});

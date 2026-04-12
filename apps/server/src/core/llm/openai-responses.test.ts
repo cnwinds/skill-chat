@@ -118,4 +118,53 @@ describe('streamOpenAIResponsesText', () => {
     await expect(consumePromise).resolves.toEqual(['你好', '，世界']);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('propagates an external abort signal to the Responses stream', async () => {
+    const fetchSpy = vi.fn((_url: string, init?: RequestInit) => Promise.resolve(
+      createAbortAwareResponsesStream({
+        signal: init?.signal instanceof AbortSignal ? init.signal : undefined,
+        items: [
+          {
+            delayMs: 0,
+            event: 'response.output_text.delta',
+            data: {
+              type: 'response.output_text.delta',
+              delta: '第一段',
+            },
+          },
+          {
+            delayMs: 100,
+            event: 'response.output_text.delta',
+            data: {
+              type: 'response.output_text.delta',
+              delta: '第二段',
+            },
+          },
+        ],
+      }),
+    ));
+
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const controller = new AbortController();
+    const iterator = streamOpenAIResponsesText({
+      apiKey: 'test-token',
+      baseUrl: 'http://example.com/v1',
+      timeoutMs: 200,
+      signal: controller.signal,
+      body: {
+        model: 'gpt-5.4',
+        input: '你好',
+      },
+    })[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: '第一段',
+      done: false,
+    });
+
+    controller.abort();
+    await expect(iterator.next()).rejects.toThrow(/abort/i);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
 });

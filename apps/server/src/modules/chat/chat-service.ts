@@ -1,22 +1,29 @@
 import { nanoid } from 'nanoid';
 import type {
-  FileRecord,
+  FollowUpQueueMutationResponse,
+  MessageDispatchRequest,
+  MessageDispatchResponse,
   MessageRole,
+  SessionRuntimeSnapshot,
   SSEvent,
   StoredEvent,
   TextMessageEvent,
+  TurnKind,
+  TurnInterruptResponse,
   ToolCallEvent,
   ToolProgressEvent,
 } from '@skillchat/shared';
+import { SessionTurnRegistry } from '../../core/turn/session-turn-registry.js';
+import { SessionTurnRuntime } from '../../core/turn/session-turn-runtime.js';
+import { FileRuntimePersistence } from '../../core/turn/turn-persistence.js';
+import type { RuntimeInput, TurnExecutionContext } from '../../core/turn/turn-types.js';
 import type { StreamHub } from '../../core/stream/stream-hub.js';
 import { MessageStore } from '../../core/storage/message-store.js';
-import type { ChatModelClient, PlannedAssistantToolCall } from '../../core/llm/model-client.js';
-import type { SkillRegistry } from '../skills/skill-registry.js';
+import { getSessionTurnRuntimePath } from '../../core/storage/paths.js';
+import type { RegisteredSkill, SkillRegistry } from '../skills/skill-registry.js';
 import { FileService } from '../files/file-service.js';
-import { RunnerManager } from '../../core/runner/runner-manager.js';
 import { SessionService } from '../sessions/session-service.js';
-import { AssistantToolService, type ExecutedAssistantToolResult } from '../tools/assistant-tool-service.js';
-import type { OpenAIHarness } from './openai-harness.js';
+import { OpenAIHarness } from './openai-harness.js';
 import type { AppConfig } from '../../config/env.js';
 
 type UserContext = {
@@ -26,485 +33,248 @@ type UserContext = {
 };
 
 const createEventId = () => `evt_${nanoid()}`;
-const createToolCallId = () => `tool_${nanoid()}`;
-const MODEL_TOOL_CONTEXT_CHARS = 3_500;
-const explicitUrlPattern = /https?:\/\/[^\s)]+/i;
-const zhangXuefengResearchPattern = /(最新|最近|当前|今年|明年|数据|排名|分数线|录取|保研|政策|就业|薪资|工资|薪酬|中位数|行业|岗位|招聘|专业|学校|院校|大学|高考|志愿|选科|考研|报考|升学)/;
-
 const now = () => new Date().toISOString();
-const clearQueueIfCurrent = (
-  queues: Map<string, Promise<unknown>>,
-  queueKey: string,
-  task: Promise<unknown>,
-) => {
-  if (queues.get(queueKey) === task) {
-    queues.delete(queueKey);
-  }
-};
 
 export class ChatService {
-  private readonly sessionQueues = new Map<string, Promise<unknown>>();
+  private readonly turnRegistry: SessionTurnRegistry;
 
   constructor(
     private readonly messageStore: MessageStore,
     private readonly streamHub: StreamHub,
-    private readonly modelClient: ChatModelClient,
     private readonly skillRegistry: SkillRegistry,
     private readonly fileService: FileService,
-    private readonly runnerManager: RunnerManager,
     private readonly sessionService: SessionService,
-    private readonly assistantToolService: AssistantToolService,
     private readonly config: AppConfig,
-    private readonly openAIHarness?: OpenAIHarness,
-  ) {}
+    private readonly openAIHarness: OpenAIHarness,
+  ) {
+    this.turnRegistry = new SessionTurnRegistry(
+      async (userId, runtimeSessionId) => this.getRuntimePersistence(userId, runtimeSessionId).load(),
+      (userId, runtimeSessionId, initialState, onBecameIdle) => new SessionTurnRuntime(
+        runtimeSessionId,
+        {
+          onInputCommitted: async ({ user, turnId, kind, input }) => {
+            await this.commitUserInput(user.id, runtimeSessionId, turnId, kind, input);
+          },
+          onExecuteTurn: async (execution) => {
+            await this.executeTurn(runtimeSessionId, execution);
+          },
+          onTurnFailure: async ({ user, error }) => {
+            await this.handleFailure(user.id, runtimeSessionId, error, { publishDone: false });
+          },
+          publish: (event) => {
+            this.publish(runtimeSessionId, event as SSEvent);
+          },
+        },
+        this.getRuntimePersistence(userId, runtimeSessionId),
+        initialState,
+        onBecameIdle,
+      ),
+    );
+  }
 
   async processMessage(user: UserContext, sessionId: string, content: string) {
-    const queueKey = `${user.id}:${sessionId}`;
-    const previous = this.sessionQueues.get(queueKey) ?? Promise.resolve();
+    const result = await this.dispatchMessage(user, sessionId, {
+      content,
+      dispatch: 'new_turn',
+    });
+    await result.task;
+  }
 
-    const task = previous
-      .catch(() => undefined)
-      .then(async () => {
-        const session = this.sessionService.requireOwned(user.id, sessionId);
-        await this.sessionService.renameFromMessage(user.id, sessionId, session.title, content);
-        await this.sessionService.touch(user.id, sessionId);
+  async dispatchMessage(user: UserContext, sessionId: string, input: MessageDispatchRequest): Promise<{
+    response: MessageDispatchResponse;
+    task?: Promise<void>;
+  }> {
+    this.sessionService.requireOwned(user.id, sessionId);
+    const runtime = await this.turnRegistry.getOrCreate(user.id, sessionId);
+    return await runtime.dispatchMessage({
+      user,
+      content: input.content,
+      mode: input.dispatch,
+      turnId: input.turnId,
+      kind: input.kind,
+    });
+  }
 
-        const userMessage: TextMessageEvent = {
-          id: createEventId(),
-          sessionId,
-          kind: 'message',
-          role: 'user',
-          type: 'text',
-          content,
-          createdAt: now(),
-        };
-        await this.messageStore.appendEvent(user.id, sessionId, userMessage);
+  async steerTurn(user: UserContext, sessionId: string, turnId: string, content: string) {
+    this.sessionService.requireOwned(user.id, sessionId);
+    const runtime = await this.turnRegistry.getOrCreate(user.id, sessionId);
+    return await runtime.steerTurn(user, turnId, content);
+  }
 
-        this.publishThinking(sessionId, '正在分析需求');
+  async interruptTurn(user: UserContext, sessionId: string, turnId: string): Promise<TurnInterruptResponse> {
+    this.sessionService.requireOwned(user.id, sessionId);
+    const runtime = await this.turnRegistry.get(user.id, sessionId);
+    if (!runtime) {
+      throw new Error('当前 turn 不存在');
+    }
+    return await runtime.interruptTurn(user, turnId);
+  }
 
-        const history = await this.messageStore.readEvents(user.id, sessionId, { limit: 50 });
-        const files = this.fileService.getFileContext(user.id, sessionId);
-        const skills = this.skillRegistry.list();
+  async removeFollowUpInput(user: UserContext, sessionId: string, inputId: string): Promise<FollowUpQueueMutationResponse> {
+    this.sessionService.requireOwned(user.id, sessionId);
+    const runtime = await this.turnRegistry.get(user.id, sessionId);
+    if (!runtime) {
+      throw new Error('待处理输入不存在');
+    }
+    return await runtime.removeFollowUpInput(user, inputId);
+  }
 
-        if (this.openAIHarness && this.config.OPENAI_API_KEY) {
-          let finalText = '';
-          const activatedSkills = session.activeSkills
-            .map((skillName) => {
-              try {
-                return this.skillRegistry.get(skillName);
-              } catch {
-                return null;
-              }
-            })
-            .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill));
-          await this.openAIHarness.run({
-            userId: user.id,
-            sessionId,
-            message: content,
-            history,
-            files,
-            activatedSkills,
-            callbacks: {
-              onToolCall: async ({ callId, tool, arguments: toolArguments, hidden, meta }) => {
-                const toolCallEvent: ToolCallEvent = {
-                  id: createEventId(),
-                  sessionId,
-                  kind: 'tool_call',
-                  callId,
-                  skill: tool,
-                  arguments: toolArguments,
-                  hidden,
-                  meta,
-                  createdAt: now(),
-                };
-                await this.emitStored(user.id, sessionId, toolCallEvent);
-              },
-              onToolProgress: async ({ callId, tool, message, percent, status, hidden, meta }) => {
-                await this.emitToolProgress(user.id, sessionId, callId, tool, message, percent, status, hidden, meta);
-              },
-              onToolResult: async ({ callId, tool, summary, content: resultContent, hidden, meta }) => {
-                await this.emitStored(user.id, sessionId, {
-                  id: createEventId(),
-                  sessionId,
-                  kind: 'tool_result',
-                  callId,
-                  skill: tool,
-                  message: summary,
-                  content: resultContent,
-                  hidden,
-                  meta,
-                  createdAt: now(),
-                });
-              },
-              onArtifact: async (file) => {
-                await this.emitStored(user.id, sessionId, {
-                  id: createEventId(),
-                  sessionId,
-                  kind: 'file',
-                  file,
-                  createdAt: now(),
-                });
-                this.publish(sessionId, {
-                  id: createEventId(),
-                  event: 'file_ready',
-                  data: {
-                    file: {
-                      id: file.id,
-                      name: file.displayName,
-                      size: file.size,
-                      url: file.downloadUrl,
-                    },
-                  },
-                });
-              },
-              onTextDelta: async (delta) => {
-                finalText += delta;
-                this.publish(sessionId, {
-                  id: createEventId(),
-                  event: 'text_delta',
-                  data: {
-                    content: delta,
-                  },
-                });
-              },
-            },
-          });
+  async getRuntime(userId: string, sessionId: string): Promise<SessionRuntimeSnapshot> {
+    this.sessionService.requireOwned(userId, sessionId);
+    const runtime = await this.turnRegistry.get(userId, sessionId);
+    if (!runtime) {
+      return {
+        sessionId,
+        activeTurn: null,
+        followUpQueue: [],
+        recovery: null,
+      };
+    }
+    return runtime.getSnapshot();
+  }
 
-          if (finalText.trim()) {
-            await this.persistTextMessage(user.id, sessionId, finalText, 'assistant');
-          }
-          this.publish(sessionId, {
-            id: createEventId(),
-            event: 'done',
-            data: {},
-          });
-          return;
-        }
+  private async commitUserInput(
+    userId: string,
+    sessionId: string,
+    _turnId: string,
+    _kind: TurnKind,
+    input: RuntimeInput,
+  ) {
+    const session = this.sessionService.requireOwned(userId, sessionId);
+    await this.sessionService.renameFromMessage(userId, sessionId, session.title, input.content);
+    const userMessage: TextMessageEvent = {
+      id: createEventId(),
+      sessionId,
+      kind: 'message',
+      role: 'user',
+      type: 'text',
+      content: input.content,
+      createdAt: input.createdAt,
+    };
+    await this.messageStore.appendEvent(userId, sessionId, userMessage);
+    await this.sessionService.touch(userId, sessionId);
+  }
 
-        const decision = await this.modelClient.classify({
-          message: content,
-          history,
-          files,
-          skills,
-        });
+  private async executeTurn(sessionId: string, execution: TurnExecutionContext) {
+    const { user } = execution;
+    let currentInput = execution.initialInput;
+    let nextRound = 1;
 
-        if (decision.mode === 'chat' || decision.selectedSkills.length === 0) {
-          await this.replyWithAssistantTools(user.id, sessionId, content, history, files);
-          this.publish(sessionId, {
-            id: createEventId(),
-            event: 'done',
-            data: {},
-          });
-          return;
-        }
+    while (true) {
+      const session = this.sessionService.requireOwned(user.id, sessionId);
+      const history = await this.messageStore.readEvents(user.id, sessionId, { limit: 50 });
+      execution.throwIfAborted();
+      const files = this.fileService.getFileContext(user.id, sessionId);
 
-        const skill = this.skillRegistry.get(decision.selectedSkills[0]);
-        if (skill.runtime === 'chat') {
-          this.publishThinking(sessionId, `正在切换到 ${skill.name} 视角`);
-          await this.replyWithAssistantTools(user.id, sessionId, content, history, files, skill);
-          this.publish(sessionId, {
-            id: createEventId(),
-            event: 'done',
-            data: {},
-          });
-          return;
-        }
+      const { roundsUsed } = await this.executeTurnRound({
+        sessionId,
+        session,
+        history,
+        files,
+        execution,
+        input: currentInput,
+        startingRound: nextRound,
+      });
 
-        const plan = await this.modelClient.plan({
-          message: content,
-          files,
-          skill,
-        });
+      nextRound += roundsUsed;
+      execution.throwIfAborted();
+      execution.updatePhase('finalizing');
+      execution.setCanSteer(false);
 
-        for (const toolCall of plan.toolCalls) {
-          const callId = createToolCallId();
+      if (execution.kind !== 'regular') {
+        return;
+      }
+
+      const pendingInputs = await execution.drainPendingInputs();
+      if (pendingInputs.length === 0) {
+        return;
+      }
+
+      currentInput = this.mergeContinuationInputs(pendingInputs);
+    }
+  }
+
+  private async executeTurnRound(args: {
+    sessionId: string;
+    session: ReturnType<SessionService['requireOwned']>;
+    history: StoredEvent[];
+    files: ReturnType<FileService['getFileContext']>;
+    execution: TurnExecutionContext;
+    input: RuntimeInput;
+    startingRound: number;
+  }) {
+    const { sessionId, session, history, files, execution, input, startingRound } = args;
+    const { user } = execution;
+    const availableSkills = this.resolveSessionSkills(session.activeSkills ?? []);
+
+    execution.setRound(startingRound);
+    execution.updatePhase('sampling');
+    execution.setCanSteer(execution.kind === 'regular');
+    this.publishThinking(sessionId, startingRound === 1 ? '正在分析需求' : '继续处理追加引导');
+
+    let finalText = '';
+    const result = await this.openAIHarness.run({
+      userId: user.id,
+      sessionId,
+      message: input.content,
+      history,
+      files,
+      availableSkills,
+      signal: execution.signal,
+      drainPendingInputs: async () => execution.drainPendingInputs(),
+      startingRound,
+      callbacks: {
+        onRoundStart: (round) => {
+          execution.throwIfAborted();
+          execution.setRound(round);
+          execution.updatePhase('sampling');
+          execution.setCanSteer(execution.kind === 'regular');
+        },
+        onToolCall: async ({ callId, tool, arguments: toolArguments, hidden, meta }) => {
+          execution.throwIfAborted();
+          execution.updatePhase('tool_call');
+          execution.setCanSteer(false);
           const toolCallEvent: ToolCallEvent = {
             id: createEventId(),
             sessionId,
             kind: 'tool_call',
             callId,
-            skill: toolCall.skill,
-            arguments: toolCall.arguments,
+            skill: tool,
+            arguments: toolArguments,
+            hidden,
+            meta,
             createdAt: now(),
           };
           await this.emitStored(user.id, sessionId, toolCallEvent);
-          this.publish(sessionId, {
-            id: toolCallEvent.id,
-            event: 'tool_start',
-            data: {
-              callId,
-              skill: {
-                name: toolCall.skill,
-                status: 'running',
-              },
-              arguments: toolCall.arguments,
-            },
-          });
-
-          await this.runnerManager.execute({
-            userId: user.id,
-            sessionId,
-            skill,
-            prompt: content,
-            toolArguments: toolCall.arguments,
-            files,
-            onQueued: async () => {
-              await this.emitToolProgress(user.id, sessionId, callId, skill.name, '任务已排队', undefined, 'queued');
-            },
-            onProgress: async (message, percent, status) => {
-              await this.emitToolProgress(user.id, sessionId, callId, skill.name, message, percent, status);
-            },
-            onArtifact: async (file) => {
-              await this.emitStored(user.id, sessionId, {
-                id: createEventId(),
-                sessionId,
-                kind: 'file',
-                file,
-                createdAt: now(),
-              });
-              this.publish(sessionId, {
-                id: createEventId(),
-                event: 'file_ready',
-                data: {
-                  file: {
-                    id: file.id,
-                    name: file.displayName,
-                    size: file.size,
-                    url: file.downloadUrl,
-                  },
-                },
-              });
-            },
-          });
-
+        },
+        onToolProgress: async ({ callId, tool, message, percent, status, hidden, meta }) => {
+          execution.throwIfAborted();
+          execution.updatePhase('waiting_tool_result');
+          execution.setCanSteer(false);
+          await this.emitToolProgress(user.id, sessionId, callId, tool, message, percent, status, hidden, meta);
+        },
+        onToolResult: async ({ callId, tool, summary, content: resultContent, hidden, meta }) => {
+          execution.throwIfAborted();
+          execution.updatePhase('waiting_tool_result');
+          execution.setCanSteer(false);
           await this.emitStored(user.id, sessionId, {
             id: createEventId(),
             sessionId,
             kind: 'tool_result',
             callId,
-            skill: skill.name,
-            message: `${skill.name} 执行完成`,
+            skill: tool,
+            message: summary,
+            content: resultContent,
+            hidden,
+            meta,
             createdAt: now(),
           });
-        }
-
-        const latestFiles = this.fileService.list(user.id, { sessionId }).slice(0, 5);
-        const summary = this.buildSkillSummary(plan.assistantMessage, latestFiles);
-        await this.streamAssistantMessage(user.id, sessionId, summary, 'assistant');
-        this.publish(sessionId, {
-          id: createEventId(),
-          event: 'done',
-          data: {},
-        });
-      });
-
-    this.sessionQueues.set(queueKey, task);
-    void task.then(
-      () => clearQueueIfCurrent(this.sessionQueues, queueKey, task),
-      () => clearQueueIfCurrent(this.sessionQueues, queueKey, task),
-    );
-
-    return task;
-  }
-
-  private async replyWithAssistantTools(
-    userId: string,
-    sessionId: string,
-    content: string,
-    history: StoredEvent[],
-    files: ReturnType<FileService['getFileContext']>,
-    skill?: ReturnType<SkillRegistry['get']>,
-  ) {
-    const toolResults = await this.runAssistantTools(userId, sessionId, content, history, files, skill);
-    const context = this.buildToolContext(toolResults);
-
-    if (skill) {
-      await this.replyWithChatSkill(userId, sessionId, content, history, files, skill, context);
-      return;
-    }
-
-    await this.replyInText(userId, sessionId, content, history, context);
-  }
-
-  private async runAssistantTools(
-    userId: string,
-    sessionId: string,
-    content: string,
-    history: StoredEvent[],
-    files: ReturnType<FileService['getFileContext']>,
-    skill?: ReturnType<SkillRegistry['get']>,
-  ) {
-    if (!this.config.ENABLE_ASSISTANT_TOOLS) {
-      return [] as ExecutedAssistantToolResult[];
-    }
-
-    if (!this.assistantToolService.shouldConsiderTools(content, files, skill?.name)) {
-      return [] as ExecutedAssistantToolResult[];
-    }
-
-    const plan = await this.modelClient.planToolUse({
-      message: content,
-      history,
-      files,
-      tools: this.assistantToolService.list(skill),
-      skill,
-    });
-
-    const plannedCalls = this.enforceAssistantToolRequirements(content, plan.toolCalls, skill).slice(0, 3);
-    const indexedResults = new Map<number, ExecutedAssistantToolResult>();
-
-    for (let index = 0; index < plannedCalls.length;) {
-      const currentCall = plannedCalls[index]!;
-      if (!this.isParallelAssistantTool(currentCall)) {
-        const result = await this.executeAssistantToolCall(userId, sessionId, currentCall, skill);
-        if (result) {
-          indexedResults.set(index, result);
-        }
-        index += 1;
-        continue;
-      }
-
-      let batchEnd = index;
-      while (batchEnd < plannedCalls.length && this.isParallelAssistantTool(plannedCalls[batchEnd]!)) {
-        batchEnd += 1;
-      }
-
-      const batch = plannedCalls.slice(index, batchEnd);
-      const preparedBatch: Array<{ toolCall: PlannedAssistantToolCall; callId: string }> = [];
-      for (const toolCall of batch) {
-        preparedBatch.push({
-          toolCall,
-          callId: await this.prepareAssistantToolCall(userId, sessionId, toolCall),
-        });
-      }
-      const batchResults = await Promise.all(
-        preparedBatch.map(async ({ toolCall, callId }) => this.finishAssistantToolCall(userId, sessionId, toolCall, callId, skill)),
-      );
-
-      batchResults.forEach((result, offset) => {
-        if (result) {
-          indexedResults.set(index + offset, result);
-        }
-      });
-      index = batchEnd;
-    }
-
-    return plannedCalls
-      .map((_call, index) => indexedResults.get(index))
-      .filter((result): result is ExecutedAssistantToolResult => Boolean(result));
-  }
-
-  private enforceAssistantToolRequirements(
-    content: string,
-    plannedCalls: PlannedAssistantToolCall[],
-    skill?: ReturnType<SkillRegistry['get']>,
-  ) {
-    if (!this.shouldForceWebSearch(content, skill)) {
-      return plannedCalls;
-    }
-
-    if (plannedCalls.some((toolCall) => toolCall.tool === 'web_search')) {
-      return plannedCalls;
-    }
-
-    return [
-      {
-        tool: 'web_search',
-        arguments: {
-          query: content,
-          maxResults: 5,
         },
-      },
-      ...plannedCalls,
-    ];
-  }
-
-  private shouldForceWebSearch(content: string, skill?: ReturnType<SkillRegistry['get']>) {
-    if (skill?.name !== 'zhangxuefeng-perspective') {
-      return false;
-    }
-
-    if (explicitUrlPattern.test(content)) {
-      return false;
-    }
-
-    return zhangXuefengResearchPattern.test(content);
-  }
-
-  private isParallelAssistantTool(toolCall: PlannedAssistantToolCall) {
-    return toolCall.tool === 'web_search' || toolCall.tool === 'web_fetch';
-  }
-
-  private async executeAssistantToolCall(
-    userId: string,
-    sessionId: string,
-    toolCall: PlannedAssistantToolCall,
-    skill?: ReturnType<SkillRegistry['get']>,
-  ) {
-    const callId = await this.prepareAssistantToolCall(userId, sessionId, toolCall);
-    return this.finishAssistantToolCall(userId, sessionId, toolCall, callId, skill);
-  }
-
-  private async prepareAssistantToolCall(
-    userId: string,
-    sessionId: string,
-    toolCall: PlannedAssistantToolCall,
-  ) {
-    const callId = createToolCallId();
-    const toolCallEvent: ToolCallEvent = {
-      id: createEventId(),
-      sessionId,
-      kind: 'tool_call',
-      callId,
-      skill: toolCall.tool,
-      arguments: toolCall.arguments,
-      createdAt: now(),
-    };
-    await this.emitStored(userId, sessionId, toolCallEvent);
-    this.publish(sessionId, {
-      id: toolCallEvent.id,
-      event: 'tool_start',
-      data: {
-        callId,
-        skill: {
-          name: toolCall.tool,
-          status: 'running',
-        },
-        arguments: toolCall.arguments,
-      },
-    });
-    await this.emitToolProgress(userId, sessionId, callId, toolCall.tool, '开始调用工具', undefined, 'running');
-    return callId;
-  }
-
-  private async finishAssistantToolCall(
-    userId: string,
-    sessionId: string,
-    toolCall: PlannedAssistantToolCall,
-    callId: string,
-    skill?: ReturnType<SkillRegistry['get']>,
-  ) {
-    try {
-      const result = await this.assistantToolService.execute({
-        userId,
-        sessionId,
-        call: toolCall,
-        skill,
-      });
-      await this.emitStored(userId, sessionId, {
-        id: createEventId(),
-        sessionId,
-        kind: 'tool_result',
-        callId,
-        skill: result.tool,
-        message: result.summary,
-        content: result.content,
-        createdAt: now(),
-      });
-
-      if (result.artifacts?.length) {
-        for (const file of result.artifacts) {
-          await this.emitStored(userId, sessionId, {
+        onArtifact: async (file) => {
+          execution.throwIfAborted();
+          execution.updatePhase('waiting_tool_result');
+          execution.setCanSteer(false);
+          await this.emitStored(user.id, sessionId, {
             id: createEventId(),
             sessionId,
             kind: 'file',
@@ -523,95 +293,53 @@ export class ChatService {
               },
             },
           });
-        }
+        },
+        onTextDelta: async (delta) => {
+          execution.throwIfAborted();
+          execution.updatePhase('streaming_assistant');
+          execution.setCanSteer(execution.kind === 'regular');
+          finalText += delta;
+          this.publish(sessionId, {
+            id: createEventId(),
+            event: 'text_delta',
+            data: {
+              content: delta,
+            },
+          });
+        },
+      },
+    });
+
+    execution.throwIfAborted();
+    if (finalText.trim()) {
+      await this.persistTextMessage(user.id, sessionId, finalText, 'assistant');
+    }
+    return {
+      roundsUsed: result.roundsUsed,
+    };
+  }
+
+  private mergeContinuationInputs(inputs: RuntimeInput[]): RuntimeInput {
+    if (inputs.length === 1) {
+      return inputs[0]!;
+    }
+
+    const last = inputs[inputs.length - 1]!;
+    return {
+      ...last,
+      content: inputs.map((input) => input.content.trim()).filter(Boolean).join('\n'),
+    };
+  }
+
+  private resolveSessionSkills(sessionSkillNames: string[]): RegisteredSkill[] {
+    return sessionSkillNames.flatMap((skillName) => {
+      try {
+        const skill = this.skillRegistry.get(skillName);
+        return skill ? [skill] : [];
+      } catch {
+        return [];
       }
-      return result;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '工具调用失败';
-      await this.emitToolProgress(userId, sessionId, callId, toolCall.tool, message, undefined, 'failed');
-      return null;
-    }
-  }
-
-  private buildToolContext(toolResults: ExecutedAssistantToolResult[]) {
-    if (toolResults.length === 0) {
-      return undefined;
-    }
-
-    return [
-      '以下内容仅供内部参考，用于形成结论。不要向用户原样复述原始资料，不要输出“引用资料”“工具结果”“上下文”等标签。',
-      ...toolResults.map((result, index) => [
-        `工具 ${index + 1}: ${result.tool}`,
-        `参数: ${JSON.stringify(result.arguments, null, 2)}`,
-        (result.context ?? result.content).slice(0, MODEL_TOOL_CONTEXT_CHARS),
-      ].join('\n')),
-    ].join('\n\n');
-  }
-
-  private async replyInText(
-    userId: string,
-    sessionId: string,
-    content: string,
-    history: StoredEvent[],
-    context?: string,
-  ) {
-    let finalText = '';
-    for await (const chunk of this.modelClient.replyStream({ message: content, history, context })) {
-      finalText += chunk;
-      this.publish(sessionId, {
-        id: createEventId(),
-        event: 'text_delta',
-        data: {
-          content: chunk,
-        },
-      });
-    }
-
-    await this.persistTextMessage(userId, sessionId, finalText, 'assistant');
-  }
-
-  private async replyWithChatSkill(
-    userId: string,
-    sessionId: string,
-    content: string,
-    history: StoredEvent[],
-    files: ReturnType<FileService['getFileContext']>,
-    skill: ReturnType<SkillRegistry['get']>,
-    context?: string,
-  ) {
-    let finalText = '';
-    for await (const chunk of this.modelClient.skillReplyStream({
-      message: content,
-      history,
-      files,
-      skill,
-      context,
-    })) {
-      finalText += chunk;
-      this.publish(sessionId, {
-        id: createEventId(),
-        event: 'text_delta',
-        data: {
-          content: chunk,
-        },
-      });
-    }
-
-    await this.persistTextMessage(userId, sessionId, finalText, 'assistant');
-  }
-
-  private async streamAssistantMessage(userId: string, sessionId: string, content: string, role: MessageRole) {
-    for (const chunk of content.match(/.{1,24}/g) ?? [content]) {
-      this.publish(sessionId, {
-        id: createEventId(),
-        event: 'text_delta',
-        data: {
-          content: chunk,
-        },
-      });
-    }
-
-    await this.persistTextMessage(userId, sessionId, content, role);
+    });
   }
 
   private async persistTextMessage(userId: string, sessionId: string, content: string, role: MessageRole) {
@@ -746,7 +474,12 @@ export class ChatService {
     });
   }
 
-  async handleFailure(userId: string, sessionId: string, error: unknown) {
+  async handleFailure(
+    userId: string,
+    sessionId: string,
+    error: unknown,
+    options: { publishDone?: boolean } = {},
+  ) {
     const message = error instanceof Error ? error.message : '处理失败';
     await this.emitStored(userId, sessionId, {
       id: createEventId(),
@@ -755,23 +488,30 @@ export class ChatService {
       message,
       createdAt: now(),
     });
-    this.publish(sessionId, {
-      id: createEventId(),
-      event: 'done',
-      data: {},
-    });
+    if (options.publishDone ?? true) {
+      this.publish(sessionId, {
+        id: createEventId(),
+        event: 'done',
+        data: {},
+      });
+    }
   }
 
   private publish(sessionId: string, event: SSEvent) {
     this.streamHub.publish(sessionId, event);
   }
 
-  private buildSkillSummary(assistantMessage: string, files: FileRecord[]) {
-    if (files.length === 0) {
-      return `${assistantMessage}\n\n任务已完成，但没有生成可下载文件。`;
+  private getRuntimePersistence(userId: string, sessionId: string) {
+    return new FileRuntimePersistence(getSessionTurnRuntimePath(this.config, userId, sessionId));
+  }
+
+  private throwIfAborted(signal?: AbortSignal) {
+    if (!signal?.aborted) {
+      return;
     }
 
-    const recent = files.slice(0, 3).map((file) => `- ${file.displayName}`).join('\n');
-    return `${assistantMessage}\n\n已生成以下文件：\n${recent}`;
+    throw signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException('Turn interrupted', 'AbortError');
   }
 }

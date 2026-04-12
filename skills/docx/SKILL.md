@@ -6,6 +6,10 @@ runtime: python
 timeout_sec: 120
 references:
   - usage.md
+starter_prompts:
+  - 帮我生成一份项目方案 Word 文档
+  - 把这份会议记录整理成 DOCX 纪要
+  - 生成一份合同草稿 DOCX
 ---
 
 # DOCX Skill
