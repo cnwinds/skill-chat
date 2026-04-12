@@ -26,7 +26,7 @@ import { ensureBaseDirectories } from './core/storage/fs-utils.js';
 import { MessageStore } from './core/storage/message-store.js';
 import { StreamHub } from './core/stream/stream-hub.js';
 import { SkillRegistry } from './modules/skills/skill-registry.js';
-import { createModelClient } from './core/llm/create-model-client.js';
+import { DynamicModelClient } from './core/llm/dynamic-model-client.js';
 import { AuthService } from './modules/auth/auth-service.js';
 import { SessionService } from './modules/sessions/session-service.js';
 import { FileService } from './modules/files/file-service.js';
@@ -187,10 +187,8 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   const fileService = new FileService(db, config);
   const runnerManager = new RunnerManager(config, fileService);
   const assistantToolService = new AssistantToolService(config, fileService, skillRegistry);
-  const modelClient = createModelClient(config);
-  const openAIHarness = config.OPENAI_API_KEY
-    ? new OpenAIHarness(config, assistantToolService, runnerManager, skillRegistry)
-    : undefined;
+  const modelClient = new DynamicModelClient(config);
+  const openAIHarness = new OpenAIHarness(config, assistantToolService, runnerManager, skillRegistry);
   const chatService = new ChatService(
     messageStore,
     streamHub,

@@ -741,4 +741,89 @@ describe('ChatService assistant tool orchestration', () => {
       }),
     );
   });
+
+  it('falls back to the model client until an OpenAI API key is configured, then uses the harness immediately', async () => {
+    const config = testConfig();
+    const classify = vi.fn().mockResolvedValue({
+      mode: 'chat',
+      needClarification: false,
+      selectedSkills: [],
+      reason: 'test',
+    });
+    const replyStream = vi.fn(async function* () {
+      yield '模型回复';
+    });
+    const harnessRun = vi.fn(async ({ callbacks }: { callbacks?: { onTextDelta?: (content: string) => Promise<void> | void } }) => {
+      await callbacks?.onTextDelta?.('Harness 回复');
+    });
+
+    const service = new ChatService(
+      {
+        appendEvent: vi.fn().mockResolvedValue(undefined),
+        readEvents: vi.fn().mockResolvedValue([]),
+      } as never,
+      {
+        publish: vi.fn(),
+      } as never,
+      {
+        classify,
+        plan: vi.fn(),
+        planToolUse: vi.fn().mockResolvedValue({ toolCalls: [] }),
+        replyStream,
+        skillReplyStream: vi.fn(),
+      } as never,
+      {
+        list: vi.fn().mockReturnValue([]),
+        get: vi.fn(),
+      } as never,
+      {
+        getFileContext: vi.fn().mockReturnValue([]),
+        list: vi.fn().mockReturnValue([]),
+      } as never,
+      {} as never,
+      {
+        requireOwned: vi.fn().mockReturnValue({
+          id: 's1',
+          title: '新会话',
+          createdAt: '',
+          updatedAt: '',
+          lastMessageAt: null,
+          activeSkills: [],
+        }),
+        renameFromMessage: vi.fn().mockResolvedValue(undefined),
+        touch: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      {
+        shouldConsiderTools: vi.fn().mockReturnValue(false),
+        list: vi.fn().mockReturnValue([]),
+        execute: vi.fn(),
+      } as never,
+      config,
+      {
+        run: harnessRun,
+      } as never,
+    );
+
+    await service.processMessage(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      '先用普通模型回复',
+    );
+
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(replyStream).toHaveBeenCalledTimes(1);
+    expect(harnessRun).not.toHaveBeenCalled();
+
+    config.OPENAI_API_KEY = 'openai-token';
+
+    await service.processMessage(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      '现在切到 OpenAI',
+    );
+
+    expect(harnessRun).toHaveBeenCalledTimes(1);
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(replyStream).toHaveBeenCalledTimes(1);
+  });
 });

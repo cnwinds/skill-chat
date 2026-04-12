@@ -86,7 +86,7 @@ export class ChatService {
         const files = this.fileService.getFileContext(user.id, sessionId);
         const skills = this.skillRegistry.list();
 
-        if (this.openAIHarness) {
+        if (this.openAIHarness && this.config.OPENAI_API_KEY) {
           let finalText = '';
           const activatedSkills = session.activeSkills
             .map((skillName) => {
