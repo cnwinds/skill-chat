@@ -17,7 +17,7 @@ services:
       PORT: 3000
       DATA_ROOT: /app/data
       SKILLS_ROOT: /app/skills
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:7070}
     volumes:
       - skillchat_data:/app/data
     healthcheck:
@@ -40,7 +40,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "${WEB_PORT:-8080}:80"
+      - "${WEB_PORT:-7070}:80"
 
 volumes:
   skillchat_data:

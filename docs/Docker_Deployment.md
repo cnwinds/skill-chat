@@ -10,7 +10,7 @@
 
 对外默认只暴露一个端口：
 
-- Web UI：`http://localhost:8080`
+- Web UI：`http://localhost:7070`
 
 ## 1. 准备环境变量
 
@@ -25,7 +25,7 @@ cp .env.example .env
 ```dotenv
 NODE_ENV=production
 PORT=3000
-WEB_ORIGIN=http://localhost:8080
+WEB_ORIGIN=http://localhost:7070
 JWT_SECRET=请替换成长度足够的随机字符串
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
@@ -35,7 +35,7 @@ ANTHROPIC_API_KEY=
 
 - `WEB_ORIGIN` 要改成你的实际访问地址，例如 `https://chat.example.com`。
 - 如果不配置 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`，系统会退回本地 rule-based 模式。
-- `WEB_PORT` 不是应用变量，而是 `docker compose` 的端口映射变量。默认是 `8080`，如果要改成 `80`，可以在启动前执行 `export WEB_PORT=80`。
+- `WEB_PORT` 不是应用变量，而是 `docker compose` 的端口映射变量。默认是 `7070`，如果要改成 `80`，可以在启动前执行 `export WEB_PORT=80`。
 
 ## 1.1 国内网络镜像源加速
 
@@ -86,7 +86,7 @@ docker compose logs -f
 验证前端首页：
 
 ```bash
-curl -I http://127.0.0.1:8080
+curl -I http://127.0.0.1:7070
 ```
 
 验证后端健康检查：
@@ -98,7 +98,7 @@ docker compose exec api curl -fsS http://127.0.0.1:3000/health
 验证前端反代到后端：
 
 ```bash
-curl -fsS http://127.0.0.1:8080/api/system/status
+curl -fsS http://127.0.0.1:7070/api/system/status
 ```
 
 ## 4. 常用操作
@@ -141,6 +141,6 @@ docker compose up -d --build
 
 如果你前面还有一层 Nginx、Caddy 或云负载均衡：
 
-- 外层代理只需要把流量转发到本机 `8080`。
+- 外层代理只需要把流量转发到本机 `7070`。
 - 同时把 `.env` 里的 `WEB_ORIGIN` 改成最终对外域名。
 - `/api/sessions/:id/stream` 是 SSE，外层代理不要开启强缓存和响应缓冲。

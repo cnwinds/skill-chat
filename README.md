@@ -74,7 +74,7 @@ docker compose up -d --build
 默认访问地址：
 
 ```text
-http://localhost:8080
+http://localhost:7070
 ```
 
 完整说明见：
