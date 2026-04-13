@@ -108,9 +108,79 @@ const formatElapsedDuration = (elapsedSeconds: number) => {
   return `${minutes}分钟${seconds}秒`;
 };
 
+const getThinkingBubbleLabel = (content: string) => (
+  /^重连中\d+\/\d+$/.test(content)
+    ? content
+    : '思考中'
+);
+
+const CopyableMessageBubble = ({
+  bubbleClassName,
+  content,
+  markdown,
+}: {
+  bubbleClassName: string;
+  content: string;
+  markdown: string;
+}) => {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  useEffect(() => {
+    if (copyState === 'idle') {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCopyState('idle');
+    }, 1600);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [copyState]);
+
+  const handleCopy = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('clipboard unavailable');
+      }
+      await navigator.clipboard.writeText(content);
+      setCopyState('copied');
+    } catch {
+      setCopyState('failed');
+    }
+  };
+
+  const buttonLabel = copyState === 'copied'
+    ? '已复制'
+    : copyState === 'failed'
+      ? '复制失败'
+      : '复制';
+
+  return (
+    <div className="message-content-shell">
+      <button
+        type="button"
+        className="message-copy-button"
+        onClick={() => {
+          void handleCopy();
+        }}
+        aria-label="复制消息内容"
+        title="复制消息内容"
+      >
+        {buttonLabel}
+      </button>
+      <div className={bubbleClassName}>
+        <ReactMarkdown>{markdown}</ReactMarkdown>
+      </div>
+    </div>
+  );
+};
+
 const ThinkingBubble = ({ createdAt, content }: { createdAt: string; content: string }) => {
   const [elapsedSeconds, setElapsedSeconds] = useState(() => getElapsedSeconds(createdAt));
   const elapsedLabel = formatElapsedDuration(elapsedSeconds);
+  const label = getThinkingBubbleLabel(content);
 
   useEffect(() => {
     setElapsedSeconds(getElapsedSeconds(createdAt));
@@ -128,9 +198,9 @@ const ThinkingBubble = ({ createdAt, content }: { createdAt: string; content: st
       <div
         className="message-bubble assistant thinking-inline"
         title={content}
-        aria-label={`正在思考，已持续 ${elapsedLabel}`}
+        aria-label={`${label}，已持续 ${elapsedLabel}`}
       >
-        {`正在思考(${elapsedLabel})`}
+        {`${label}(${elapsedLabel})`}
       </div>
     </article>
   );
@@ -140,9 +210,11 @@ export const MessageItem = ({ event, onDownload, downloading = false, canExpandT
   if (event.kind === 'pending_text') {
     return (
       <article className="message-row assistant">
-        <div className="message-bubble assistant pending">
-          <ReactMarkdown>{event.content}</ReactMarkdown>
-        </div>
+        <CopyableMessageBubble
+          bubbleClassName="message-bubble assistant pending"
+          content={event.content}
+          markdown={event.content}
+        />
       </article>
     );
   }
@@ -150,9 +222,11 @@ export const MessageItem = ({ event, onDownload, downloading = false, canExpandT
   if (event.kind === 'message') {
     return (
       <article className={cn('message-row', event.role === 'user' ? 'user' : 'assistant')}>
-        <div className={cn('message-bubble', event.role === 'user' ? 'user' : 'assistant')}>
-          <ReactMarkdown>{event.content}</ReactMarkdown>
-        </div>
+        <CopyableMessageBubble
+          bubbleClassName={cn('message-bubble', event.role === 'user' ? 'user' : 'assistant')}
+          content={event.content}
+          markdown={event.content}
+        />
       </article>
     );
   }

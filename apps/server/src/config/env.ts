@@ -14,6 +14,9 @@ const envSchema = z.object({
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_API_KEY: z.string().optional().default(''),
   OPENAI_MODEL: z.string().default('gpt-5.4'),
+  MODEL_CONTEXT_WINDOW_TOKENS: z.coerce.number().int().positive().optional(),
+  MODEL_AUTO_COMPACT_TOKEN_LIMIT: z.coerce.number().int().positive().optional(),
+  WEB_SEARCH_MODE: z.enum(['disabled', 'cached', 'live']).default('live'),
   OPENAI_REASONING_EFFORT: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).default('xhigh'),
   LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(10240),
   TOOL_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(4096),
@@ -46,6 +49,9 @@ export const loadConfig = (cwd: string, overrides: ConfigOverrides = {}): AppCon
     ...process.env,
     ...overrides,
     OPENAI_MODEL: overrides.OPENAI_MODEL ?? process.env.OPENAI_MODEL,
+    MODEL_CONTEXT_WINDOW_TOKENS: overrides.MODEL_CONTEXT_WINDOW_TOKENS ?? process.env.MODEL_CONTEXT_WINDOW_TOKENS,
+    MODEL_AUTO_COMPACT_TOKEN_LIMIT: overrides.MODEL_AUTO_COMPACT_TOKEN_LIMIT ?? process.env.MODEL_AUTO_COMPACT_TOKEN_LIMIT,
+    WEB_SEARCH_MODE: overrides.WEB_SEARCH_MODE ?? process.env.WEB_SEARCH_MODE,
     OPENAI_REASONING_EFFORT: overrides.OPENAI_REASONING_EFFORT ?? process.env.OPENAI_REASONING_EFFORT,
   });
 

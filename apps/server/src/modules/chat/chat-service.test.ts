@@ -52,6 +52,7 @@ const testConfig = (): AppConfig => ({
   OPENAI_BASE_URL: 'http://example.com/v1',
   OPENAI_API_KEY: 'test-token',
   OPENAI_MODEL: 'gpt-5.4',
+  WEB_SEARCH_MODE: 'live',
   OPENAI_REASONING_EFFORT: 'high',
   LLM_MAX_OUTPUT_TOKENS: 4096,
   TOOL_MAX_OUTPUT_TOKENS: 3072,
@@ -62,16 +63,12 @@ const testConfig = (): AppConfig => ({
   USER_STORAGE_QUOTA_MB: 1024,
 });
 
-const createSkill = (name: string, runtime: 'chat' | 'python' | 'node' = 'chat') => ({
+const createSkill = (name: string) => ({
   name,
   description: `${name} desc`,
-  entrypoint: runtime === 'chat' ? '' : 'scripts/run.js',
-  runtime,
-  timeoutSec: 120,
-  references: [],
   directory: `/tmp/skills/${name}`,
   markdown: `# ${name}`,
-  referencesContent: [],
+  starterPrompts: [],
 });
 
 const createService = (options: {
@@ -80,14 +77,23 @@ const createService = (options: {
   skills?: Array<ReturnType<typeof createSkill>>;
   fileContext?: Array<Record<string, unknown>>;
   harnessRun?: ReturnType<typeof vi.fn>;
+  compactContext?: ReturnType<typeof vi.fn>;
+  contextState?: { version: 1; latestCompaction: null | { summary: string; createdAt: string; baselineCreatedAt: string | null; trigger: 'manual' | 'auto' } };
+  seededEvents?: Array<Record<string, unknown>>;
 } = {}) => {
-  const storedEvents: Array<Record<string, unknown>> = [];
+  const storedEvents: Array<Record<string, unknown>> = [...(options.seededEvents ?? [])];
   const appendEvent = vi.fn(async (_userId: string, _sessionId: string, event: Record<string, unknown>) => {
     storedEvents.push(event);
   });
   const publish = vi.fn();
   const config = options.config ?? testConfig();
   const skills = options.skills ?? [];
+  const compactContext = options.compactContext ?? vi.fn(async () => '压缩后的摘要');
+  const contextStore = {
+    load: vi.fn(async () => options.contextState ?? { version: 1, latestCompaction: null }),
+    save: vi.fn(async () => undefined),
+    clear: vi.fn(async () => undefined),
+  };
   const session = {
     id: 's1',
     title: '新会话',
@@ -131,7 +137,9 @@ const createService = (options: {
     config,
     {
       run: harnessRun,
+      compactContext,
     } as never,
+    contextStore as never,
   );
 
   return {
@@ -140,6 +148,8 @@ const createService = (options: {
     appendEvent,
     publish,
     harnessRun,
+    compactContext,
+    contextStore,
   };
 };
 
@@ -389,5 +399,131 @@ describe('ChatService harness-only flow', () => {
         message: 'OpenAI API key is not configured',
       }),
     );
+  });
+
+  it('runs /compact as a dedicated context compaction turn', async () => {
+    const compactContext = vi.fn(async () => '用户关注就业和城市，已读取张雪峰 skill。');
+    const { service, storedEvents, compactContext: compactMock, contextStore, publish, harnessRun } = createService({
+      compactContext,
+      seededEvents: [
+        {
+          id: 'evt_old_user',
+          sessionId: 's1',
+          kind: 'message',
+          role: 'user',
+          type: 'text',
+          content: '先帮我分析计算机专业',
+          createdAt: '2026-04-13T10:00:00.000Z',
+        },
+        {
+          id: 'evt_old_assistant',
+          sessionId: 's1',
+          kind: 'message',
+          role: 'assistant',
+          type: 'text',
+          content: '先看就业和城市。',
+          createdAt: '2026-04-13T10:00:01.000Z',
+        },
+      ],
+    });
+
+    await service.processMessage(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      '/compact',
+    );
+
+    expect(compactMock).toHaveBeenCalledTimes(1);
+    expect(harnessRun).not.toHaveBeenCalled();
+    expect(contextStore.save).toHaveBeenCalledWith(
+      'u1',
+      's1',
+      expect.objectContaining({
+        version: 1,
+        latestCompaction: expect.objectContaining({
+          summary: '用户关注就业和城市，已读取张雪峰 skill。',
+          trigger: 'manual',
+        }),
+      }),
+    );
+    expect(
+      storedEvents
+        .filter((event) => event.kind === 'message' && event.role === 'assistant')
+        .map((event) => event.content),
+    ).toContain('上下文已压缩，后续对话会基于摘要继续。');
+    expect(publish).toHaveBeenCalledWith('s1', expect.objectContaining({
+      event: 'text_delta',
+      data: {
+        content: '上下文已压缩，后续对话会基于摘要继续。',
+      },
+    }));
+  });
+
+  it('auto compacts long history before a regular turn and passes the compacted state into harness', async () => {
+    const config = {
+      ...testConfig(),
+      MODEL_AUTO_COMPACT_TOKEN_LIMIT: 20,
+    };
+    const compactContext = vi.fn(async () => '压缩摘要：用户持续关注高考志愿、就业和城市。');
+    const harnessRun = vi.fn(async ({ contextState, callbacks }: {
+      contextState?: { latestCompaction: { summary: string } | null };
+      callbacks?: { onTextDelta?: (content: string) => Promise<void> | void };
+    }) => {
+      expect(contextState?.latestCompaction?.summary).toContain('压缩摘要');
+      await callbacks?.onTextDelta?.('基于压缩摘要继续分析。');
+      return {
+        finalText: '基于压缩摘要继续分析。',
+        roundsUsed: 1,
+      };
+    });
+
+    const { service, compactContext: compactMock, contextStore, storedEvents } = createService({
+      config,
+      compactContext,
+      harnessRun,
+      seededEvents: [
+        {
+          id: 'evt_u1',
+          sessionId: 's1',
+          kind: 'message',
+          role: 'user',
+          type: 'text',
+          content: '请分析人工智能、口腔医学和电气工程的就业、城市和薪资差异。',
+          createdAt: '2026-04-13T10:00:00.000Z',
+        },
+        {
+          id: 'evt_a1',
+          sessionId: 's1',
+          kind: 'message',
+          role: 'assistant',
+          type: 'text',
+          content: '先看就业，再看城市和行业集中度。',
+          createdAt: '2026-04-13T10:00:01.000Z',
+        },
+      ],
+    });
+
+    await service.processMessage(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      '继续，把上海和杭州也纳入比较。',
+    );
+
+    expect(compactMock).toHaveBeenCalledTimes(1);
+    expect(contextStore.save).toHaveBeenCalledWith(
+      'u1',
+      's1',
+      expect.objectContaining({
+        latestCompaction: expect.objectContaining({
+          trigger: 'auto',
+          summary: '压缩摘要：用户持续关注高考志愿、就业和城市。',
+        }),
+      }),
+    );
+    expect(
+      storedEvents
+        .filter((event) => event.kind === 'message' && event.role === 'assistant')
+        .map((event) => event.content),
+    ).toContain('基于压缩摘要继续分析。');
   });
 });

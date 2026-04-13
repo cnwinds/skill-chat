@@ -27,6 +27,9 @@ export const getSessionMessagesPath = (config: AppConfig, userId: string, sessio
 export const getSessionTurnRuntimePath = (config: AppConfig, userId: string, sessionId: string) =>
   path.join(getSessionRoot(config, userId, sessionId), 'turn-runtime.json');
 
+export const getSessionContextStatePath = (config: AppConfig, userId: string, sessionId: string) =>
+  path.join(getSessionRoot(config, userId, sessionId), 'session-context.json');
+
 export const getSessionUploadsRoot = (config: AppConfig, userId: string, sessionId: string) =>
   path.join(getSessionRoot(config, userId, sessionId), 'uploads');
 

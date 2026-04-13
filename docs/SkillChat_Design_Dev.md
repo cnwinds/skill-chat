@@ -18,6 +18,8 @@
 
 本文档不追求“大而全”，而是为两周内完成 MVP 提供可执行方案。
 
+> 说明：本文档仍保留部分早期设计内容。当前正在进行中的 harness / tool registry / skill 对齐改造，以 `docs/Codex_Alignment_Refactor_Table.md` 为准。
+
 ---
 
 ## 2. 设计范围
@@ -386,22 +388,22 @@ interface ChatModelClient {
 
 #### 5.5.4 执行方式
 
-后端不让模型直接组织命令，而是由注册表生成命令：
+后端不再为 Skill 生成包装请求文件，而是执行模型明确指定的 CLI：
 
 ```ts
 type SkillRunSpec = {
   skillName: string;
-  entry: string;
+  path: string;
   args: string[];
-  env: Record<string, string>;
-  timeoutMs: number;
+  cwdRoot: 'session' | 'workspace';
+  cwdPath?: string;
 };
 ```
 
 例如：
 
 ```text
-python /skills/pdf/scripts/run.py --request /data/users/u1/sessions/s1/tmp/run-123.json
+python skills/xlsx/scripts/recalc.py outputs/model.xlsx 30
 ```
 
 #### 5.5.5 进度与产出监听
@@ -442,11 +444,6 @@ python /skills/pdf/scripts/run.py --request /data/users/u1/sessions/s1/tmp/run-1
 ---
 name: pdf
 description: 生成和处理 PDF 文件
-entrypoint: scripts/run.py
-runtime: python
-timeout_sec: 120
-references:
-  - reportlab_guide.md
 ---
 ```
 
@@ -967,16 +964,6 @@ V0.1 采用如下结构：
 ---
 name: pdf
 description: 生成和处理 PDF 文件
-entrypoint: scripts/run.py
-runtime: python
-timeout_sec: 120
-references:
-  - reportlab_guide.md
-input_schema:
-  type: object
-  properties:
-    title:
-      type: string
 ---
 ```
 
@@ -1021,13 +1008,13 @@ input_schema:
 }
 ```
 
-脚本通过命令行接收：
+脚本通过原生命令行接收：
 
 ```text
-python run.py --request /path/to/request.json
+python scripts/fill_fillable_fields.py uploads/form.pdf uploads/field-values.json outputs/filled.pdf
 ```
 
-这样能避免复杂参数拼接，并且便于后续排障复现。
+这样与官方 skill 保持一致，模型只需要按 `SKILL.md` 明确传入 `path + args` 即可。
 
 ### 9.4 V0.1 内置 Skill
 

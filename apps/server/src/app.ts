@@ -35,6 +35,7 @@ import { RunnerManager } from './core/runner/runner-manager.js';
 import { ChatService } from './modules/chat/chat-service.js';
 import { AssistantToolService } from './modules/tools/assistant-tool-service.js';
 import { OpenAIHarness } from './modules/chat/openai-harness.js';
+import { SessionContextStore } from './modules/chat/session-context-store.js';
 import { SystemSettingsService } from './modules/system/system-settings-service.js';
 import { UserSettingsService } from './modules/system/user-settings-service.js';
 import { AdminService } from './modules/admin/admin-service.js';
@@ -189,6 +190,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   const runnerManager = new RunnerManager(config, fileService);
   const assistantToolService = new AssistantToolService(config, fileService);
   const openAIHarness = new OpenAIHarness(config, assistantToolService, runnerManager);
+  const sessionContextStore = new SessionContextStore(config);
   const chatService = new ChatService(
     messageStore,
     streamHub,
@@ -197,6 +199,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     sessionService,
     config,
     openAIHarness,
+    sessionContextStore,
   );
 
   const app = Fastify({

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { FileEvent, TextMessageEvent, ThinkingEvent, ToolProgressEvent } from '@skillchat/shared';
 import { MessageItem } from './components/MessageItem';
 import type { ToolTraceDisplayEvent } from './lib/timeline';
@@ -23,6 +23,32 @@ describe('MessageItem', () => {
 
     render(<MessageItem event={event} />);
     expect(screen.getByText('你好，SkillChat')).toBeInTheDocument();
+  });
+
+  it('copies message content from the hover action button', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText,
+      },
+    });
+
+    const event: TextMessageEvent = {
+      id: 'evt_copy_1',
+      sessionId: 's1',
+      kind: 'message',
+      role: 'assistant',
+      type: 'text',
+      content: '请复制这段回复',
+      createdAt: new Date().toISOString(),
+    };
+
+    render(<MessageItem event={event} />);
+    fireEvent.click(screen.getByRole('button', { name: '复制消息内容' }));
+
+    expect(writeText).toHaveBeenCalledWith('请复制这段回复');
+    expect(await screen.findByText('已复制')).toBeInTheDocument();
   });
 
   it('renders tool progress and file card', () => {
@@ -75,7 +101,7 @@ describe('MessageItem', () => {
     };
 
     render(<MessageItem event={event} />);
-    expect(screen.getByText('正在思考(40秒)')).toBeInTheDocument();
+    expect(screen.getByText('思考中(40秒)')).toBeInTheDocument();
   });
 
   it('renders thinking duration in minutes after 60 seconds', () => {
@@ -91,7 +117,23 @@ describe('MessageItem', () => {
     };
 
     render(<MessageItem event={event} />);
-    expect(screen.getByText('正在思考(2分钟5秒)')).toBeInTheDocument();
+    expect(screen.getByText('思考中(2分钟5秒)')).toBeInTheDocument();
+  });
+
+  it('renders reconnect progress in the thinking bubble when reconnecting', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-11T12:00:12.000Z'));
+
+    const event: ThinkingEvent = {
+      id: 'evt_6',
+      sessionId: 's1',
+      kind: 'thinking',
+      content: '重连中1/5',
+      createdAt: '2026-04-11T12:00:00.000Z',
+    };
+
+    render(<MessageItem event={event} />);
+    expect(screen.getByText('重连中1/5(12秒)')).toBeInTheDocument();
   });
 
   it('renders a compact collapsed tool trace card', () => {

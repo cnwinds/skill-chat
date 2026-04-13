@@ -3,9 +3,8 @@ import path from 'node:path';
 import type { AppConfig } from '../../config/env.js';
 import { assertPathInside } from '../../core/storage/fs-utils.js';
 import { getSessionOutputsRoot, getSessionRoot, getUserRoot } from '../../core/storage/paths.js';
-import type { RegisteredSkill } from '../skills/skill-registry.js';
 
-export type WorkspaceRootName = 'session' | 'skill' | 'workspace';
+export type WorkspaceRootName = 'session' | 'workspace';
 
 export type WorkspaceRootDescriptor = {
   root: WorkspaceRootName;
@@ -24,7 +23,6 @@ type ResolveWorkspaceRootArgs = {
   userId: string;
   sessionId: string;
   root: WorkspaceRootName;
-  skill?: RegisteredSkill;
 };
 
 const DEFAULT_IGNORED_NAMES = new Set([
@@ -46,25 +44,12 @@ export const resolveWorkspaceRoot = ({
   userId,
   sessionId,
   root,
-  skill,
 }: ResolveWorkspaceRootArgs): WorkspaceRootDescriptor => {
   if (root === 'session') {
     return {
       root,
       absoluteRoot: getSessionRoot(config, userId, sessionId),
       label: '当前会话目录',
-    };
-  }
-
-  if (root === 'skill') {
-    if (!skill) {
-      throw new Error('当前没有已启用的 Skill，无法读取 skill 工作区');
-    }
-
-    return {
-      root,
-      absoluteRoot: skill.directory,
-      label: `${skill.name} 技能目录`,
     };
   }
 

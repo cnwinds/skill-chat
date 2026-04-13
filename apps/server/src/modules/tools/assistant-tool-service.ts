@@ -105,7 +105,7 @@ const readFileSchema = z.object({
 });
 
 const listWorkspacePathsSchema = z.object({
-  root: z.enum(['workspace', 'session', 'skill']).optional().default('workspace'),
+  root: z.enum(['workspace', 'session']).optional().default('workspace'),
   path: z.string().trim().optional().default(''),
   depth: z.coerce.number().int().min(0).max(4).optional().default(2),
   offset: z.coerce.number().int().min(0).optional().default(0),
@@ -113,20 +113,10 @@ const listWorkspacePathsSchema = z.object({
 });
 
 const readWorkspacePathSliceSchema = z.object({
-  root: z.enum(['workspace', 'session', 'skill']).optional().default('workspace'),
+  root: z.enum(['workspace', 'session']).optional().default('workspace'),
   path: z.string().trim().min(1, 'path 不能为空'),
   startLine: z.coerce.number().int().positive().optional(),
   endLine: z.coerce.number().int().positive().optional(),
-  maxChars: z.coerce.number().int().min(400).max(12_000).optional().default(6_000),
-});
-
-const listSkillResourcesSchema = z.object({
-  skillName: z.string().trim().min(1).optional(),
-});
-
-const readSkillResourceSliceSchema = z.object({
-  skillName: z.string().trim().min(1).optional(),
-  resource: z.string().trim().min(1).optional().default('SKILL.md'),
   maxChars: z.coerce.number().int().min(400).max(12_000).optional().default(6_000),
 });
 
@@ -232,6 +222,12 @@ const buildSearchQueries = (rawQuery: string) => {
     .slice(0, SEARCH_QUERY_LIMIT);
 };
 
+const toSessionToolPath = (relativePath: string) => {
+  const normalized = relativePath.replace(/\\/g, '/');
+  const sessionMatch = normalized.match(/^sessions\/[^/]+\/(.+)$/);
+  return sessionMatch?.[1] ?? normalized;
+};
+
 const formatFileList = (files: SessionFileContext[]) =>
   files.map((file) => [
     `- ${file.name}`,
@@ -239,7 +235,8 @@ const formatFileList = (files: SessionFileContext[]) =>
     `  bucket: ${file.bucket}`,
     `  mimeType: ${file.mimeType ?? 'application/octet-stream'}`,
     `  size: ${file.size}`,
-    `  path: ${file.relativePath}`,
+    `  userPath: ${file.relativePath}`,
+    `  sessionPath: ${toSessionToolPath(file.relativePath)}`,
   ].join('\n')).join('\n');
 
 const findFilesByName = (files: SessionFileContext[], fileName: string) => {
@@ -316,6 +313,8 @@ const normalizeWorkspaceToolPath = (value?: string) => value
   ? value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
   : '';
 
+const isWebSearchDisabled = (config: AppConfig) => config.WEB_SEARCH_MODE === 'disabled';
+
 export class AssistantToolService {
   constructor(
     private readonly config: AppConfig,
@@ -327,7 +326,6 @@ export class AssistantToolService {
     sessionId: string;
     call: PlannedAssistantToolCall;
     availableSkills?: RegisteredSkill[];
-    skill?: RegisteredSkill;
   }): Promise<ExecutedAssistantToolResult> {
     switch (args.call.tool) {
       case 'web_search':
@@ -344,7 +342,6 @@ export class AssistantToolService {
           args.sessionId,
           args.call.arguments,
           args.availableSkills ?? [],
-          args.skill,
         );
       case 'read_workspace_path_slice':
         return this.executeReadWorkspacePathSlice(
@@ -352,37 +349,12 @@ export class AssistantToolService {
           args.sessionId,
           args.call.arguments,
           args.availableSkills ?? [],
-          args.skill,
         );
-      case 'list_skill_resources':
-        return this.executeListSkillResources(args.call.arguments, args.availableSkills ?? [], args.skill);
-      case 'read_skill_resource_slice':
-        return this.executeReadSkillResourceSlice(args.call.arguments, args.availableSkills ?? [], args.skill);
       case 'write_artifact_file':
         return this.executeWriteArtifactFile(args.userId, args.sessionId, args.call.arguments);
       default:
         throw new Error(`未知工具：${args.call.tool}`);
     }
-  }
-
-  private resolveTargetSkill(
-    availableSkills: RegisteredSkill[],
-    skill: RegisteredSkill | undefined,
-    requestedName?: string,
-  ) {
-    if (requestedName) {
-      const requestedSkill = availableSkills.find((item) => item.name === requestedName);
-      if (!requestedSkill) {
-        throw new Error(`当前会话未启用 Skill：${requestedName}`);
-      }
-      return requestedSkill;
-    }
-
-    if (skill) {
-      return skill;
-    }
-
-    throw new Error('当前没有已启用的 Skill，请先指定 skillName');
   }
 
   private assertWorkspaceSkillPathAccess(
@@ -878,6 +850,9 @@ export class AssistantToolService {
   }
 
   private async executeWebSearch(rawArguments: Record<string, unknown>): Promise<ExecutedAssistantToolResult> {
+    if (isWebSearchDisabled(this.config)) {
+      throw new Error('当前配置已禁用 web_search');
+    }
     const input = webSearchSchema.parse(rawArguments);
     try {
       return await this.executeNativeWebSearch(input);
@@ -1009,7 +984,6 @@ export class AssistantToolService {
     sessionId: string,
     rawArguments: Record<string, unknown>,
     availableSkills: RegisteredSkill[],
-    skill?: RegisteredSkill,
   ): Promise<ExecutedAssistantToolResult> {
     const input = listWorkspacePathsSchema.parse(rawArguments);
     this.assertWorkspaceSkillPathAccess(input.root as WorkspaceRootName, input.path, availableSkills);
@@ -1018,7 +992,6 @@ export class AssistantToolService {
       userId,
       sessionId,
       root: input.root as WorkspaceRootName,
-      skill,
     });
     const listed = await listWorkspaceEntries({
       descriptor,
@@ -1052,7 +1025,6 @@ export class AssistantToolService {
     sessionId: string,
     rawArguments: Record<string, unknown>,
     availableSkills: RegisteredSkill[],
-    skill?: RegisteredSkill,
   ): Promise<ExecutedAssistantToolResult> {
     const input = readWorkspacePathSliceSchema.parse(rawArguments);
     this.assertWorkspaceSkillPathAccess(input.root as WorkspaceRootName, input.path, availableSkills);
@@ -1061,7 +1033,6 @@ export class AssistantToolService {
       userId,
       sessionId,
       root: input.root as WorkspaceRootName,
-      skill,
     });
     const absolutePath = resolveWorkspacePath(descriptor, input.path);
     const stat = await fs.stat(absolutePath).catch((error: NodeJS.ErrnoException) => {
@@ -1110,80 +1081,6 @@ export class AssistantToolService {
         slice.excerpt,
       ].filter(Boolean).join('\n\n'),
       context: slice.excerpt,
-    };
-  }
-
-  private async executeListSkillResources(
-    rawArguments: Record<string, unknown>,
-    availableSkills: RegisteredSkill[],
-    activeSkill?: RegisteredSkill,
-  ): Promise<ExecutedAssistantToolResult> {
-    const input = listSkillResourcesSchema.parse(rawArguments);
-    const skill = this.resolveTargetSkill(availableSkills, activeSkill, input.skillName);
-    const references = skill.referencesContent.map((item) => item.name);
-
-    return {
-      tool: 'list_skill_resources',
-      arguments: input,
-      summary: `${skill.name} 共有 ${references.length + 1} 个可读资源`,
-      content: [
-        `技能：${skill.name}`,
-        '资源列表：',
-        '- SKILL.md',
-        ...references.map((name) => `- references/${name}`),
-      ].join('\n'),
-      context: [
-        `skill:${skill.name}`,
-        'resource:SKILL.md',
-        ...references.map((name) => `resource:references/${name}`),
-      ].join('\n'),
-    };
-  }
-
-  private async executeReadSkillResourceSlice(
-    rawArguments: Record<string, unknown>,
-    availableSkills: RegisteredSkill[],
-    activeSkill?: RegisteredSkill,
-  ): Promise<ExecutedAssistantToolResult> {
-    const input = readSkillResourceSliceSchema.parse(rawArguments);
-    const skill = this.resolveTargetSkill(availableSkills, activeSkill, input.skillName);
-    const resource = input.resource === 'SKILL.md' ? 'SKILL.md' : input.resource.replace(/^references\//, '');
-
-    if (resource === 'SKILL.md') {
-      const excerpt = truncate(skill.markdown, input.maxChars);
-      return {
-        tool: 'read_skill_resource_slice',
-        arguments: input,
-        summary: `已读取 ${skill.name} / SKILL.md`,
-        content: [
-          `技能：${skill.name}`,
-          '路径：SKILL.md',
-          skill.markdown.length > input.maxChars ? '说明：内容过长，已截断显示' : '',
-          '内容：',
-          excerpt,
-        ].filter(Boolean).join('\n\n'),
-        context: excerpt,
-      };
-    }
-
-    const reference = skill.referencesContent.find((item) => item.name === resource);
-    if (!reference) {
-      throw new Error(`Skill ${skill.name} 中不存在资源：${input.resource}`);
-    }
-
-    const excerpt = truncate(reference.content, input.maxChars);
-    return {
-      tool: 'read_skill_resource_slice',
-      arguments: input,
-      summary: `已读取 ${skill.name} / references/${reference.name}`,
-      content: [
-        `技能：${skill.name}`,
-        `路径：references/${reference.name}`,
-        reference.content.length > input.maxChars ? '说明：内容过长，已截断显示' : '',
-        '内容：',
-        excerpt,
-      ].filter(Boolean).join('\n\n'),
-      context: excerpt,
     };
   }
 

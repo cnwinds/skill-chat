@@ -416,10 +416,6 @@ const CreateSessionDialog = ({
                     </button>
                   </div>
                   <p>{skill.description}</p>
-                  <div className="skill-meta">
-                    <span>{skill.runtime}</span>
-                    <span>{skill.timeoutSec}s</span>
-                  </div>
                 </article>
               ))}
               {skills.length === 0 ? (
@@ -1157,17 +1153,45 @@ const SessionWorkspace = () => {
     [messagesQuery.data, stream.transientEvents],
   );
   const thinkingEvent = useMemo(
-    () => activeThinking ?? (
-      activeSessionId
-        ? buildRuntimeThinkingEvent({
+    () => {
+      if (
+        activeSessionId &&
+        stream.status === 'reconnecting' &&
+        stream.reconnectAttempt &&
+        stream.reconnectLimit &&
+        (stream.activeTurnId || activeThinking || stream.activeTurnPhaseStartedAt)
+      ) {
+        return {
+          id: `runtime-reconnecting-${activeSessionId}`,
           sessionId: activeSessionId,
-          phase: stream.activeTurnPhase,
-          phaseStartedAt: stream.activeTurnPhaseStartedAt,
-          round: stream.activeTurnRound,
-        })
-        : undefined
-    ),
-    [activeSessionId, activeThinking, stream.activeTurnPhase, stream.activeTurnPhaseStartedAt, stream.activeTurnRound],
+          kind: 'thinking' as const,
+          content: `重连中${stream.reconnectAttempt}/${stream.reconnectLimit}`,
+          createdAt: activeThinking?.createdAt ?? stream.activeTurnPhaseStartedAt ?? new Date().toISOString(),
+        };
+      }
+
+      return activeThinking ?? (
+        activeSessionId
+          ? buildRuntimeThinkingEvent({
+            sessionId: activeSessionId,
+            phase: stream.activeTurnPhase,
+            phaseStartedAt: stream.activeTurnPhaseStartedAt,
+            round: stream.activeTurnRound,
+          })
+          : undefined
+      );
+    },
+    [
+      activeSessionId,
+      activeThinking,
+      stream.activeTurnId,
+      stream.activeTurnPhase,
+      stream.activeTurnPhaseStartedAt,
+      stream.activeTurnRound,
+      stream.reconnectAttempt,
+      stream.reconnectLimit,
+      stream.status,
+    ],
   );
 
   useEffect(() => {
@@ -1792,10 +1816,6 @@ const SessionWorkspace = () => {
                   )}
                 </div>
                 <p>{skill.description}</p>
-                <div className="skill-meta">
-                  <span>{skill.runtime}</span>
-                  <span>{skill.timeoutSec}s</span>
-                </div>
               </article>
             ))}
             {installedSkills.length === 0 ? (

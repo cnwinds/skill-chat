@@ -79,10 +79,6 @@ export interface SessionSummary {
 export interface SkillMetadata {
   name: string;
   description: string;
-  entrypoint: string;
-  runtime: 'python' | 'node' | 'chat';
-  timeoutSec: number;
-  references: string[];
   starterPrompts?: string[];
 }
 

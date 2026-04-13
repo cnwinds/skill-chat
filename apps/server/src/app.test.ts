@@ -66,16 +66,13 @@ const createHarnessResponsesResponse = (body: BodyInit | null | undefined) => {
             id: 'fc_pdf',
             type: 'function_call',
             call_id: 'call_run_pdf',
-            name: 'run_skill',
+            name: 'run_workspace_script',
             arguments: JSON.stringify({
-              skillName: 'pdf',
-              prompt: '渲染最终文档为 PDF',
-              arguments: {
-                title: '本周销售报告',
-                summary: '基于当前会话内容生成的销售周报。',
-                documentMarkdown: '# 本周销售报告\n\n## 摘要\n- 本周整体销售稳定增长。\n\n## 重点\n- 华东区域表现最好\n- 新客户转化率提升\n',
-                fileName: 'weekly-sales-report.pdf',
-              },
+              path: 'skills/artifact-smoke/scripts/make-artifact.js',
+              args: [
+                'outputs/weekly-sales-report.pdf',
+                'generated pdf body',
+              ],
             }),
           },
         },
@@ -93,14 +90,13 @@ const createHarnessResponsesResponse = (body: BodyInit | null | undefined) => {
             id: 'fc_xlsx',
             type: 'function_call',
             call_id: 'call_run_xlsx',
-            name: 'run_skill',
+            name: 'run_workspace_script',
             arguments: JSON.stringify({
-              skillName: 'xlsx',
-              prompt: '把当前会话里的 CSV 整理成 Excel 并生成一个简单图表',
-              arguments: {
-                title: '销售数据汇总',
-                fileName: 'sales-chart.xlsx',
-              },
+              path: 'skills/artifact-smoke/scripts/make-artifact.js',
+              args: [
+                'outputs/sales-chart.xlsx',
+                'generated xlsx body',
+              ],
             }),
           },
         },
@@ -189,9 +185,37 @@ const createSession = async (app: FastifyInstance, token: string, title?: string
 describe('SkillChat server', () => {
   let app: FastifyInstance;
   let tempDir: string;
+  let tempSkillsRoot: string;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-test-'));
+    tempSkillsRoot = path.join(tempDir, 'skills');
+    await fs.cp(skillsRoot, tempSkillsRoot, { recursive: true });
+    await fs.mkdir(path.join(tempSkillsRoot, 'artifact-smoke', 'scripts'), { recursive: true });
+    await fs.writeFile(path.join(tempSkillsRoot, 'artifact-smoke', 'SKILL.md'), [
+      '---',
+      'name: artifact-smoke',
+      'description: test-only artifact generation fixture',
+      '---',
+      '',
+      '# Artifact Smoke',
+      '',
+      'A test-only skill used by integration tests.',
+    ].join('\n'), 'utf8');
+    await fs.writeFile(path.join(tempSkillsRoot, 'artifact-smoke', 'scripts', 'make-artifact.js'), [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const outputArg = process.argv[2];",
+      "const body = process.argv[3] ?? '';",
+      "if (!outputArg || !outputArg.startsWith('outputs/')) {",
+      "  throw new Error('output path must be inside outputs/');",
+      "}",
+      "const outputPath = path.resolve(process.cwd(), outputArg);",
+      "fs.mkdirSync(path.dirname(outputPath), { recursive: true });",
+      "fs.writeFileSync(outputPath, body || `generated:${path.basename(outputPath)}`, 'utf8');",
+      "process.stdout.write(JSON.stringify({ type: 'artifact', path: outputArg, label: path.basename(outputPath) }) + '\\n');",
+      "process.stdout.write(JSON.stringify({ type: 'result', message: 'done' }) + '\\n');",
+    ].join('\n'), 'utf8');
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === 'string'
         ? input
@@ -204,12 +228,12 @@ describe('SkillChat server', () => {
       return originalFetch(input as RequestInfo | URL, init);
     }));
     app = await createApp({
-      cwd: repoRoot,
+      cwd: tempDir,
       inlineJobs: true,
       configOverrides: {
         NODE_ENV: 'test',
         DATA_ROOT: tempDir,
-        SKILLS_ROOT: skillsRoot,
+        SKILLS_ROOT: tempSkillsRoot,
         WEB_ORIGIN: 'http://localhost:5173',
         JWT_SECRET: 'test-secret-123',
         ENABLE_ASSISTANT_TOOLS: false,
@@ -377,12 +401,12 @@ describe('SkillChat server', () => {
 
     await app.close();
     app = await createApp({
-      cwd: repoRoot,
+      cwd: tempDir,
       inlineJobs: true,
       configOverrides: {
         NODE_ENV: 'test',
         DATA_ROOT: tempDir,
-        SKILLS_ROOT: skillsRoot,
+        SKILLS_ROOT: tempSkillsRoot,
         WEB_ORIGIN: 'http://localhost:5173',
         JWT_SECRET: 'test-secret-123',
         ENABLE_ASSISTANT_TOOLS: false,
@@ -828,7 +852,7 @@ describe('SkillChat server', () => {
 
   it('generates a PDF file and supports sharing and downloading it', async () => {
     const auth = await registerAndLogin(app, 'pdf_user');
-    const session = await createSession(app, auth.token, '测试会话', ['pdf']);
+    const session = await createSession(app, auth.token, '测试会话', ['artifact-smoke']);
 
     const messageResponse = await app.inject({
       method: 'POST',
@@ -882,7 +906,7 @@ describe('SkillChat server', () => {
 
   it('uploads CSV and generates an XLSX artifact through the skill pipeline', async () => {
     const auth = await registerAndLogin(app, 'xlsx_user');
-    const session = await createSession(app, auth.token, '测试会话', ['xlsx']);
+    const session = await createSession(app, auth.token, '测试会话', ['artifact-smoke']);
 
     const address = await app.listen({ host: '127.0.0.1', port: 0 });
     const form = new FormData();

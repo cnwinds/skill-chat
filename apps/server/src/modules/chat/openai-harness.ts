@@ -5,17 +5,26 @@ import { isOpenAIResponsesRecord, streamOpenAIResponsesEvents } from '../../core
 import type { AssistantToolService, ExecutedAssistantToolResult } from '../tools/assistant-tool-service.js';
 import type { RunnerManager } from '../../core/runner/runner-manager.js';
 import type { RegisteredSkill } from '../skills/skill-registry.js';
+import {
+  buildAssistantToolCatalog,
+  findAssistantToolDefinition,
+  toResponsesFunctionTool,
+  type AssistantToolDefinition,
+} from '../tools/tool-catalog.js';
+import type { SessionContextState } from './session-context-store.js';
+import {
+  buildResponsesCompactionInput,
+  buildResponsesHistoryInput,
+  createCompactionSummaryMessage,
+  estimateResponsesInputTokens,
+  resolveAutoCompactLimitTokens,
+  resolveCompactionSourceBudgetTokens,
+  type ResponsesMessageInput,
+} from './openai-harness-context.js';
 import { buildOpenAIHarnessInstructions, toResponsesHarnessInput } from './openai-harness-prompt.js';
 
 type JsonRecord = Record<string, unknown>;
 type ResponsesInputItem = JsonRecord;
-
-type LocalToolDefinition = {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  supportsParallelToolCalls: boolean;
-};
 
 type ParsedLocalToolCall = {
   tool: string;
@@ -51,6 +60,10 @@ type HarnessCallbacks = {
   }) => Promise<void> | void;
   onArtifact?: (file: FileRecord) => Promise<void> | void;
   onTextDelta?: (content: string) => Promise<void> | void;
+  onContextCompactionStart?: (event: {
+    scope: 'mid_turn';
+    estimatedTokens: number;
+  }) => Promise<void> | void;
 };
 
 type PendingHarnessInput = {
@@ -59,16 +72,19 @@ type PendingHarnessInput = {
   createdAt: string;
 };
 
-const MAX_TOOL_ROUNDS = 8;
+const MAX_MODEL_REQUESTS_PER_TURN = 48;
+const MAX_TOOL_CALLS_PER_TURN = 128;
+const MAX_CONTINUATION_COMPACTIONS_PER_TURN = 8;
 const API_RETRY_LIMIT = 5;
 const API_RETRY_DELAY_MS = 1_000;
 const REPLY_STREAM_IDLE_TIMEOUT_MS = 120_000;
 const TOOL_OUTPUT_CHARS = 8_000;
 
-const runSkillSchema = z.object({
-  skillName: z.string().trim().min(1, 'skillName 不能为空'),
-  prompt: z.string().trim().min(1, 'prompt 不能为空'),
-  arguments: z.record(z.string(), z.unknown()).optional().default({}),
+const runWorkspaceScriptSchema = z.object({
+  path: z.string().trim().min(1, 'path 不能为空'),
+  args: z.array(z.coerce.string()).optional().default([]),
+  cwdRoot: z.enum(['session', 'workspace']).optional().default('session'),
+  cwdPath: z.string().trim().optional().default(''),
 });
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -98,170 +114,6 @@ const parseJsonArguments = (raw: unknown) => {
   return {};
 };
 
-const toFunctionTool = (tool: LocalToolDefinition) => ({
-  type: 'function',
-  name: tool.name,
-  description: tool.description,
-  parameters: tool.inputSchema,
-  strict: false,
-});
-
-const buildLocalToolDefinitions = (args: {
-  assistantToolsEnabled: boolean;
-  runtimeSkillNames: string[];
-}): LocalToolDefinition[] => {
-  const definitions: LocalToolDefinition[] = args.assistantToolsEnabled
-    ? [
-        {
-          name: 'web_search',
-          description: '联网搜索最新网页信息，适合最新事实、新闻、政策、排名、就业、薪资、学校官网等问题。',
-          supportsParallelToolCalls: true,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: '搜索问题或检索意图' },
-              maxResults: { type: 'number', description: '最多返回多少条结果，默认 5，最大 8' },
-            },
-            required: ['query'],
-          },
-        },
-        {
-          name: 'web_fetch',
-          description: '抓取一个明确的网页 URL，并提取正文摘要。',
-          supportsParallelToolCalls: true,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              url: { type: 'string', description: '需要访问的 http/https 地址' },
-              maxChars: { type: 'number', description: '正文最大字符数，默认 4000' },
-            },
-            required: ['url'],
-          },
-        },
-        {
-          name: 'list_files',
-          description: '列出当前会话和共享空间中的文件。',
-          supportsParallelToolCalls: true,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              bucket: { type: 'string', enum: ['uploads', 'outputs', 'shared', 'all'] },
-            },
-          },
-        },
-        {
-          name: 'read_file',
-          description: '读取当前会话或共享区中的文本文件片段。',
-          supportsParallelToolCalls: true,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              fileId: { type: 'string', description: '文件 id，优先级高于 fileName' },
-              fileName: { type: 'string', description: '文件名或部分文件名' },
-              startLine: { type: 'number', description: '起始行号，可选' },
-              endLine: { type: 'number', description: '结束行号，可选' },
-              maxChars: { type: 'number', description: '最多读取多少字符，默认 6000' },
-            },
-          },
-        },
-        {
-          name: 'list_workspace_paths',
-          description: '列出当前工作区或当前会话目录中的文件与子目录。读取 skill 文件时，使用 root=workspace 并访问 skills/... 路径。',
-          supportsParallelToolCalls: true,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              root: { type: 'string', enum: ['workspace', 'session'] },
-              path: { type: 'string', description: '相对于根目录的子路径' },
-              depth: { type: 'number', description: '目录展开深度，默认 2，最大 4' },
-              offset: { type: 'number', description: '分页起始位置' },
-              limit: { type: 'number', description: '分页数量，默认 40，最大 120' },
-            },
-          },
-        },
-        {
-          name: 'read_workspace_path_slice',
-          description: '读取当前工作区或当前会话目录中的文本文件片段。读取 skill 文件时，使用 root=workspace 并传入 skills/... 相对路径。',
-          supportsParallelToolCalls: true,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              root: { type: 'string', enum: ['workspace', 'session'] },
-              path: { type: 'string', description: '相对于根目录的文件路径' },
-              startLine: { type: 'number', description: '起始行号，可选' },
-              endLine: { type: 'number', description: '结束行号，可选' },
-              maxChars: { type: 'number', description: '最多返回多少字符，默认 6000' },
-            },
-            required: ['path'],
-          },
-        },
-        {
-          name: 'write_artifact_file',
-          description: '将文本内容写入当前会话 outputs 目录，生成可下载产物。',
-          supportsParallelToolCalls: false,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              fileName: { type: 'string', description: '要生成的文件名' },
-              content: { type: 'string', description: '要写入的文本内容' },
-              mimeType: { type: 'string', description: '文件 MIME 类型，可选' },
-              subdir: { type: 'string', description: 'outputs 下的子目录，可选' },
-            },
-            required: ['fileName', 'content'],
-          },
-        },
-      ]
-    : [];
-
-  if (args.runtimeSkillNames.length > 0) {
-    definitions.push({
-      name: 'run_skill',
-      description: '执行一个可运行的 skill 脚本来生成 PDF、Excel、Word 等文件或完成结构化处理。',
-      supportsParallelToolCalls: false,
-      inputSchema: {
-        type: 'object',
-        properties: {
-          skillName: {
-            type: 'string',
-            enum: args.runtimeSkillNames,
-            description: '要执行的 skill 名称',
-          },
-          prompt: {
-            type: 'string',
-            description: '传递给 skill 的简短执行说明。对于 pdf/docx 这类文档型 skill，不要把“请生成...”的需求原文塞进这里。',
-          },
-          arguments: {
-            type: 'object',
-            description: '附加结构化参数。文档型 skill 优先传 title、summary、documentMarkdown、fileName 等最终内容字段。',
-            properties: {
-              title: {
-                type: 'string',
-                description: '文档标题',
-              },
-              summary: {
-                type: 'string',
-                description: '文档摘要，可选',
-              },
-              documentMarkdown: {
-                type: 'string',
-                description: '最终文档正文，推荐使用 Markdown。不要传任务说明，要传最终成稿内容。',
-              },
-              fileName: {
-                type: 'string',
-                description: '输出文件名，可选',
-              },
-            },
-            additionalProperties: true,
-          },
-        },
-        required: ['skillName', 'prompt'],
-      },
-    });
-  }
-
-  return definitions;
-};
-
 const createToolOutputPayload = (result: ExecutedAssistantToolResult) => JSON.stringify({
   summary: result.summary,
   content: truncate(result.context ?? result.content, TOOL_OUTPUT_CHARS),
@@ -277,23 +129,25 @@ const createToolOutputPayload = (result: ExecutedAssistantToolResult) => JSON.st
 // Keep the continuation payload minimal and only feed back local function calls.
 const shouldReplayCompletedItem = (item: ResponsesInputItem) => item.type === 'function_call';
 
-const looksLikeDocumentSpec = (value: string) => (
-  /请生成|文档要求|输出到|结构建议|请在|核心观点|结尾加一句|适合.*阅读|只作.*参考/i.test(value) ||
-  /\n\s*\d+\.\s/.test(value) ||
-  /标题\s*[\-：:]/.test(value)
-);
+const normalizeText = (value: string) => value.replace(/\n{3,}/g, '\n\n').trim();
+const toUserMessageItem = (content: string): ResponsesMessageInput => ({
+  role: 'user',
+  content,
+});
 
-const hasStructuredDocumentPayload = (argumentsValue: Record<string, unknown>) => {
-  if (typeof argumentsValue.documentMarkdown === 'string' && argumentsValue.documentMarkdown.trim()) {
-    return true;
-  }
-
-  if (Array.isArray(argumentsValue.sections) && argumentsValue.sections.length > 0) {
-    return true;
-  }
-
-  return false;
-};
+const buildCompactionInstructions = () => [
+  '你是 SkillChat 的上下文压缩器。',
+  '你的任务是把已有会话压缩成后续轮次可复用的高密度摘要。',
+  '只输出摘要正文，不要寒暄，不要解释你在做压缩。',
+  '摘要必须覆盖：',
+  '1. 用户目标与当前问题',
+  '2. 已确认的事实、约束、偏好和边界',
+  '3. 已读取的重要文件、skill、工具结果和关键数据',
+  '4. 已生成的产物',
+  '5. 后续还未完成的事项',
+  '6. 如果本轮已经向用户输出过部分答复，要简要说明已经说到哪里，避免后续重复',
+  '如果某项没有内容就省略，不要编造。',
+].join('\n');
 
 export class OpenAIHarness {
   constructor(
@@ -321,8 +175,8 @@ export class OpenAIHarness {
     };
   }
 
-  private shouldExecuteInParallel(tool: string, definitions: LocalToolDefinition[]) {
-    return definitions.some((definition) => definition.name === tool && definition.supportsParallelToolCalls);
+  private shouldExecuteInParallel(tool: string, definitions: AssistantToolDefinition[]) {
+    return findAssistantToolDefinition(definitions, tool)?.supportsParallelToolCalls ?? false;
   }
 
   async run(args: {
@@ -332,6 +186,7 @@ export class OpenAIHarness {
     history: StoredEvent[];
     files: SessionFileContext[];
     availableSkills?: RegisteredSkill[];
+    contextState?: SessionContextState | null;
     signal?: AbortSignal;
     drainPendingInputs?: () => Promise<PendingHarnessInput[]>;
     startingRound?: number;
@@ -342,12 +197,12 @@ export class OpenAIHarness {
     }
 
     const availableSkills = args.availableSkills ?? [];
-    const runtimeSkills = availableSkills.filter((skill) => skill.runtime !== 'chat').map((skill) => skill.name);
-    const localTools = buildLocalToolDefinitions({
+    const localTools = buildAssistantToolCatalog({
       assistantToolsEnabled: this.config.ENABLE_ASSISTANT_TOOLS,
-      runtimeSkillNames: runtimeSkills,
+      webSearchMode: this.config.WEB_SEARCH_MODE,
+      enabledSkillNames: availableSkills.map((skill) => skill.name),
     });
-    const tools = localTools.map(toFunctionTool);
+    const tools = localTools.map(toResponsesFunctionTool);
 
     const instructions = buildOpenAIHarnessInstructions({
       config: this.config,
@@ -355,18 +210,27 @@ export class OpenAIHarness {
       availableSkills,
     });
 
-    let inputItems: ResponsesInputItem[] = toResponsesHarnessInput(args.history, args.message) as unknown as ResponsesInputItem[];
+    let inputItems: ResponsesInputItem[] = toResponsesHarnessInput(args.history, args.message, {
+      config: this.config,
+      contextState: args.contextState,
+    }) as unknown as ResponsesInputItem[];
+    let currentTurnUserMessages: ResponsesMessageInput[] = [toUserMessageItem(args.message)];
     const finalTextChunks: string[] = [];
 
     let roundsUsed = 0;
     const roundBase = args.startingRound ?? 1;
+    let toolCallsUsed = 0;
+    let continuationCompactionsUsed = 0;
 
-    for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    while (true) {
       if (args.signal?.aborted) {
         throw args.signal.reason instanceof Error ? args.signal.reason : new DOMException('Turn interrupted', 'AbortError');
       }
       roundsUsed += 1;
-      await args.callbacks?.onRoundStart?.(roundBase + round);
+      if (roundsUsed > MAX_MODEL_REQUESTS_PER_TURN) {
+        throw new Error('单个 turn 的模型续跑次数过多，已中止');
+      }
+      await args.callbacks?.onRoundStart?.(roundBase + roundsUsed - 1);
       const roundResult = await this.runRound({
         instructions,
         inputItems,
@@ -380,6 +244,10 @@ export class OpenAIHarness {
         const pendingInputs = await args.drainPendingInputs?.() ?? [];
         if (pendingInputs.length > 0) {
           const roundText = roundResult.textDeltas.join('');
+          currentTurnUserMessages = [
+            ...currentTurnUserMessages,
+            ...pendingInputs.map((input) => toUserMessageItem(input.content)),
+          ];
           inputItems = [
             ...inputItems,
             ...(roundText
@@ -388,11 +256,19 @@ export class OpenAIHarness {
                   content: roundText,
                 }]
               : []),
-            ...pendingInputs.map((input) => ({
-              role: 'user',
-              content: input.content,
-            })),
+            ...pendingInputs.map((input) => toUserMessageItem(input.content)),
           ] as ResponsesInputItem[];
+          const continuation = await this.maybeCompactContinuationInput({
+            inputItems,
+            currentTurnUserMessages,
+            signal: args.signal,
+            callbacks: args.callbacks,
+          });
+          inputItems = continuation.inputItems;
+          continuationCompactionsUsed += continuation.didCompact ? 1 : 0;
+          if (continuationCompactionsUsed > MAX_CONTINUATION_COMPACTIONS_PER_TURN) {
+            throw new Error('单个 turn 的上下文压缩次数过多，已中止');
+          }
           continue;
         }
         return {
@@ -411,25 +287,72 @@ export class OpenAIHarness {
         signal: args.signal,
         callbacks: args.callbacks,
       });
+      toolCallsUsed += roundResult.localToolCalls.length;
+      if (toolCallsUsed > MAX_TOOL_CALLS_PER_TURN) {
+        throw new Error('单个 turn 的工具调用次数过多，已中止');
+      }
 
+      const roundText = roundResult.textDeltas.join('');
       inputItems = [
         ...inputItems,
+        ...(roundText
+          ? [{
+              role: 'assistant',
+              content: roundText,
+            }]
+          : []),
         ...roundResult.completedItems.filter(shouldReplayCompletedItem),
         ...toolOutputs,
       ];
       const pendingInputs = await args.drainPendingInputs?.() ?? [];
       if (pendingInputs.length > 0) {
+        currentTurnUserMessages = [
+          ...currentTurnUserMessages,
+          ...pendingInputs.map((input) => toUserMessageItem(input.content)),
+        ];
         inputItems = [
           ...inputItems,
-          ...pendingInputs.map((input) => ({
-            role: 'user',
-            content: input.content,
-          })),
+          ...pendingInputs.map((input) => toUserMessageItem(input.content)),
         ] as ResponsesInputItem[];
       }
+      const continuation = await this.maybeCompactContinuationInput({
+        inputItems,
+        currentTurnUserMessages,
+        signal: args.signal,
+        callbacks: args.callbacks,
+      });
+      inputItems = continuation.inputItems;
+      continuationCompactionsUsed += continuation.didCompact ? 1 : 0;
+      if (continuationCompactionsUsed > MAX_CONTINUATION_COMPACTIONS_PER_TURN) {
+        throw new Error('单个 turn 的上下文压缩次数过多，已中止');
+      }
+    }
+  }
+
+  async compactContext(args: {
+    history: StoredEvent[];
+    contextState?: SessionContextState | null;
+    currentMessage?: string;
+    appendCurrentMessage?: boolean;
+    signal?: AbortSignal;
+  }) {
+    if (!this.apiKey) {
+      throw new Error('OpenAI API key is not configured');
     }
 
-    throw new Error('工具调用轮次超过上限，已中止');
+    const compactionInput = buildResponsesHistoryInput({
+      config: this.config,
+      history: args.history,
+      currentMessage: args.currentMessage,
+      contextState: args.contextState,
+      appendCurrentMessage: args.appendCurrentMessage ?? false,
+      maxTokens: resolveCompactionSourceBudgetTokens(this.config),
+    }).input as unknown as ResponsesInputItem[];
+
+    return this.summarizeInputItems({
+      inputItems: compactionInput,
+      signal: args.signal,
+    });
   }
 
   private async runRound(args: {
@@ -537,13 +460,107 @@ export class OpenAIHarness {
     }
   }
 
+  private async summarizeInputItems(args: {
+    inputItems: ResponsesInputItem[];
+    signal?: AbortSignal;
+  }) {
+    if (args.inputItems.length === 0) {
+      return '暂无需要压缩的上下文。';
+    }
+
+    const textDeltas: string[] = [];
+
+    await this.streamWithRetry({
+      signal: args.signal,
+      body: {
+        model: this.config.OPENAI_MODEL,
+        instructions: buildCompactionInstructions(),
+        input: args.inputItems,
+        tools: [],
+        max_output_tokens: Math.min(this.config.LLM_MAX_OUTPUT_TOKENS, 4_096),
+        text: {
+          format: {
+            type: 'text',
+          },
+          verbosity: 'low',
+        },
+        reasoning: this.buildReasoning(),
+      },
+      onEvent: async (event) => {
+        const dataRecord = isOpenAIResponsesRecord(event.data) ? event.data : null;
+        if (event.event === 'response.output_text.delta' && dataRecord && typeof dataRecord.delta === 'string') {
+          textDeltas.push(dataRecord.delta);
+        }
+      },
+    });
+
+    const summary = normalizeText(textDeltas.join(''));
+    if (!summary) {
+      throw new Error('上下文压缩未返回可用摘要');
+    }
+
+    return summary;
+  }
+
+  private async maybeCompactContinuationInput(args: {
+    inputItems: ResponsesInputItem[];
+    currentTurnUserMessages: ResponsesMessageInput[];
+    signal?: AbortSignal;
+    callbacks?: HarnessCallbacks;
+  }): Promise<{
+    inputItems: ResponsesInputItem[];
+    didCompact: boolean;
+  }> {
+    const estimatedTokens = estimateResponsesInputTokens(args.inputItems);
+    const compactLimit = resolveAutoCompactLimitTokens(this.config);
+
+    if (estimatedTokens < compactLimit) {
+      return {
+        inputItems: args.inputItems,
+        didCompact: false,
+      };
+    }
+
+    const compactionSource = buildResponsesCompactionInput({
+      inputItems: args.inputItems,
+      maxTokens: resolveCompactionSourceBudgetTokens(this.config),
+      stickyMessages: args.currentTurnUserMessages,
+    });
+
+    if (compactionSource.input.length === 0) {
+      return {
+        inputItems: args.inputItems,
+        didCompact: false,
+      };
+    }
+
+    await args.callbacks?.onContextCompactionStart?.({
+      scope: 'mid_turn',
+      estimatedTokens,
+    });
+
+    const summary = await this.summarizeInputItems({
+      inputItems: compactionSource.input as ResponsesInputItem[],
+      signal: args.signal,
+    });
+    const summaryMessage = createCompactionSummaryMessage(summary);
+
+    return {
+      inputItems: [
+        ...args.currentTurnUserMessages,
+        ...(summaryMessage ? [summaryMessage] : []),
+      ] as ResponsesInputItem[],
+      didCompact: true,
+    };
+  }
+
   private async executeLocalToolCalls(args: {
     userId: string;
     sessionId: string;
     files: SessionFileContext[];
     availableSkills: RegisteredSkill[];
     localToolCalls: ParsedLocalToolCall[];
-    localTools: LocalToolDefinition[];
+    localTools: AssistantToolDefinition[];
     signal?: AbortSignal;
     callbacks?: HarnessCallbacks;
   }) {
@@ -561,6 +578,7 @@ export class OpenAIHarness {
           files: args.files,
           availableSkills: args.availableSkills,
           call: current,
+          localTools: args.localTools,
           signal: args.signal,
           callbacks: args.callbacks,
         }));
@@ -584,6 +602,7 @@ export class OpenAIHarness {
           files: args.files,
           availableSkills: args.availableSkills,
           call,
+          localTools: args.localTools,
           signal: args.signal,
           callbacks: args.callbacks,
         })),
@@ -601,9 +620,15 @@ export class OpenAIHarness {
     files: SessionFileContext[];
     availableSkills: RegisteredSkill[];
     call: ParsedLocalToolCall;
+    localTools: AssistantToolDefinition[];
     signal?: AbortSignal;
     callbacks?: HarnessCallbacks;
   }) {
+    const toolDefinition = findAssistantToolDefinition(args.localTools, args.call.tool);
+    if (!toolDefinition) {
+      throw new Error(`当前轮未暴露工具：${args.call.tool}`);
+    }
+
     if (args.signal?.aborted) {
       throw args.signal.reason instanceof Error ? args.signal.reason : new DOMException('Turn interrupted', 'AbortError');
     }
@@ -620,11 +645,10 @@ export class OpenAIHarness {
     });
 
     try {
-      const result = args.call.tool === 'run_skill'
-        ? await this.executeRunSkill({
+      const result = toolDefinition.executionKind === 'runner'
+        ? await this.executeRunWorkspaceScript({
           userId: args.userId,
           sessionId: args.sessionId,
-          files: args.files,
           availableSkills: args.availableSkills,
           callId: args.call.callId,
           rawArguments: args.call.arguments,
@@ -644,7 +668,7 @@ export class OpenAIHarness {
         throw args.signal.reason instanceof Error ? args.signal.reason : new DOMException('Turn interrupted', 'AbortError');
       }
 
-      if (result.artifacts?.length && args.call.tool !== 'run_skill') {
+      if (result.artifacts?.length && toolDefinition.executionKind !== 'runner') {
         for (const artifact of result.artifacts) {
           await args.callbacks?.onArtifact?.(artifact);
         }
@@ -683,10 +707,9 @@ export class OpenAIHarness {
     }
   }
 
-  private async executeRunSkill(args: {
+  private async executeRunWorkspaceScript(args: {
     userId: string;
     sessionId: string;
-    files: SessionFileContext[];
     availableSkills: RegisteredSkill[];
     callId: string;
     rawArguments: Record<string, unknown>;
@@ -696,42 +719,38 @@ export class OpenAIHarness {
     if (args.signal?.aborted) {
       throw args.signal.reason instanceof Error ? args.signal.reason : new DOMException('Turn interrupted', 'AbortError');
     }
-    const input = runSkillSchema.parse(args.rawArguments);
-    const skill = args.availableSkills.find((item) => item.name === input.skillName);
-    if (!skill) {
-      throw new Error(`当前会话未启用 Skill：${input.skillName}`);
+    const input = runWorkspaceScriptSchema.parse(args.rawArguments);
+    const normalizedPath = input.path.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+    const segments = normalizedPath.split('/').filter(Boolean);
+
+    if (segments.length < 4 || segments[0] !== 'skills' || segments[2] !== 'scripts') {
+      throw new Error('run_workspace_script 只允许执行已启用 skill 目录下的脚本，路径格式应为 skills/<skill>/scripts/<file>');
     }
-    if (skill.runtime === 'chat') {
-      throw new Error(`Skill ${skill.name} 不是可执行脚本类型`);
+    if (segments.some((segment) => segment.startsWith('.'))) {
+      throw new Error('不允许执行隐藏路径或点文件');
     }
 
-    if (
-      skill.name === 'pdf' &&
-      !hasStructuredDocumentPayload(input.arguments) &&
-      looksLikeDocumentSpec(input.prompt)
-    ) {
-      throw new Error('pdf Skill 需要 `arguments.documentMarkdown` 作为最终正文，不能把任务说明直接生成到 PDF。请先整理好最终内容，再重新调用 `run_skill`，同时传 `arguments.title`、`arguments.summary`、`arguments.documentMarkdown`。');
+    const skillName = segments[1]!;
+    const skill = args.availableSkills.find((item) => item.name === skillName);
+    if (!skill) {
+      throw new Error(`当前会话未启用 Skill：${skillName}`);
     }
 
     const artifacts: FileRecord[] = [];
-    let lastMessage = `已执行 ${skill.name}`;
+    let lastMessage = `已执行 ${normalizedPath}`;
 
     await this.runnerManager.execute({
       userId: args.userId,
       sessionId: args.sessionId,
-      skill,
-      prompt: input.prompt,
-      toolArguments: input.arguments,
-      files: args.files.map((file) => ({
-        name: file.name,
-        relativePath: file.relativePath,
-        mimeType: file.mimeType,
-      })),
+      scriptPath: normalizedPath,
+      argv: input.args,
+      cwdRoot: input.cwdRoot,
+      cwdPath: input.cwdPath,
       signal: args.signal,
       onQueued: async () => {
         await args.callbacks?.onToolProgress?.({
           callId: args.callId,
-          tool: 'run_skill',
+          tool: 'run_workspace_script',
           message: '任务已排队',
           status: 'queued',
         });
@@ -740,7 +759,7 @@ export class OpenAIHarness {
         lastMessage = message;
         await args.callbacks?.onToolProgress?.({
           callId: args.callId,
-          tool: 'run_skill',
+          tool: 'run_workspace_script',
           message,
           percent,
           status,
@@ -756,12 +775,19 @@ export class OpenAIHarness {
     }
 
     return {
-      tool: 'run_skill',
-      arguments: input,
-      summary: `已执行 ${skill.name} Skill`,
+      tool: 'run_workspace_script',
+      arguments: {
+        ...input,
+        path: normalizedPath,
+      },
+      summary: `已执行脚本 ${normalizedPath}`,
       content: [
         `Skill：${skill.name}`,
-        `运行时：${skill.runtime}`,
+        `脚本：${normalizedPath}`,
+        `工作目录：${input.cwdRoot}${input.cwdPath ? `/${input.cwdPath}` : ''}`,
+        input.args.length > 0
+          ? `参数：\n${input.args.map((value, index) => `${index + 1}. ${value}`).join('\n')}`
+          : '参数：无',
         `状态：${lastMessage}`,
         artifacts.length > 0
           ? `生成文件：\n${artifacts.map((file) => `- ${file.displayName} (${file.relativePath})`).join('\n')}`
@@ -769,6 +795,10 @@ export class OpenAIHarness {
       ].join('\n\n'),
       context: JSON.stringify({
         skill: skill.name,
+        path: normalizedPath,
+        args: input.args,
+        cwdRoot: input.cwdRoot,
+        cwdPath: input.cwdPath,
         status: lastMessage,
         artifacts: artifacts.map((file) => ({
           id: file.id,

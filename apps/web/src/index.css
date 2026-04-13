@@ -321,6 +321,48 @@ a {
   justify-content: flex-end;
 }
 
+.message-content-shell {
+  position: relative;
+  width: fit-content;
+  max-width: min(90%, 720px);
+}
+
+.message-content-shell .message-bubble {
+  max-width: 100%;
+}
+
+.message-copy-button {
+  position: absolute;
+  top: -10px;
+  right: 12px;
+  z-index: 1;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, white 8%);
+  color: var(--text);
+  padding: 3px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.message-content-shell:hover .message-copy-button,
+.message-content-shell:focus-within .message-copy-button {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.message-copy-button:hover,
+.message-copy-button:focus-visible {
+  border-color: rgba(131, 197, 190, 0.45);
+  outline: none;
+}
+
 .message-bubble {
   max-width: min(90%, 720px);
   padding: 11px 14px;
@@ -991,6 +1033,10 @@ a {
 
 .stream-pill.is-open {
   color: var(--success);
+}
+
+.stream-pill.is-reconnecting {
+  color: #ffd09d;
 }
 
 .stream-pill.is-error {

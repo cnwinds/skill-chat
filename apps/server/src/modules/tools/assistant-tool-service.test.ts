@@ -19,6 +19,7 @@ const createConfig = (dataRoot: string): AppConfig => ({
   OPENAI_BASE_URL: 'http://example.com/v1',
   OPENAI_API_KEY: 'test-token',
   OPENAI_MODEL: 'gpt-5.4',
+  WEB_SEARCH_MODE: 'live',
   OPENAI_REASONING_EFFORT: 'xhigh',
   LLM_MAX_OUTPUT_TOKENS: 8192,
   TOOL_MAX_OUTPUT_TOKENS: 3072,
@@ -187,90 +188,6 @@ describe('AssistantToolService', () => {
     await fs.rm(tempRoot, { recursive: true, force: true });
   });
 
-  it('lists and reads skill resources', async () => {
-    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-skill-tools-'));
-    const skill = {
-      name: 'zhangxuefeng-perspective',
-      description: 'desc',
-      entrypoint: '',
-      runtime: 'chat' as const,
-      timeoutSec: 120,
-      references: ['majors.md'],
-      directory: path.join(tempRoot, 'skills', 'zhangxuefeng-perspective'),
-      markdown: '# Skill Rule\n\nUse tough love.',
-      referencesContent: [
-        {
-          name: 'majors.md',
-          content: '金融、计算机、口腔医学',
-        },
-      ],
-    };
-
-    const service = new AssistantToolService(
-      createConfig(tempRoot),
-      {
-        getFileContext: () => [],
-        recordGeneratedFile: vi.fn(),
-      } as never,
-    );
-
-    const listed = await service.execute({
-      userId: 'u1',
-      sessionId: 's1',
-      skill,
-      call: {
-        tool: 'list_skill_resources',
-        arguments: {},
-      },
-    });
-
-    expect(listed.content).toContain('SKILL.md');
-    expect(listed.content).toContain('references/majors.md');
-
-    const read = await service.execute({
-      userId: 'u1',
-      sessionId: 's1',
-      skill,
-      call: {
-        tool: 'read_skill_resource_slice',
-        arguments: {
-          resource: 'majors.md',
-        },
-      },
-    });
-
-    expect(read.summary).toContain('majors.md');
-    expect(read.content).toContain('口腔医学');
-
-    await fs.rm(tempRoot, { recursive: true, force: true });
-  });
-
-  it('rejects access to a skill resource when the skill is not enabled in the session', async () => {
-    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-skill-scope-'));
-    const service = new AssistantToolService(
-      createConfig(tempRoot),
-      {
-        getFileContext: () => [],
-        recordGeneratedFile: vi.fn(),
-      } as never,
-    );
-
-    await expect(service.execute({
-      userId: 'u1',
-      sessionId: 's1',
-      availableSkills: [],
-      call: {
-        tool: 'read_skill_resource_slice',
-        arguments: {
-          skillName: 'zhangxuefeng-perspective',
-          resource: 'SKILL.md',
-        },
-      },
-    })).rejects.toThrow('当前会话未启用 Skill：zhangxuefeng-perspective');
-
-    await fs.rm(tempRoot, { recursive: true, force: true });
-  });
-
   it('blocks workspace access to skills outside the session allowlist', async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-skill-workspace-scope-'));
     await fs.mkdir(path.join(tempRoot, 'skills', 'pdf'), { recursive: true });
@@ -296,6 +213,53 @@ describe('AssistantToolService', () => {
         },
       },
     })).rejects.toThrow('当前会话未启用 Skill：pdf');
+
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it('allows reading enabled skill files through workspace paths', async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-skill-workspace-read-'));
+    await fs.mkdir(path.join(tempRoot, 'skills', 'zhangxuefeng-perspective', 'references'), { recursive: true });
+    await fs.writeFile(
+      path.join(tempRoot, 'skills', 'zhangxuefeng-perspective', 'SKILL.md'),
+      '# Skill\n\n请先读取 references/majors.md',
+      'utf8',
+    );
+    await fs.writeFile(
+      path.join(tempRoot, 'skills', 'zhangxuefeng-perspective', 'references', 'majors.md'),
+      '金融、计算机、口腔医学',
+      'utf8',
+    );
+
+    const service = new AssistantToolService(
+      createConfig(tempRoot),
+      {
+        getFileContext: () => [],
+        recordGeneratedFile: vi.fn(),
+      } as never,
+    );
+
+    const read = await service.execute({
+      userId: 'u1',
+      sessionId: 's1',
+      availableSkills: [{
+        name: 'zhangxuefeng-perspective',
+        description: 'desc',
+        directory: path.join(tempRoot, 'skills', 'zhangxuefeng-perspective'),
+        markdown: '# Skill',
+        starterPrompts: [],
+      }],
+      call: {
+        tool: 'read_workspace_path_slice',
+        arguments: {
+          root: 'workspace',
+          path: 'skills/zhangxuefeng-perspective/references/majors.md',
+        },
+      },
+    });
+
+    expect(read.summary).toContain('references/majors.md');
+    expect(read.content).toContain('口腔医学');
 
     await fs.rm(tempRoot, { recursive: true, force: true });
   });
@@ -560,6 +524,33 @@ describe('AssistantToolService', () => {
 
     expect(result.content).toContain('第5次搜索成功');
     expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('rejects web_search when the config disables it', async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-websearch-disabled-'));
+    const service = new AssistantToolService(
+      {
+        ...createConfig(tempRoot),
+        WEB_SEARCH_MODE: 'disabled',
+      },
+      {
+        getFileContext: () => [],
+        recordGeneratedFile: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.execute({
+      userId: 'u1',
+      sessionId: 's1',
+      call: {
+        tool: 'web_search',
+        arguments: {
+          query: '2026 AI 就业',
+        },
+      },
+    })).rejects.toThrow('当前配置已禁用 web_search');
+
+    await fs.rm(tempRoot, { recursive: true, force: true });
   });
 
   it('returns a readable timeout reason when web fetch times out', async () => {

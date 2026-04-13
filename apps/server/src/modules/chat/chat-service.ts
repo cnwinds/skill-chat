@@ -25,6 +25,8 @@ import { FileService } from '../files/file-service.js';
 import { SessionService } from '../sessions/session-service.js';
 import { OpenAIHarness } from './openai-harness.js';
 import type { AppConfig } from '../../config/env.js';
+import { buildResponsesHistoryInput, shouldAutoCompactHistory } from './openai-harness-context.js';
+import { SessionContextStore } from './session-context-store.js';
 
 type UserContext = {
   id: string;
@@ -46,6 +48,7 @@ export class ChatService {
     private readonly sessionService: SessionService,
     private readonly config: AppConfig,
     private readonly openAIHarness: OpenAIHarness,
+    private readonly sessionContextStore: SessionContextStore,
   ) {
     this.turnRegistry = new SessionTurnRegistry(
       async (userId, runtimeSessionId) => this.getRuntimePersistence(userId, runtimeSessionId).load(),
@@ -162,14 +165,40 @@ export class ChatService {
 
     while (true) {
       const session = this.sessionService.requireOwned(user.id, sessionId);
-      const history = await this.messageStore.readEvents(user.id, sessionId, { limit: 50 });
+      let history = await this.messageStore.readEvents(user.id, sessionId);
+      let contextState = await this.sessionContextStore.load(user.id, sessionId);
       execution.throwIfAborted();
       const files = this.fileService.getFileContext(user.id, sessionId);
+
+      if (execution.kind === 'compact') {
+        await this.executeCompactTurn({
+          sessionId,
+          userId: user.id,
+          history,
+          contextState,
+          execution,
+          input: currentInput,
+        });
+        return;
+      }
+
+      if (execution.kind === 'regular') {
+        contextState = await this.maybeAutoCompactHistory({
+          sessionId,
+          userId: user.id,
+          history,
+          contextState,
+          execution,
+          input: currentInput,
+        });
+        history = await this.messageStore.readEvents(user.id, sessionId);
+      }
 
       const { roundsUsed } = await this.executeTurnRound({
         sessionId,
         session,
         history,
+        contextState,
         files,
         execution,
         input: currentInput,
@@ -198,12 +227,13 @@ export class ChatService {
     sessionId: string;
     session: ReturnType<SessionService['requireOwned']>;
     history: StoredEvent[];
+    contextState: Awaited<ReturnType<SessionContextStore['load']>>;
     files: ReturnType<FileService['getFileContext']>;
     execution: TurnExecutionContext;
     input: RuntimeInput;
     startingRound: number;
   }) {
-    const { sessionId, session, history, files, execution, input, startingRound } = args;
+    const { sessionId, session, history, contextState, files, execution, input, startingRound } = args;
     const { user } = execution;
     const availableSkills = this.resolveSessionSkills(session.activeSkills ?? []);
 
@@ -220,6 +250,7 @@ export class ChatService {
       history,
       files,
       availableSkills,
+      contextState,
       signal: execution.signal,
       drainPendingInputs: async () => execution.drainPendingInputs(),
       startingRound,
@@ -307,6 +338,12 @@ export class ChatService {
             },
           });
         },
+        onContextCompactionStart: async () => {
+          execution.throwIfAborted();
+          execution.updatePhase('sampling');
+          execution.setCanSteer(false);
+          this.publishThinking(sessionId, '本轮上下文较长，正在压缩后继续');
+        },
       },
     });
 
@@ -317,6 +354,100 @@ export class ChatService {
     return {
       roundsUsed: result.roundsUsed,
     };
+  }
+
+  private async maybeAutoCompactHistory(args: {
+    sessionId: string;
+    userId: string;
+    history: StoredEvent[];
+    contextState: Awaited<ReturnType<SessionContextStore['load']>>;
+    execution: TurnExecutionContext;
+    input: RuntimeInput;
+  }) {
+    const buildResult = buildResponsesHistoryInput({
+      config: this.config,
+      history: args.history,
+      currentMessage: args.input.content,
+      contextState: args.contextState,
+    });
+
+    if (!shouldAutoCompactHistory({ config: this.config, buildResult })) {
+      return args.contextState;
+    }
+
+    const historyBeforeCurrentTurn = args.history.filter((event) => event.createdAt < args.input.createdAt);
+    if (historyBeforeCurrentTurn.length === 0) {
+      return args.contextState;
+    }
+
+    args.execution.throwIfAborted();
+    args.execution.updatePhase('sampling');
+    args.execution.setCanSteer(false);
+    this.publishThinking(args.sessionId, '上下文较长，正在压缩历史');
+
+    const summary = await this.openAIHarness.compactContext({
+      history: historyBeforeCurrentTurn,
+      contextState: args.contextState,
+      signal: args.execution.signal,
+    });
+
+    args.execution.throwIfAborted();
+    const baselineCreatedAt = historyBeforeCurrentTurn[historyBeforeCurrentTurn.length - 1]?.createdAt ?? null;
+    const nextState = {
+      version: 1 as const,
+      latestCompaction: {
+        summary,
+        createdAt: now(),
+        baselineCreatedAt,
+        trigger: 'auto' as const,
+      },
+    };
+    await this.sessionContextStore.save(args.userId, args.sessionId, nextState);
+    return nextState;
+  }
+
+  private async executeCompactTurn(args: {
+    sessionId: string;
+    userId: string;
+    history: StoredEvent[];
+    contextState: Awaited<ReturnType<SessionContextStore['load']>>;
+    execution: TurnExecutionContext;
+    input: RuntimeInput;
+  }) {
+    const historyBeforeCompactCommand = args.history.filter((event) => event.createdAt < args.input.createdAt);
+    args.execution.throwIfAborted();
+    args.execution.updatePhase('sampling');
+    args.execution.setCanSteer(false);
+    this.publishThinking(args.sessionId, '正在压缩上下文');
+
+    const summary = await this.openAIHarness.compactContext({
+      history: historyBeforeCompactCommand,
+      contextState: args.contextState,
+      signal: args.execution.signal,
+    });
+
+    args.execution.throwIfAborted();
+    const replyCreatedAt = now();
+    const reply = '上下文已压缩，后续对话会基于摘要继续。';
+
+    await this.persistTextMessage(args.userId, args.sessionId, reply, 'assistant', replyCreatedAt);
+    await this.sessionContextStore.save(args.userId, args.sessionId, {
+      version: 1,
+      latestCompaction: {
+        summary,
+        createdAt: replyCreatedAt,
+        baselineCreatedAt: replyCreatedAt,
+        trigger: 'manual',
+      },
+    });
+
+    this.publish(args.sessionId, {
+      id: createEventId(),
+      event: 'text_delta',
+      data: {
+        content: reply,
+      },
+    });
   }
 
   private mergeContinuationInputs(inputs: RuntimeInput[]): RuntimeInput {
@@ -342,7 +473,13 @@ export class ChatService {
     });
   }
 
-  private async persistTextMessage(userId: string, sessionId: string, content: string, role: MessageRole) {
+  private async persistTextMessage(
+    userId: string,
+    sessionId: string,
+    content: string,
+    role: MessageRole,
+    createdAt = now(),
+  ) {
     const event: TextMessageEvent = {
       id: createEventId(),
       sessionId,
@@ -350,7 +487,7 @@ export class ChatService {
       role,
       type: 'text',
       content,
-      createdAt: now(),
+      createdAt,
     };
     await this.messageStore.appendEvent(userId, sessionId, event);
     await this.sessionService.touch(userId, sessionId);

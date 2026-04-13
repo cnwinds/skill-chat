@@ -271,7 +271,10 @@ const main = async () => {
     throw new Error('会话中不存在用户消息，无法构造 probe');
   }
 
-  const baseInput = toResponsesHarnessInput(events, currentMessage) as unknown as Array<Record<string, unknown>>;
+  // The probe scenarios replay tool/function items manually below, so the base prompt
+  // should only contain conversational history. Otherwise the new context builder
+  // would already inline tool/file summaries and the probe would double-count them.
+  const baseInput = toResponsesHarnessInput(messageEvents, currentMessage) as unknown as Array<Record<string, unknown>>;
   const firstReadToolIndex = events.findIndex((event) => event.kind === 'tool_call' && event.skill === 'read_workspace_path_slice');
   if (firstReadToolIndex < 0) {
     throw new Error('会话中未发现 read_workspace_path_slice，无法验证“读 skill 后 502”问题');

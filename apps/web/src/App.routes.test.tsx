@@ -25,6 +25,13 @@ const createDeferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
+type MockStreamHandlers = {
+  onopen?: (response: Response) => Promise<void> | void;
+  onclose?: () => Promise<void> | void;
+  onmessage?: (event: { id?: string; event?: string; data?: string }) => void;
+  onerror?: (error: unknown) => unknown;
+};
+
 type MockResponseInit = {
   body: unknown;
   status?: number;
@@ -129,6 +136,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -502,6 +510,8 @@ describe('App routes', () => {
           transientEvents: [],
           status: 'open',
           lastError: null,
+          reconnectAttempt: null,
+          reconnectLimit: null,
           activeTurnId: 'turn_1',
           activeTurnKind: 'regular',
           activeTurnStatus: 'running',
@@ -716,7 +726,7 @@ describe('App routes', () => {
     useAuthStore.setState({ token: 'token-member', user: memberUser });
     renderApp(['/app/session/s1']);
 
-    expect(await screen.findByText(/正在思考\(/)).toBeInTheDocument();
+    expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
     expect(screen.getByText('regular / sampling / round 2')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Session 2/ }));
@@ -724,8 +734,104 @@ describe('App routes', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Session 1/ }));
 
-    expect(await screen.findByText(/正在思考\(/)).toBeInTheDocument();
+    expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
     expect(screen.getByText('regular / sampling / round 2')).toBeInTheDocument();
+  });
+
+  it('shows reconnect progress in the thinking bubble while the stream reconnects and restores thinking after reconnect', async () => {
+    const firstConnection = createDeferred<void>();
+    const secondConnection = createDeferred<void>();
+    let firstHandlers: MockStreamHandlers | undefined;
+    let secondHandlers: MockStreamHandlers | undefined;
+    let streamCallCount = 0;
+
+    fetchEventSourceMock.mockImplementation(async (_input, init) => {
+      streamCallCount += 1;
+      if (streamCallCount === 1) {
+        firstHandlers = init as MockStreamHandlers;
+        await firstHandlers.onopen?.(new Response(null, { status: 200 }));
+        return firstConnection.promise;
+      }
+
+      secondHandlers = init as MockStreamHandlers;
+      return secondConnection.promise;
+    });
+
+    installFetchMock((url) => {
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Streaming Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: {
+              turnId: 'turn_1',
+              kind: 'regular',
+              status: 'running',
+              phase: 'sampling',
+              phaseStartedAt: '2026-04-12T00:00:30.000Z',
+              canSteer: true,
+              startedAt: '2026-04-12T00:00:00.000Z',
+              round: 1,
+            },
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    renderApp(['/app/session/s1']);
+
+    expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
+
+    await act(async () => {
+      await firstHandlers?.onclose?.();
+      firstConnection.resolve();
+    });
+
+    await waitFor(() => {
+      expect(fetchEventSourceMock).toHaveBeenCalledTimes(2);
+      expect(screen.getByText(/重连中1\/5\(/)).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      await secondHandlers?.onopen?.(new Response(null, { status: 200 }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/思考中\(/)).toBeInTheDocument();
+      expect(screen.queryByText(/重连中1\/5\(/)).not.toBeInTheDocument();
+    });
+
+    secondConnection.resolve();
   });
 
   it('keeps streaming text visible when a stale idle runtime snapshot resolves after the turn has started', async () => {
@@ -950,10 +1056,6 @@ describe('App routes', () => {
             {
               name: 'zhangxuefeng-perspective',
               description: '张雪峰视角的专业和志愿分析',
-              entrypoint: '',
-              runtime: 'chat',
-              timeoutSec: 120,
-              references: [],
               starterPrompts: [
                 '扮演张雪峰，帮我分析这个专业值不值得报',
                 '用张雪峰的视角，帮我看看这个分数怎么填志愿',
@@ -1007,10 +1109,6 @@ describe('App routes', () => {
             {
               name: 'zhangxuefeng-perspective',
               description: '张雪峰视角的专业和志愿分析',
-              entrypoint: '',
-              runtime: 'chat',
-              timeoutSec: 120,
-              references: [],
               starterPrompts: [
                 '扮演张雪峰，帮我看看这个分数怎么填志愿',
               ],
@@ -1018,10 +1116,6 @@ describe('App routes', () => {
             {
               name: 'pdf',
               description: '导出 PDF',
-              entrypoint: '',
-              runtime: 'tool',
-              timeoutSec: 120,
-              references: [],
               starterPrompts: [
                 '帮我把这份内容整理成 PDF',
               ],
@@ -1097,10 +1191,6 @@ describe('App routes', () => {
             {
               name: 'zhangxuefeng-perspective',
               description: '张雪峰视角的专业和志愿分析',
-              entrypoint: '',
-              runtime: 'chat',
-              timeoutSec: 120,
-              references: [],
               starterPrompts: [],
             },
           ],
@@ -1217,10 +1307,6 @@ describe('App routes', () => {
             {
               name: 'pdf',
               description: '导出 PDF',
-              entrypoint: '',
-              runtime: 'python',
-              timeoutSec: 120,
-              references: [],
               starterPrompts: [],
             },
           ],
@@ -1397,7 +1483,7 @@ describe('App routes', () => {
     useAuthStore.setState({ token: 'token-member', user: memberUser });
     renderApp(['/app/session/s1']);
 
-    expect(await screen.findByText(/正在思考\(/)).toBeInTheDocument();
+    expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
     expect(await screen.findByText('待处理队列（按顺序处理）')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '补充信息' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '中断当前 turn' })).toBeInTheDocument();
@@ -1420,7 +1506,7 @@ describe('App routes', () => {
       expect(screen.getByText('补充：先修后端')).toBeInTheDocument();
     });
     expect(messageList).not.toHaveTextContent('补充：先修后端');
-    expect(screen.getByText(/正在思考\(/)).toBeInTheDocument();
+    expect(screen.getByText(/思考中\(/)).toBeInTheDocument();
     expect(previewStack).toHaveTextContent('3 补充：先修后端');
     const previewText = previewStack?.textContent ?? '';
     expect(previewText.indexOf('先看失败测试')).toBeLessThan(previewText.indexOf('下一轮整理文档'));
@@ -1432,6 +1518,200 @@ describe('App routes', () => {
       expect(interruptCount).toBe(1);
       expect(screen.queryByRole('button', { name: '中断当前 turn' })).not.toBeInTheDocument();
     });
+  });
+
+  it('keeps the next turn streamed output visible after interrupting and immediately sending a follow-up', async () => {
+    let interruptCount = 0;
+    let sendCount = 0;
+    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
+
+    fetchEventSourceMock.mockImplementation(async (_input, init) => {
+      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
+      await init?.onopen?.(new Response(null, { status: 200 }));
+    });
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Streaming Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: {
+              turnId: 'turn_1',
+              kind: 'regular',
+              status: 'running',
+              phase: 'sampling',
+              phaseStartedAt: '2026-04-12T00:00:00.000Z',
+              canSteer: true,
+              startedAt: '2026-04-12T00:00:00.000Z',
+              round: 1,
+            },
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/sessions/s1/turns/turn_1/interrupt' && method === 'POST') {
+        interruptCount += 1;
+        return jsonResponse({
+          body: {
+            accepted: true,
+            turnId: 'turn_1',
+            runtime: {
+              sessionId: 's1',
+              activeTurn: {
+                turnId: 'turn_1',
+                kind: 'regular',
+                status: 'interrupting',
+                phase: 'non_steerable',
+                phaseStartedAt: '2026-04-12T00:00:04.000Z',
+                canSteer: false,
+                startedAt: '2026-04-12T00:00:00.000Z',
+                round: 1,
+              },
+              followUpQueue: [],
+              recovery: null,
+            },
+          },
+        });
+      }
+      if (url === '/api/sessions/s1/messages' && method === 'POST') {
+        sendCount += 1;
+        expect(init?.body).toBe(JSON.stringify({
+          content: '继续第二轮',
+          dispatch: 'auto',
+          turnId: 'turn_1',
+        }));
+        return jsonResponse({
+          body: {
+            accepted: true,
+            dispatch: 'queued',
+            messageId: 'input_queue_1',
+            runId: 'queued_input_queue_1',
+            inputId: 'input_queue_1',
+            runtime: {
+              sessionId: 's1',
+              activeTurn: {
+                turnId: 'turn_1',
+                kind: 'regular',
+                status: 'interrupting',
+                phase: 'non_steerable',
+                phaseStartedAt: '2026-04-12T00:00:04.000Z',
+                canSteer: false,
+                startedAt: '2026-04-12T00:00:00.000Z',
+                round: 1,
+              },
+              followUpQueue: [
+                {
+                  inputId: 'input_queue_1',
+                  content: '继续第二轮',
+                  createdAt: '2026-04-12T00:00:05.000Z',
+                },
+              ],
+              recovery: null,
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    renderApp(['/app/session/s1']);
+
+    expect(await screen.findByRole('button', { name: '中断当前 turn' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '中断当前 turn' }));
+    await waitFor(() => {
+      expect(interruptCount).toBe(1);
+    });
+
+    fireEvent.change(screen.getByPlaceholderText('继续补充信息，系统会按顺序处理'), {
+      target: { value: '继续第二轮' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '补充信息' }));
+
+    await waitFor(() => {
+      expect(sendCount).toBe(1);
+      expect(screen.getByText('继续第二轮')).toBeInTheDocument();
+    });
+
+    vi.useFakeTimers();
+
+    await act(async () => {
+      handleStreamMessage?.({
+        id: 'evt_turn_1_done',
+        event: 'turn_completed',
+        data: JSON.stringify({
+          turnId: 'turn_1',
+          kind: 'regular',
+          status: 'interrupted',
+        }),
+      });
+      handleStreamMessage?.({
+        id: 'evt_done_1',
+        event: 'done',
+        data: JSON.stringify({}),
+      });
+      handleStreamMessage?.({
+        id: 'evt_turn_2_started',
+        event: 'turn_started',
+        data: JSON.stringify({
+          turnId: 'turn_2',
+          kind: 'regular',
+          status: 'running',
+          phase: 'sampling',
+          phaseStartedAt: '2026-04-12T00:00:06.000Z',
+          canSteer: true,
+          startedAt: '2026-04-12T00:00:06.000Z',
+          round: 1,
+          followUpQueueCount: 0,
+        }),
+      });
+      handleStreamMessage?.({
+        id: 'evt_delta_2',
+        event: 'text_delta',
+        data: JSON.stringify({
+          content: '这是第二轮的流式输出',
+        }),
+      });
+    });
+
+    expect(screen.getByText('这是第二轮的流式输出')).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(screen.getByText('这是第二轮的流式输出')).toBeInTheDocument();
   });
 
   it('moves a steer input from the bottom preview into the chat stream only after commit confirmation', async () => {

@@ -1,10 +1,8 @@
 import path from 'node:path';
 import type { FileRecord } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
-import { resolveUserPath } from '../storage/paths.js';
 import { Semaphore } from './semaphore.js';
 import { SessionRunner } from './session-runner.js';
-import type { RegisteredSkill } from '../../modules/skills/skill-registry.js';
 import { FileService } from '../../modules/files/file-service.js';
 
 export class RunnerManager {
@@ -21,10 +19,10 @@ export class RunnerManager {
   execute(args: {
     userId: string;
     sessionId: string;
-    skill: RegisteredSkill;
-    prompt: string;
-    toolArguments: Record<string, unknown>;
-    files: Array<{ name: string; relativePath: string; mimeType: string | null }>;
+    scriptPath: string;
+    argv?: string[];
+    cwdRoot?: 'session' | 'workspace';
+    cwdPath?: string;
     signal?: AbortSignal;
     onQueued?: () => Promise<void> | void;
     onProgress: (message: string, percent?: number, status?: string) => Promise<void> | void;
@@ -48,14 +46,12 @@ export class RunnerManager {
           const seenPaths = new Set<string>();
 
           await runner.run({
-            skill: args.skill,
-            prompt: args.prompt,
-            toolArguments: args.toolArguments,
-            files: args.files.map((file) => ({
-              name: file.name,
-              path: resolveUserPath(this.config, args.userId, file.relativePath),
-              mimeType: file.mimeType,
-            })),
+            scriptPath: args.scriptPath,
+            argv: args.argv ?? [],
+            workingDirectory: {
+              root: args.cwdRoot ?? 'session',
+              path: args.cwdPath ?? '',
+            },
             signal: args.signal,
             callbacks: {
               onProgress: args.onProgress,

@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { AppConfig } from '../../config/env.js';
 import { OpenAIHarness } from './openai-harness.js';
 
-const createConfig = (): AppConfig => ({
+const createConfig = (overrides: Partial<AppConfig> = {}): AppConfig => ({
   NODE_ENV: 'test',
   PORT: 3000,
   WEB_ORIGIN: 'http://localhost:5173',
@@ -16,6 +16,7 @@ const createConfig = (): AppConfig => ({
   OPENAI_BASE_URL: 'http://example.com/v1',
   OPENAI_API_KEY: 'test-token',
   OPENAI_MODEL: 'gpt-5.4',
+  WEB_SEARCH_MODE: 'live',
   OPENAI_REASONING_EFFORT: 'xhigh',
   LLM_MAX_OUTPUT_TOKENS: 4096,
   TOOL_MAX_OUTPUT_TOKENS: 3072,
@@ -24,6 +25,7 @@ const createConfig = (): AppConfig => ({
   MAX_CONCURRENT_RUNS: 5,
   RUN_TIMEOUT_MS: 120_000,
   USER_STORAGE_QUOTA_MB: 1024,
+  ...overrides,
 });
 
 const createResponsesStreamResponse = (events: Array<{ event: string; data: unknown }>) => new Response(
@@ -48,43 +50,17 @@ const createResponsesStreamResponse = (events: Array<{ event: string; data: unkn
 const zhangXuefengSkill = {
   name: 'zhangxuefeng-perspective',
   description: '以张雪峰风格给出专业和志愿建议。',
-  entrypoint: '',
-  runtime: 'chat' as const,
-  timeoutSec: 120,
-  references: ['style-guide.md', 'core-framework.md', 'boundaries-and-sources.md'],
   directory: '/workspace/qizhi/skills/zhangxuefeng-perspective',
   markdown: '# 张雪峰 Perspective\n\n先读本文件，再按需读取 style-guide、core-framework、boundaries-and-sources。',
-  referencesContent: [
-    {
-      name: 'style-guide.md',
-      content: '直接用“我”回答，短句、高密度、东北大哥语气。',
-    },
-    {
-      name: 'core-framework.md',
-      content: '先看中位数，再看就业和城市。',
-    },
-    {
-      name: 'boundaries-and-sources.md',
-      content: '张雪峰已于2026年3月24日去世，回答时注意事实边界。',
-    },
-  ],
+  starterPrompts: ['扮演张雪峰'],
 };
 
 const pdfSkill = {
   name: 'pdf',
   description: '生成 PDF 文件。',
-  entrypoint: 'scripts/run.py',
-  runtime: 'python' as const,
-  timeoutSec: 120,
-  references: ['usage.md'],
   directory: '/workspace/qizhi/skills/pdf',
   markdown: '# PDF Skill\n\n生成 PDF。',
-  referencesContent: [
-    {
-      name: 'usage.md',
-      content: '生成报告 PDF',
-    },
-  ],
+  starterPrompts: ['帮我生成 PDF'],
 };
 
 describe('OpenAIHarness', () => {
@@ -272,6 +248,14 @@ describe('OpenAIHarness', () => {
     expect(result.finalText).toBe('先看就业数据，再给你结论。');
     expect(textDeltas).toEqual(['先看就业数据，', '再给你结论。']);
     expect(execute).toHaveBeenCalledTimes(1);
+
+    const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(secondRequest.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'assistant',
+        content: '先看就业数据，',
+      }),
+    ]));
   });
 
   it('uses local web_search function tool inside the harness loop', async () => {
@@ -384,6 +368,49 @@ describe('OpenAIHarness', () => {
       }),
     ]));
     expect(secondRequest.input.some((item: { type?: string }) => item.type === 'web_search_call')).toBe(false);
+  });
+
+  it('hides web_search from function tools when the config disables it', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(createResponsesStreamResponse([
+      {
+        event: 'response.output_text.delta',
+        data: {
+          type: 'response.output_text.delta',
+          delta: '当前不会发起联网搜索。',
+        },
+      },
+    ]));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const harness = new OpenAIHarness(
+      {
+        ...createConfig(),
+        WEB_SEARCH_MODE: 'disabled',
+      },
+      {
+        execute: vi.fn(),
+      } as never,
+      {} as never,
+    );
+
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '测试关闭 web_search 时的工具暴露',
+      history: [],
+      files: [],
+      availableSkills: [zhangXuefengSkill],
+    });
+
+    expect(result.finalText).toContain('不会发起联网搜索');
+
+    const firstRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(firstRequest.tools).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'web_search',
+      }),
+    ]));
   });
 
   it('drains pending steer inputs at a round boundary and continues within the same turn', async () => {
@@ -882,7 +909,181 @@ describe('OpenAIHarness', () => {
     ]));
   });
 
-  it('runs executable skills through the same harness loop', async () => {
+  it('auto compacts the same turn after tool outputs exceed the continuation budget', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '我先看下关键数据，',
+          },
+        },
+        {
+          event: 'response.output_item.done',
+          data: {
+            type: 'response.output_item.done',
+            item: {
+              id: 'fc_big_read',
+              type: 'function_call',
+              call_id: 'call_big_read',
+              name: 'read_workspace_path_slice',
+              arguments: JSON.stringify({
+                root: 'workspace',
+                path: 'skills/zhangxuefeng-perspective/SKILL.md',
+                startLine: 1,
+                endLine: 200,
+              }),
+            },
+          },
+        },
+      ]))
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '压缩摘要：用户要分析人工智能专业，已读取大量 skill 内容和上下文数据。',
+          },
+        },
+      ]))
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '我继续基于压缩后的上下文给你结论。',
+          },
+        },
+      ]));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const execute = vi.fn().mockResolvedValue({
+      tool: 'read_workspace_path_slice',
+      arguments: {
+        root: 'workspace',
+        path: 'skills/zhangxuefeng-perspective/SKILL.md',
+      },
+      summary: '已读取超长 skill 内容',
+      content: '文件内容：'.concat('就业、城市、分数线、行业趋势。'.repeat(500)),
+      context: '就业、城市、分数线、行业趋势。'.repeat(500),
+    });
+
+    const compactionSignals: number[] = [];
+
+    const harness = new OpenAIHarness(
+      createConfig({
+        MODEL_CONTEXT_WINDOW_TOKENS: 16_000,
+        MODEL_AUTO_COMPACT_TOKEN_LIMIT: 120,
+      }),
+      {
+        execute,
+      } as never,
+      {} as never,
+    );
+
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '帮我分析人工智能专业值不值得报',
+      history: [],
+      files: [],
+      availableSkills: [zhangXuefengSkill],
+      callbacks: {
+        onContextCompactionStart: ({ estimatedTokens }) => {
+          compactionSignals.push(estimatedTokens);
+        },
+      },
+    });
+
+    expect(result.finalText).toBe('我先看下关键数据，我继续基于压缩后的上下文给你结论。');
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(compactionSignals.length).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    const compactRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(String(compactRequest.instructions)).toContain('上下文压缩器');
+    expect(compactRequest.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'user',
+        content: '帮我分析人工智能专业值不值得报',
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        content: '我先看下关键数据，',
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('本轮工具结果'),
+      }),
+    ]));
+
+    const postCompactRequest = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+    expect(postCompactRequest.input).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: 'user',
+        content: '帮我分析人工智能专业值不值得报',
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        content: expect.stringContaining('会话压缩摘要'),
+      }),
+    ]));
+    expect(postCompactRequest.input.some((item: { role?: string; content?: string }) => item.role === 'assistant' && item.content === '我先看下关键数据，')).toBe(false);
+    expect(postCompactRequest.input.some((item: { type?: string }) => item.type === 'function_call_output')).toBe(false);
+  });
+
+  it('allows the same turn to continue beyond eight model requests when follow-up inputs keep arriving', async () => {
+    const fetchMock = vi.fn();
+    for (let index = 0; index < 10; index += 1) {
+      fetchMock.mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: `第${index + 1}轮。`,
+          },
+        },
+      ]));
+    }
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const harness = new OpenAIHarness(
+      createConfig(),
+      {
+        execute: vi.fn(),
+      } as never,
+      {} as never,
+    );
+
+    let drained = 0;
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '开始处理',
+      history: [],
+      files: [],
+      drainPendingInputs: async () => {
+        if (drained >= 9) {
+          return [];
+        }
+        drained += 1;
+        return [{
+          inputId: `queued_${drained}`,
+          content: `继续第${drained}次`,
+          createdAt: `2026-04-14T00:00:${String(drained).padStart(2, '0')}.000Z`,
+        }];
+      },
+    });
+
+    expect(result.finalText).toBe('第1轮。第2轮。第3轮。第4轮。第5轮。第6轮。第7轮。第8轮。第9轮。第10轮。');
+    expect(result.roundsUsed).toBe(10);
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+  });
+
+  it('runs workspace scripts through the same harness loop', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(createResponsesStreamResponse([
         {
@@ -892,15 +1093,15 @@ describe('OpenAIHarness', () => {
             item: {
               id: 'fc_1',
               type: 'function_call',
-              call_id: 'call_run_skill',
-              name: 'run_skill',
+              call_id: 'call_run_script',
+              name: 'run_workspace_script',
               arguments: JSON.stringify({
-                skillName: 'pdf',
-                prompt: '渲染最终文档为 PDF',
-                arguments: {
-                  title: '周报',
-                  documentMarkdown: '## 本周概览\n\n- 销售额增长 12%\n- 新增客户 5 家',
-                },
+                path: 'skills/pdf/scripts/fill_fillable_fields.py',
+                args: [
+                  'uploads/form.pdf',
+                  'uploads/field-values.json',
+                  'outputs/weekly-report.pdf',
+                ],
               }),
             },
           },
@@ -973,13 +1174,19 @@ describe('OpenAIHarness', () => {
 
     expect(result.finalText).toContain('PDF 已生成');
     expect(runnerExecute).toHaveBeenCalledTimes(1);
+    expect(runnerExecute).toHaveBeenCalledWith(expect.objectContaining({
+      scriptPath: 'skills/pdf/scripts/fill_fillable_fields.py',
+      argv: ['uploads/form.pdf', 'uploads/field-values.json', 'outputs/weekly-report.pdf'],
+      cwdRoot: 'session',
+      cwdPath: '',
+    }));
     expect(progressMessages).toContain('任务已排队');
     expect(progressMessages).toContain('正在生成 PDF');
     expect(progressMessages).toContain('PDF 生成完成');
     expect(artifacts).toEqual(['周报.pdf']);
   });
 
-  it('forces pdf skill retries when the model sends only a document brief', async () => {
+  it('feeds script execution failures back into the next reasoning round', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(createResponsesStreamResponse([
         {
@@ -989,14 +1196,11 @@ describe('OpenAIHarness', () => {
             item: {
               id: 'fc_bad_pdf',
               type: 'function_call',
-              call_id: 'call_run_skill_bad',
-              name: 'run_skill',
+              call_id: 'call_run_script_bad',
+              name: 'run_workspace_script',
               arguments: JSON.stringify({
-                skillName: 'pdf',
-                prompt: '请生成一份中文 PDF，文档要求：包含标题、摘要、院校策略、结论。',
-                arguments: {
-                  title: '院校策略',
-                },
+                path: 'skills/pdf/scripts/fill_fillable_fields.py',
+                args: ['uploads/form.pdf'],
               }),
             },
           },
@@ -1010,26 +1214,15 @@ describe('OpenAIHarness', () => {
             item: {
               id: 'fc_good_pdf',
               type: 'function_call',
-              call_id: 'call_run_skill_good',
-              name: 'run_skill',
+              call_id: 'call_run_script_good',
+              name: 'run_workspace_script',
               arguments: JSON.stringify({
-                skillName: 'pdf',
-                prompt: '渲染最终文档为 PDF',
-                arguments: {
-                  title: '院校策略',
-                  summary: '基于用户条件给出冲稳保建议。',
-                  documentMarkdown: [
-                    '## 一、结论先行',
-                    '',
-                    '法学优先，师范作为保底备选。',
-                    '',
-                    '## 二、院校策略',
-                    '',
-                    '- 冲：华东政法、中国政法',
-                    '- 稳：上海政法、长三角法学平台',
-                    '- 保：法学相关专业组与师范方向双保险',
-                  ].join('\n'),
-                },
+                path: 'skills/pdf/scripts/fill_fillable_fields.py',
+                args: [
+                  'uploads/form.pdf',
+                  'uploads/field-values.json',
+                  'outputs/strategy.pdf',
+                ],
               }),
             },
           },
@@ -1047,36 +1240,9 @@ describe('OpenAIHarness', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const runnerExecute = vi.fn(async ({ onQueued, onProgress, onArtifact, prompt, toolArguments }: {
-      onQueued?: () => Promise<void> | void;
-      onProgress: (message: string, percent?: number, status?: string) => Promise<void> | void;
-      onArtifact: (file: { id: string; displayName: string; relativePath: string; size: number; downloadUrl: string; userId: string; sessionId: string | null; mimeType: string | null; bucket: 'outputs'; source: 'generated'; createdAt: string }) => Promise<void> | void;
-      prompt: string;
-      toolArguments: Record<string, unknown>;
-    }) => {
-      expect(prompt).toBe('渲染最终文档为 PDF');
-      expect(toolArguments).toMatchObject({
-        title: '院校策略',
-      });
-      expect(String(toolArguments.documentMarkdown ?? '')).toContain('## 二、院校策略');
-
-      await onQueued?.();
-      await onProgress('正在生成 PDF', 60, 'running');
-      await onArtifact({
-        id: 'file_pdf_retry',
-        userId: 'u1',
-        sessionId: 's1',
-        displayName: '院校策略.pdf',
-        relativePath: 'sessions/s1/outputs/院校策略.pdf',
-        mimeType: 'application/pdf',
-        size: 2048,
-        bucket: 'outputs',
-        source: 'generated',
-        createdAt: new Date().toISOString(),
-        downloadUrl: '/api/files/file_pdf_retry/download',
-      });
-      await onProgress('PDF 生成完成', 100, 'completed');
-    });
+    const runnerExecute = vi.fn()
+      .mockRejectedValueOnce(new Error('Usage: fill_fillable_fields.py [input pdf] [field_values.json] [output pdf]'))
+      .mockResolvedValueOnce(undefined);
 
     const harness = new OpenAIHarness(
       createConfig(),
@@ -1098,16 +1264,16 @@ describe('OpenAIHarness', () => {
     });
 
     expect(result.finalText).toContain('最终内容生成');
-    expect(runnerExecute).toHaveBeenCalledTimes(1);
+    expect(runnerExecute).toHaveBeenCalledTimes(2);
 
     const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     expect(secondRequest.input).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'function_call_output',
-        call_id: 'call_run_skill_bad',
+        call_id: 'call_run_script_bad',
       }),
     ]));
-    const failedOutput = secondRequest.input.find((item: { type?: string; call_id?: string; output?: string }) => item.type === 'function_call_output' && item.call_id === 'call_run_skill_bad');
-    expect(String(failedOutput?.output ?? '')).toContain('arguments.documentMarkdown');
+    const failedOutput = secondRequest.input.find((item: { type?: string; call_id?: string; output?: string }) => item.type === 'function_call_output' && item.call_id === 'call_run_script_bad');
+    expect(String(failedOutput?.output ?? '')).toContain('fill_fillable_fields.py');
   });
 });

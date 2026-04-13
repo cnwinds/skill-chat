@@ -8,36 +8,22 @@ export interface RegisteredSkill extends SkillMetadata {
   directory: string;
   rawMarkdown?: string;
   markdown: string;
-  referencesContent: Array<{ name: string; content: string }>;
 }
 
 const toMetadata = (
-  skillDir: string,
   filename: string,
   frontmatter: Record<string, unknown>,
-): SkillMetadata => ({
-  name: String(frontmatter.name ?? filename),
-  description: String(frontmatter.description ?? ''),
-  runtime:
-    frontmatter.runtime === 'node'
-      ? 'node'
-      : frontmatter.runtime === 'chat'
-        ? 'chat'
-        : 'python',
-  entrypoint:
-    frontmatter.runtime === 'chat'
-      ? ''
-      : String(frontmatter.entrypoint ?? 'scripts/run.py'),
-  timeoutSec: Number(frontmatter.timeout_sec ?? 120),
-  references: Array.isArray(frontmatter.references)
-    ? frontmatter.references.map((item) => String(item))
-    : [],
-  starterPrompts: Array.isArray(frontmatter.starter_prompts)
-    ? frontmatter.starter_prompts
-      .map((item) => String(item).trim())
-      .filter(Boolean)
-    : [],
-});
+): SkillMetadata => {
+  return {
+    name: String(frontmatter.name ?? filename),
+    description: String(frontmatter.description ?? ''),
+    starterPrompts: Array.isArray(frontmatter.starter_prompts)
+      ? frontmatter.starter_prompts
+        .map((item) => String(item).trim())
+        .filter(Boolean)
+      : [],
+  };
+};
 
 export class SkillRegistry {
   private readonly skillMap = new Map<string, RegisteredSkill>();
@@ -59,25 +45,13 @@ export class SkillRegistry {
       try {
         const raw = await fs.readFile(skillFile, 'utf8');
         const parsed = matter(raw);
-        const metadata = toMetadata(skillDir, entry.name, parsed.data);
-
-        const referencesContent = await Promise.all(
-          metadata.references.map(async (referenceName: string) => {
-            const referencePath = path.join(skillDir, 'references', referenceName);
-            const content = await fs.readFile(referencePath, 'utf8');
-            return {
-              name: referenceName,
-              content,
-            };
-          }),
-        );
+        const metadata = toMetadata(entry.name, parsed.data);
 
         this.skillMap.set(metadata.name, {
           ...metadata,
           directory: skillDir,
           rawMarkdown: raw.trim(),
           markdown: parsed.content.trim(),
-          referencesContent,
         });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -93,10 +67,6 @@ export class SkillRegistry {
     return Array.from(this.skillMap.values()).map((skill) => ({
       name: skill.name,
       description: skill.description,
-      entrypoint: skill.entrypoint,
-      runtime: skill.runtime,
-      timeoutSec: skill.timeoutSec,
-      references: [...skill.references],
       starterPrompts: [...(skill.starterPrompts ?? [])],
     }));
   }

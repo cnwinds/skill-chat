@@ -1,16 +1,12 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { nanoid } from 'nanoid';
 import type { AppConfig } from '../../config/env.js';
-import type { RegisteredSkill } from '../../modules/skills/skill-registry.js';
 import { assertPathInside, listFilesRecursively } from '../storage/fs-utils.js';
 import {
   getSessionOutputsRoot,
   getSessionRoot,
-  getSessionTmpRoot,
   getSharedRoot,
   getSessionUploadsRoot,
 } from '../storage/paths.js';
@@ -33,45 +29,29 @@ export class SessionRunner {
   ) {}
 
   async run(args: {
-    skill: RegisteredSkill;
-    prompt: string;
-    toolArguments: Record<string, unknown>;
-    files: Array<{ name: string; path: string; mimeType: string | null }>;
+    scriptPath: string;
+    argv?: string[];
+    workingDirectory?: {
+      root?: 'session' | 'workspace';
+      path?: string;
+    };
     signal?: AbortSignal;
     callbacks: RunnerCallbacks;
   }) {
-    const workDir = getSessionRoot(this.config, this.userId, this.sessionId);
+    const sessionRoot = getSessionRoot(this.config, this.userId, this.sessionId);
     const outputDir = getSessionOutputsRoot(this.config, this.userId, this.sessionId);
-    const tmpDir = getSessionTmpRoot(this.config, this.userId, this.sessionId);
     const uploadsDir = getSessionUploadsRoot(this.config, this.userId, this.sessionId);
     const sharedDir = getSharedRoot(this.config, this.userId);
-
-    await fs.mkdir(tmpDir, { recursive: true });
-    const requestPath = path.join(tmpDir, `run-${nanoid()}.json`);
+    const workDirBase = args.workingDirectory?.root === 'workspace'
+      ? this.config.CWD
+      : sessionRoot;
+    const requestedWorkDir = args.workingDirectory?.path?.trim() ?? '';
+    const workDir = requestedWorkDir
+      ? path.resolve(workDirBase, requestedWorkDir)
+      : workDirBase;
+    assertPathInside(workDirBase, workDir);
 
     const beforeSnapshot = new Set(await listFilesRecursively(outputDir));
-
-    const requestPayload = {
-      runId: nanoid(),
-      skill: args.skill.name,
-      user: {
-        id: this.userId,
-      },
-      session: {
-        id: this.sessionId,
-        workDir,
-        uploadsDir,
-        outputDir,
-        sharedDir,
-      },
-      input: {
-        prompt: args.prompt,
-        arguments: args.toolArguments,
-        files: args.files,
-      },
-    };
-
-    await fs.writeFile(requestPath, JSON.stringify(requestPayload, null, 2), 'utf8');
 
     if (args.signal?.aborted) {
       throw args.signal.reason instanceof Error
@@ -79,25 +59,43 @@ export class SessionRunner {
         : new DOMException('Turn interrupted', 'AbortError');
     }
 
-    const entryPath = path.join(args.skill.directory, args.skill.entrypoint);
+    const entryPath = path.resolve(this.config.CWD, args.scriptPath);
+    assertPathInside(this.config.CWD, entryPath);
+
+    const extension = path.extname(entryPath).toLowerCase();
     const venvPython = path.join(this.config.CWD, '.venv', 'bin', 'python');
-    const command = args.skill.runtime === 'node'
-      ? 'node'
-      : existsSync(venvPython)
-        ? venvPython
-        : 'python3';
-    const commandArgs = [entryPath, '--request', requestPath];
+    let command: string;
+
+    if (extension === '.js' || extension === '.mjs' || extension === '.cjs') {
+      command = 'node';
+    } else if (extension === '.py') {
+      command = existsSync(venvPython) ? venvPython : 'python3';
+    } else if (extension === '.sh' || extension === '.bash' || extension === '.zsh') {
+      command = extension === '.zsh' ? 'zsh' : 'bash';
+    } else {
+      throw new Error(`不支持执行该脚本类型：${args.scriptPath}`);
+    }
+
+    const commandArgs = [entryPath, ...(args.argv ?? [])];
 
     await args.callbacks.onProgress('任务进入执行队列', undefined, 'running');
+
+    let lastObservedMessage = '';
+    const emittedArtifacts = new Set<string>();
 
     const child = spawn(command, commandArgs, {
       cwd: workDir,
       env: {
         ...process.env,
         PYTHONUNBUFFERED: '1',
+        SKILLCHAT_WORKSPACE_ROOT: this.config.CWD,
+        SKILLCHAT_SESSION_ROOT: sessionRoot,
+        SKILLCHAT_UPLOADS_DIR: uploadsDir,
+        SKILLCHAT_OUTPUTS_DIR: outputDir,
+        SKILLCHAT_SHARED_DIR: sharedDir,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: Math.min(this.config.RUN_TIMEOUT_MS, args.skill.timeoutSec * 1000),
+      timeout: this.config.RUN_TIMEOUT_MS,
     });
 
     const handleLine = async (line: string) => {
@@ -117,6 +115,7 @@ export class SessionRunner {
         };
 
         if (payload.type === 'progress') {
+          lastObservedMessage = payload.message ?? lastObservedMessage;
           await args.callbacks.onProgress(payload.message ?? '执行中', payload.percent, payload.status);
           return;
         }
@@ -124,18 +123,23 @@ export class SessionRunner {
         if (payload.type === 'artifact' && payload.path) {
           const absolutePath = path.resolve(workDir, payload.path);
           assertPathInside(outputDir, absolutePath);
-          await args.callbacks.onArtifact({
-            absolutePath,
-            label: payload.label,
-          });
+          if (!emittedArtifacts.has(absolutePath)) {
+            emittedArtifacts.add(absolutePath);
+            await args.callbacks.onArtifact({
+              absolutePath,
+              label: payload.label,
+            });
+          }
           return;
         }
 
         if (payload.type === 'result') {
+          lastObservedMessage = payload.message ?? lastObservedMessage;
           await args.callbacks.onProgress(payload.message ?? '执行完成', 100, 'completed');
           return;
         }
       } catch {
+        lastObservedMessage = trimmed;
         await args.callbacks.onProgress(trimmed, undefined, 'running');
       }
     };
@@ -205,7 +209,7 @@ export class SessionRunner {
             return;
           }
 
-          reject(new Error(`Skill exited with code ${code}`));
+          reject(new Error(lastObservedMessage || `脚本退出码异常：${code}`));
         });
       });
 
@@ -220,7 +224,8 @@ export class SessionRunner {
 
     const afterSnapshot = await listFilesRecursively(outputDir);
     for (const filePath of afterSnapshot) {
-      if (!beforeSnapshot.has(filePath)) {
+      if (!beforeSnapshot.has(filePath) && !emittedArtifacts.has(filePath)) {
+        emittedArtifacts.add(filePath);
         await args.callbacks.onArtifact({
           absolutePath: filePath,
         });

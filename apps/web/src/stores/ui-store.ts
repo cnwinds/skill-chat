@@ -17,13 +17,15 @@ import type {
   UserMessageCommittedPayload,
 } from '@skillchat/shared';
 
-type StreamStatus = 'idle' | 'connecting' | 'open' | 'error';
+type StreamStatus = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'error';
 
 type SessionStreamState = {
   pendingText: string;
   transientEvents: StoredEvent[];
   status: StreamStatus;
   lastError: string | null;
+  reconnectAttempt: number | null;
+  reconnectLimit: number | null;
   activeTurnId: string | null;
   activeTurnKind: TurnKind | null;
   activeTurnStatus: TurnStatus | null;
@@ -52,7 +54,15 @@ type UiState = {
   pushToolProgress: (sessionId: string, event: ToolProgressEvent) => void;
   pushToolResult: (sessionId: string, event: ToolResultEvent) => void;
   pushError: (sessionId: string, event: ErrorEvent) => void;
-  setStreamStatus: (sessionId: string, status: StreamStatus, lastError?: string | null) => void;
+  setStreamStatus: (
+    sessionId: string,
+    status: StreamStatus,
+    options?: {
+      lastError?: string | null;
+      reconnectAttempt?: number | null;
+      reconnectLimit?: number | null;
+    },
+  ) => void;
   hydrateRuntime: (sessionId: string, snapshot: SessionRuntimeSnapshot) => void;
   applyTurnStarted: (sessionId: string, payload: TurnLifecyclePayload) => void;
   applyTurnStatus: (sessionId: string, payload: TurnLifecyclePayload) => void;
@@ -68,6 +78,8 @@ const emptyStream = (): SessionStreamState => ({
   transientEvents: [],
   status: 'idle',
   lastError: null,
+  reconnectAttempt: null,
+  reconnectLimit: null,
   activeTurnId: null,
   activeTurnKind: null,
   activeTurnStatus: null,
@@ -165,11 +177,13 @@ export const useUiStore = create<UiState>((set) => ({
       lastError: event.message,
     })),
   })),
-  setStreamStatus: (sessionId, status, lastError = null) => set((state) => ({
+  setStreamStatus: (sessionId, status, options) => set((state) => ({
     streams: mutateStream(state.streams, sessionId, (current) => ({
       ...current,
       status,
-      lastError,
+      lastError: options?.lastError ?? null,
+      reconnectAttempt: options?.reconnectAttempt ?? null,
+      reconnectLimit: options?.reconnectLimit ?? null,
     })),
   })),
   hydrateRuntime: (sessionId, snapshot) => set((state) => ({
