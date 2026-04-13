@@ -136,4 +136,43 @@ describe('openai-harness-context', () => {
     expect(section).toContain('file-1.txt');
     expect(section).toContain('file-9.txt');
   });
+
+  it('can inject compaction summary before the last user message for mid-turn continuation', () => {
+    const result = buildResponsesHistoryInput({
+      history: [
+        {
+          id: 'evt_1',
+          sessionId: 's1',
+          kind: 'message' as const,
+          role: 'assistant' as const,
+          type: 'text' as const,
+          content: '前文答到一半',
+          createdAt: '2026-04-13T10:00:00.000Z',
+        },
+        {
+          id: 'evt_2',
+          sessionId: 's1',
+          kind: 'message' as const,
+          role: 'user' as const,
+          type: 'text' as const,
+          content: '继续，并补充杭州数据',
+          createdAt: '2026-04-13T10:00:01.000Z',
+        },
+      ],
+      contextState: {
+        version: 1,
+        latestCompaction: {
+          summary: '摘要：用户正在比较城市与专业。',
+          createdAt: '2026-04-13T10:00:02.000Z',
+          baselineCreatedAt: null,
+          trigger: 'auto',
+        },
+      },
+      injectionStrategy: 'before_last_user',
+    });
+
+    expect(result.input[0]?.content).toContain('前文答到一半');
+    expect(result.input[1]?.content).toContain('会话压缩摘要');
+    expect(result.input[2]?.content).toContain('继续，并补充杭州数据');
+  });
 });

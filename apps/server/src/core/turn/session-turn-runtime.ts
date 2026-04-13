@@ -77,6 +77,7 @@ const toPersistedInput = (input: RuntimeInput): PersistedRuntimeInput => ({
   createdAt: input.createdAt,
   source: input.source === 'steer' ? 'steer' : 'queued',
   requestedKind: input.requestedKind,
+  turnConfig: input.turnConfig,
 });
 
 const fromPersistedInput = (input: PersistedRuntimeInput): QueuedRuntimeInput => ({
@@ -85,6 +86,7 @@ const fromPersistedInput = (input: PersistedRuntimeInput): QueuedRuntimeInput =>
   createdAt: input.createdAt,
   source: input.source,
   requestedKind: input.requestedKind,
+  turnConfig: input.turnConfig,
 });
 
 export class SessionTurnRuntime {
@@ -136,7 +138,7 @@ export class SessionTurnRuntime {
     const activeTurn = this.activeTurn;
 
     if (!activeTurn) {
-      return this.startTurn(args.user, this.createInput(args.content, 'direct', requestedKind));
+      return this.startTurn(args.user, this.createInput(args.content, 'direct', requestedKind, args.turnConfig));
     }
 
     const mode = args.mode ?? 'auto';
@@ -151,7 +153,7 @@ export class SessionTurnRuntime {
     );
 
     if (canAcceptSteer) {
-      activeTurn.pendingInputs.push(this.createInput(args.content, 'steer', requestedKind));
+      activeTurn.pendingInputs.push(this.createInput(args.content, 'steer', requestedKind, args.turnConfig));
       await this.persistSnapshot();
       this.publishTurnStatus(activeTurn);
       return {
@@ -171,6 +173,7 @@ export class SessionTurnRuntime {
       args.content,
       mode === 'steer' ? 'steer' : 'queued',
       requestedKind,
+      args.turnConfig,
     );
     this.queuedInputs.push(queuedInput);
     await this.persistSnapshot();
@@ -266,6 +269,7 @@ export class SessionTurnRuntime {
     content: string,
     source: RuntimeInput['source'],
     requestedKind: TurnKind,
+    turnConfig?: RuntimeInput['turnConfig'],
   ): RuntimeInput {
     return {
       inputId: createInputId(),
@@ -273,6 +277,7 @@ export class SessionTurnRuntime {
       createdAt: now(),
       source,
       requestedKind,
+      turnConfig,
     };
   }
 
@@ -291,6 +296,7 @@ export class SessionTurnRuntime {
       createdAt: last.createdAt,
       source: last.source,
       requestedKind: last.requestedKind,
+      turnConfig: last.turnConfig,
       consumedInputIds: inputs.map((input) => input.inputId),
     };
   }
@@ -323,6 +329,11 @@ export class SessionTurnRuntime {
     this.publishUserMessageCommitted(turn.turnId, input, input.consumedInputIds ?? [input.inputId]);
 
     const task = this.executeTurn(user, turn, input);
+    // HTTP dispatch usually returns before the background turn finishes.
+    // Keep the original failing task observable to explicit awaiters, but
+    // attach a noop rejection handler so provider-side failures do not crash
+    // the process via an unhandled rejection.
+    void task.catch(() => undefined);
     turn.task = task;
 
     return {

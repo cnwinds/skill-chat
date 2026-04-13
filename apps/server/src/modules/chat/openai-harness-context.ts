@@ -16,6 +16,7 @@ type BuildResponsesHistoryInputArgs = {
   contextState?: SessionContextState | null;
   appendCurrentMessage?: boolean;
   maxTokens?: number;
+  injectionStrategy?: ContextInjectionStrategy;
 };
 
 type HistoryInputCandidate = {
@@ -30,6 +31,9 @@ export type BuildResponsesHistoryInputResult = {
   estimatedTokensAfterBudget: number;
   didTruncateToBudget: boolean;
 };
+
+export type ContextInjectionStrategy = 'prepend' | 'before_last_user' | 'none';
+export type CompactionScope = 'pre_turn' | 'mid_turn' | 'manual';
 
 const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS = 128_000;
 const DEFAULT_CONTEXT_SAFETY_MARGIN_TOKENS = 4_096;
@@ -380,6 +384,7 @@ export const buildResponsesHistoryInput = (
 ): BuildResponsesHistoryInputResult => {
   const maxTokens = args.maxTokens ?? resolveContextBudgetTokens(args.config);
   const appendCurrentMessage = args.appendCurrentMessage ?? true;
+  const injectionStrategy = args.injectionStrategy ?? 'prepend';
   const summary = args.contextState?.latestCompaction?.summary?.trim() ?? '';
   const baselineCreatedAt = args.contextState?.latestCompaction?.baselineCreatedAt ?? null;
 
@@ -411,12 +416,37 @@ export const buildResponsesHistoryInput = (
   const stickyTokens = stickyCandidates.reduce((sum, item) => sum + item.estimatedTokens, 0);
   const variableBudget = Math.max(0, maxTokens - stickyTokens);
   const variableSelection = takeTailWithinBudget(historyCandidates, variableBudget);
+  const selectedItems = variableSelection.items.map((item) => ({
+    role: item.role,
+    content: item.content,
+  })) as ResponsesMessageInput[];
 
-  return {
-    input: [...stickyCandidates, ...variableSelection.items].map((item) => ({
+  const input = (() => {
+    if (stickyCandidates.length === 0 || injectionStrategy === 'none') {
+      return selectedItems;
+    }
+
+    const stickyMessages = stickyCandidates.map((item) => ({
       role: item.role,
       content: item.content,
-    })),
+    })) as ResponsesMessageInput[];
+
+    if (injectionStrategy === 'before_last_user') {
+      const lastUserIndex = selectedItems.map((item) => item.role).lastIndexOf('user');
+      if (lastUserIndex >= 0) {
+        return [
+          ...selectedItems.slice(0, lastUserIndex),
+          ...stickyMessages,
+          ...selectedItems.slice(lastUserIndex),
+        ];
+      }
+    }
+
+    return [...stickyMessages, ...selectedItems];
+  })();
+
+  return {
+    input,
     estimatedTokensBeforeBudget: stickyTokens + historyCandidates.reduce((sum, item) => sum + item.estimatedTokens, 0),
     estimatedTokensAfterBudget: stickyTokens + variableSelection.estimatedTokensAfterBudget,
     didTruncateToBudget: variableSelection.didTruncateToBudget,

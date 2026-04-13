@@ -5,6 +5,7 @@ import type {
   SessionRuntimeRecovery,
   SessionRuntimeSnapshot,
   StoredEvent,
+  TokenCountPayload,
   ThinkingEvent,
   ToolCallEvent,
   ToolProgressEvent,
@@ -31,8 +32,11 @@ type SessionStreamState = {
   activeTurnStatus: TurnStatus | null;
   activeTurnPhase: TurnPhase | null;
   activeTurnPhaseStartedAt: string | null;
+  activeTurnStartedAt: string | null;
   activeTurnCanSteer: boolean;
   activeTurnRound: number | null;
+  reasoningSummary: string;
+  currentTurnTokenUsage: TokenCountPayload | null;
   followUpQueue: RuntimeInputPreview[];
   removedFollowUpInputIds: string[];
   recovery: SessionRuntimeRecovery | null;
@@ -53,6 +57,8 @@ type UiState = {
   pushToolCall: (sessionId: string, event: ToolCallEvent) => void;
   pushToolProgress: (sessionId: string, event: ToolProgressEvent) => void;
   pushToolResult: (sessionId: string, event: ToolResultEvent) => void;
+  appendReasoningDelta: (sessionId: string, content: string) => void;
+  setCurrentTurnTokenUsage: (sessionId: string, usage: TokenCountPayload) => void;
   pushError: (sessionId: string, event: ErrorEvent) => void;
   setStreamStatus: (
     sessionId: string,
@@ -85,8 +91,11 @@ const emptyStream = (): SessionStreamState => ({
   activeTurnStatus: null,
   activeTurnPhase: null,
   activeTurnPhaseStartedAt: null,
+  activeTurnStartedAt: null,
   activeTurnCanSteer: false,
   activeTurnRound: null,
+  reasoningSummary: '',
+  currentTurnTokenUsage: null,
   followUpQueue: [],
   removedFollowUpInputIds: [],
   recovery: null,
@@ -170,6 +179,20 @@ export const useUiStore = create<UiState>((set) => ({
       lastError: null,
     })),
   })),
+  appendReasoningDelta: (sessionId, content) => set((state) => ({
+    streams: mutateStream(state.streams, sessionId, (current) => ({
+      ...current,
+      reasoningSummary: `${current.reasoningSummary}${content}`,
+      lastError: null,
+    })),
+  })),
+  setCurrentTurnTokenUsage: (sessionId, usage) => set((state) => ({
+    streams: mutateStream(state.streams, sessionId, (current) => ({
+      ...current,
+      currentTurnTokenUsage: usage,
+      lastError: null,
+    })),
+  })),
   pushError: (sessionId, event) => set((state) => ({
     streams: mutateStream(state.streams, sessionId, (current) => ({
       ...current,
@@ -199,6 +222,7 @@ export const useUiStore = create<UiState>((set) => ({
           activeTurnStatus: snapshot.activeTurn?.status ?? null,
           activeTurnPhase: snapshot.activeTurn?.phase ?? null,
           activeTurnPhaseStartedAt: snapshot.activeTurn?.phaseStartedAt ?? null,
+          activeTurnStartedAt: snapshot.activeTurn?.startedAt ?? null,
           activeTurnCanSteer: snapshot.activeTurn?.canSteer ?? false,
           activeTurnRound: snapshot.activeTurn?.round ?? null,
           followUpQueue: filterFollowUpQueue(snapshot.followUpQueue, current.removedFollowUpInputIds),
@@ -214,8 +238,11 @@ export const useUiStore = create<UiState>((set) => ({
       activeTurnStatus: payload.status,
       activeTurnPhase: payload.phase,
       activeTurnPhaseStartedAt: payload.phaseStartedAt,
+      activeTurnStartedAt: payload.startedAt ?? current.activeTurnStartedAt,
       activeTurnCanSteer: payload.canSteer,
       activeTurnRound: payload.round,
+      reasoningSummary: '',
+      currentTurnTokenUsage: null,
       pendingText: '',
       transientEvents: payload.turnId === current.activeTurnId ? current.transientEvents : [],
       recovery: null,
@@ -234,6 +261,7 @@ export const useUiStore = create<UiState>((set) => ({
         activeTurnStatus: payload.status,
         activeTurnPhase: payload.phase,
         activeTurnPhaseStartedAt: payload.phaseStartedAt,
+        activeTurnStartedAt: payload.startedAt ?? current.activeTurnStartedAt,
         activeTurnCanSteer: payload.canSteer,
         activeTurnRound: payload.round,
       };
@@ -263,8 +291,11 @@ export const useUiStore = create<UiState>((set) => ({
         activeTurnKind: null,
         activeTurnPhase: null,
         activeTurnPhaseStartedAt: null,
+        activeTurnStartedAt: null,
         activeTurnCanSteer: false,
         activeTurnRound: null,
+        reasoningSummary: '',
+        currentTurnTokenUsage: null,
       };
     }),
   })),
@@ -282,6 +313,8 @@ export const useUiStore = create<UiState>((set) => ({
       ...current,
       pendingText: '',
       transientEvents: [],
+      reasoningSummary: '',
+      currentTurnTokenUsage: null,
       lastError: null,
     })),
   })),

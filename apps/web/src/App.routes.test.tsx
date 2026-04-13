@@ -517,8 +517,11 @@ describe('App routes', () => {
           activeTurnStatus: 'running',
           activeTurnPhase: 'sampling',
           activeTurnPhaseStartedAt: '2026-04-12T00:00:00.000Z',
+          activeTurnStartedAt: '2026-04-12T00:00:00.000Z',
           activeTurnCanSteer: true,
           activeTurnRound: 1,
+          reasoningSummary: '',
+          currentTurnTokenUsage: null,
           followUpQueue: [
             {
               inputId: 'input_queued_1',
@@ -938,6 +941,137 @@ describe('App routes', () => {
 
     await waitFor(() => {
       expect(screen.getByText('先看你的分数段位，')).toBeInTheDocument();
+    });
+  });
+
+  it('replaces the optimistic user message with the committed one instead of rendering both', async () => {
+    const committedMessage = {
+      id: 'evt_user_1',
+      sessionId: 's1',
+      kind: 'message' as const,
+      role: 'user' as const,
+      type: 'text' as const,
+      content: '帮我分析这个分数该怎么填志愿',
+      createdAt: '2026-04-12T00:00:01.000Z',
+    };
+    const refetchMessages = createDeferred<Response>();
+    let messageRequestCount = 0;
+    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
+
+    fetchEventSourceMock.mockImplementation(async (_input, init) => {
+      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
+      await init?.onopen?.(new Response(null, { status: 200 }));
+    });
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Streaming Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        messageRequestCount += 1;
+        if (messageRequestCount === 1) {
+          return jsonResponse({ body: [] });
+        }
+        return refetchMessages.promise;
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/sessions/s1/messages' && method === 'POST') {
+        return jsonResponse({
+          body: {
+            accepted: true,
+            dispatch: 'turn_started',
+            messageId: 'input_start_1',
+            runId: 'turn_1',
+            turnId: 'turn_1',
+            inputId: 'input_start_1',
+            runtime: {
+              sessionId: 's1',
+              activeTurn: {
+                turnId: 'turn_1',
+                kind: 'regular',
+                status: 'running',
+                phase: 'sampling',
+                phaseStartedAt: '2026-04-12T00:00:00.000Z',
+                canSteer: true,
+                startedAt: '2026-04-12T00:00:00.000Z',
+                round: 1,
+              },
+              followUpQueue: [],
+              recovery: null,
+            },
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    renderApp(['/app/session/s1']);
+
+    const textarea = await screen.findByLabelText('聊天输入框');
+    fireEvent.change(textarea, {
+      target: { value: committedMessage.content },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(committedMessage.content)).toHaveLength(1);
+    });
+
+    await act(async () => {
+      handleStreamMessage?.({
+        id: 'evt_commit_1',
+        event: 'user_message_committed',
+        data: JSON.stringify({
+          turnId: 'turn_1',
+          inputId: 'input_start_1',
+          content: committedMessage.content,
+          createdAt: committedMessage.createdAt,
+        }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText(committedMessage.content)).toHaveLength(1);
+    });
+
+    refetchMessages.resolve(jsonResponse({ body: [committedMessage] }));
+
+    await waitFor(() => {
+      expect(messageRequestCount).toBe(2);
+      expect(screen.getAllByText(committedMessage.content)).toHaveLength(1);
     });
   });
 

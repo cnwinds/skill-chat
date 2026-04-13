@@ -22,6 +22,11 @@ const createConfig = (overrides: Partial<AppConfig> = {}): AppConfig => ({
   TOOL_MAX_OUTPUT_TOKENS: 3072,
   ENABLE_ASSISTANT_TOOLS: true,
   LLM_REQUEST_TIMEOUT_MS: 1_000,
+  STREAM_MAX_RETRIES: 5,
+  STREAM_BACKOFF_BASE_MS: 1_000,
+  STREAM_BACKOFF_MULTIPLIER: 2,
+  ENABLE_TOKEN_TRACKING: true,
+  ENABLE_REASONING_EVENTS: false,
   MAX_CONCURRENT_RUNS: 5,
   RUN_TIMEOUT_MS: 120_000,
   USER_STORAGE_QUOTA_MB: 1024,
@@ -256,6 +261,75 @@ describe('OpenAIHarness', () => {
         content: '先看就业数据，',
       }),
     ]));
+  });
+
+  it('forwards reasoning deltas and token usage from response events', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(createResponsesStreamResponse([
+        {
+          event: 'response.reasoning_summary_text.delta',
+          data: {
+            type: 'response.reasoning_summary_text.delta',
+            delta: '先整理约束，',
+            summary_index: 0,
+          },
+        },
+        {
+          event: 'response.output_text.delta',
+          data: {
+            type: 'response.output_text.delta',
+            delta: '最终结论。',
+          },
+        },
+        {
+          event: 'response.completed',
+          data: {
+            type: 'response.completed',
+            response: {
+              usage: {
+                input_tokens: 120,
+                output_tokens: 45,
+                total_tokens: 165,
+              },
+            },
+          },
+        },
+      ]));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const reasoning: Array<{ content: string; summaryIndex?: number }> = [];
+    const usages: Array<{ inputTokens: number; outputTokens: number; totalTokens: number }> = [];
+    const harness = new OpenAIHarness(
+      createConfig({
+        ENABLE_REASONING_EVENTS: true,
+      }),
+      {
+        execute: vi.fn(),
+      } as never,
+      {} as never,
+    );
+
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '分析一下',
+      history: [],
+      files: [],
+      callbacks: {
+        onReasoningDelta: (event) => {
+          reasoning.push(event);
+        },
+        onTokenUsage: (usage) => {
+          usages.push(usage);
+        },
+      },
+    });
+
+    expect(result.finalText).toBe('最终结论。');
+    expect(reasoning).toEqual([{ content: '先整理约束，', summaryIndex: 0 }]);
+    expect(usages).toEqual([{ inputTokens: 120, outputTokens: 45, totalTokens: 165 }]);
+    expect(result.tokenUsage).toEqual({ inputTokens: 120, outputTokens: 45, totalTokens: 165 });
   });
 
   it('uses local web_search function tool inside the harness loop', async () => {

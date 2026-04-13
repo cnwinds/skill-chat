@@ -48,6 +48,8 @@ export const useSessionStream = (sessionId: string | null) => {
   const pushToolCall = useUiStore((state) => state.pushToolCall);
   const pushToolProgress = useUiStore((state) => state.pushToolProgress);
   const pushToolResult = useUiStore((state) => state.pushToolResult);
+  const appendReasoningDelta = useUiStore((state) => state.appendReasoningDelta);
+  const setCurrentTurnTokenUsage = useUiStore((state) => state.setCurrentTurnTokenUsage);
   const pushError = useUiStore((state) => state.pushError);
   const setStreamStatus = useUiStore((state) => state.setStreamStatus);
   const applyTurnStarted = useUiStore((state) => state.applyTurnStarted);
@@ -120,6 +122,23 @@ export const useSessionStream = (sessionId: string | null) => {
                   kind: 'thinking',
                   content: String(payload.message ?? '处理中'),
                   createdAt: new Date().toISOString(),
+                });
+                return;
+              }
+
+              if (event.event === 'reasoning_delta') {
+                appendReasoningDelta(sessionId, String(payload.content ?? ''));
+                return;
+              }
+
+              if (event.event === 'token_count') {
+                setCurrentTurnTokenUsage(sessionId, {
+                  inputTokens: typeof payload.inputTokens === 'number' ? payload.inputTokens : 0,
+                  outputTokens: typeof payload.outputTokens === 'number' ? payload.outputTokens : 0,
+                  totalTokens: typeof payload.totalTokens === 'number' ? payload.totalTokens : 0,
+                  cumulativeInputTokens: typeof payload.cumulativeInputTokens === 'number' ? payload.cumulativeInputTokens : undefined,
+                  cumulativeOutputTokens: typeof payload.cumulativeOutputTokens === 'number' ? payload.cumulativeOutputTokens : undefined,
+                  cumulativeTotalTokens: typeof payload.cumulativeTotalTokens === 'number' ? payload.cumulativeTotalTokens : undefined,
                 });
                 return;
               }
@@ -273,6 +292,27 @@ export const useSessionStream = (sessionId: string | null) => {
                     return current;
                   }
 
+                  const optimisticIndex = current.findIndex((item) => (
+                    item.kind === 'message' &&
+                    item.role === 'user' &&
+                    item.type === 'text' &&
+                    item.id.startsWith('optimistic-') &&
+                    item.content === content
+                  ));
+                  if (optimisticIndex >= 0) {
+                    const next = [...current];
+                    next[optimisticIndex] = {
+                      id: `committed-${inputId}`,
+                      sessionId,
+                      kind: 'message',
+                      role: 'user',
+                      type: 'text',
+                      content,
+                      createdAt,
+                    };
+                    return next;
+                  }
+
                   return [
                     ...current,
                     {
@@ -388,6 +428,7 @@ export const useSessionStream = (sessionId: string | null) => {
     };
   }, [
     appendTextDelta,
+    appendReasoningDelta,
     applyTurnCompleted,
     applyTurnStarted,
     applyTurnStatus,
@@ -400,6 +441,7 @@ export const useSessionStream = (sessionId: string | null) => {
     pushToolResult,
     queryClient,
     sessionId,
+    setCurrentTurnTokenUsage,
     setStreamStatus,
     token,
   ]);
@@ -416,8 +458,11 @@ export const useSessionStream = (sessionId: string | null) => {
     activeTurnStatus: null,
     activeTurnPhase: null,
     activeTurnPhaseStartedAt: null,
+    activeTurnStartedAt: null,
     activeTurnCanSteer: false,
     activeTurnRound: null,
+    reasoningSummary: '',
+    currentTurnTokenUsage: null,
     followUpQueue: [],
     recovery: null,
   };

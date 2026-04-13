@@ -103,11 +103,25 @@ export interface StoredEventBase {
   createdAt: string;
 }
 
+export interface TokenUsageStats {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface AssistantMessageMeta {
+  turnId?: string;
+  durationMs?: number;
+  tokenUsage?: TokenUsageStats;
+  reasoningSummary?: string;
+}
+
 export interface TextMessageEvent extends StoredEventBase {
   kind: 'message';
   role: MessageRole;
   type: 'text';
   content: string;
+  meta?: AssistantMessageMeta;
 }
 
 export interface ThinkingEvent extends StoredEventBase {
@@ -210,11 +224,19 @@ export interface SessionRuntimeSnapshot {
   recovery: SessionRuntimeRecovery | null;
 }
 
+export interface TurnConfig {
+  model?: string;
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  maxOutputTokens?: number;
+  webSearchMode?: 'disabled' | 'cached' | 'live';
+}
+
 export interface MessageDispatchRequest {
   content: string;
   dispatch?: MessageDispatchMode;
   turnId?: string;
   kind?: TurnKind;
+  turnConfig?: TurnConfig;
 }
 
 export interface MessageDispatchResponse {
@@ -257,6 +279,20 @@ export interface UserMessageCommittedPayload {
   content: string;
   createdAt: string;
   consumedInputIds?: string[];
+}
+
+export interface ReasoningDeltaPayload {
+  content: string;
+  summaryIndex?: number;
+}
+
+export interface TokenCountPayload {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  cumulativeInputTokens?: number;
+  cumulativeOutputTokens?: number;
+  cumulativeTotalTokens?: number;
 }
 
 export interface TurnCompletedPayload {

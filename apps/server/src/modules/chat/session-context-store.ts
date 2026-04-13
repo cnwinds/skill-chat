@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AppConfig } from '../../config/env.js';
 import { getSessionContextStatePath } from '../../core/storage/paths.js';
+import type { SessionTokenUsage } from '../../core/llm/token-tracker.js';
 
 export type SessionCompactionTrigger = 'manual' | 'auto';
 
@@ -15,11 +16,13 @@ export type SessionCompactionState = {
 export type SessionContextState = {
   version: 1;
   latestCompaction: SessionCompactionState | null;
+  tokenUsage?: SessionTokenUsage | null;
 };
 
 const emptyState = (): SessionContextState => ({
   version: 1,
   latestCompaction: null,
+  tokenUsage: null,
 });
 
 export class SessionContextStore {
@@ -45,6 +48,16 @@ export class SessionContextStore {
                 ? parsed.latestCompaction.baselineCreatedAt
                 : null,
               trigger: parsed.latestCompaction.trigger === 'manual' ? 'manual' : 'auto',
+            }
+          : null,
+        tokenUsage: parsed.tokenUsage && typeof parsed.tokenUsage === 'object'
+          ? {
+              totalInputTokens: Number(parsed.tokenUsage.totalInputTokens ?? 0),
+              totalOutputTokens: Number(parsed.tokenUsage.totalOutputTokens ?? 0),
+              turnCount: Number(parsed.tokenUsage.turnCount ?? 0),
+              lastUpdatedAt: typeof parsed.tokenUsage.lastUpdatedAt === 'string'
+                ? parsed.tokenUsage.lastUpdatedAt
+                : new Date().toISOString(),
             }
           : null,
       };

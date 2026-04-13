@@ -116,6 +116,12 @@ export const createMessageSchema = z.object({
   dispatch: z.enum(['auto', 'new_turn', 'steer', 'queue_next']).optional(),
   turnId: z.string().trim().min(1, 'turnId 不能为空').optional(),
   kind: z.enum(['regular', 'review', 'compact', 'maintenance']).optional(),
+  turnConfig: z.object({
+    model: z.string().trim().min(1).optional(),
+    reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+    webSearchMode: z.enum(['disabled', 'cached', 'live']).optional(),
+  }).optional(),
 });
 
 export const steerMessageSchema = z.object({

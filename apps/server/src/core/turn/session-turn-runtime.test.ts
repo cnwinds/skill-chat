@@ -392,4 +392,35 @@ describe('SessionTurnRuntime', () => {
       ],
     });
   });
+
+  it('does not leak unhandled rejections when a background turn fails after dispatch returns', async () => {
+    const failures: string[] = [];
+    const storage = createMemoryPersistence();
+
+    const runtime = new SessionTurnRuntime(
+      's1',
+      {
+        onInputCommitted: async () => undefined,
+        onExecuteTurn: async () => {
+          throw new Error('upstream 502');
+        },
+        onTurnFailure: async ({ error }) => {
+          failures.push((error as Error).message);
+        },
+        publish: () => undefined,
+      },
+      storage.persistence,
+    );
+
+    const started = await runtime.dispatchMessage({
+      user,
+      content: '先分析代码结构',
+    });
+
+    await flushAsync();
+
+    expect(failures).toEqual(['upstream 502']);
+    expect(runtime.getSnapshot().activeTurn).toBeNull();
+    await expect(started.task).rejects.toThrow('upstream 502');
+  });
 });

@@ -25,6 +25,74 @@ describe('MessageItem', () => {
     expect(screen.getByText('你好，SkillChat')).toBeInTheDocument();
   });
 
+  it('renders markdown tables inside assistant messages', () => {
+    const event: TextMessageEvent = {
+      id: 'evt_table_1',
+      sessionId: 's1',
+      kind: 'message',
+      role: 'assistant',
+      type: 'text',
+      content: [
+        '| 专业 | 城市 |',
+        '| --- | --- |',
+        '| 计算机 | 上海 |',
+        '| 金融 | 深圳 |',
+      ].join('\n'),
+      createdAt: new Date().toISOString(),
+    };
+
+    render(<MessageItem event={event} />);
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '专业' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '城市' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '计算机' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '深圳' })).toBeInTheDocument();
+  });
+
+  it('renders assistant token usage and duration metadata under the reply', () => {
+    const event: TextMessageEvent = {
+      id: 'evt_meta_1',
+      sessionId: 's1',
+      kind: 'message',
+      role: 'assistant',
+      type: 'text',
+      content: '这里是最终建议。',
+      createdAt: new Date().toISOString(),
+      meta: {
+        durationMs: 4200,
+        tokenUsage: {
+          inputTokens: 120,
+          outputTokens: 45,
+          totalTokens: 165,
+        },
+      },
+    };
+
+    render(<MessageItem event={event} />);
+    expect(screen.getByText('165 tokens · 输入 120 · 输出 45 · 4.2s')).toBeInTheDocument();
+  });
+
+  it('renders reasoning summary for pending assistant output', () => {
+    render(
+      <MessageItem
+        event={{ kind: 'pending_text', content: '先给你结论。' }}
+        assistantMeta={{
+          reasoningSummary: '先看分数线，再看就业密度。',
+          tokenUsage: {
+            inputTokens: 120,
+            outputTokens: 30,
+            totalTokens: 150,
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText('推理摘要')).toBeInTheDocument();
+    expect(screen.getByText('先看分数线，再看就业密度。')).toBeInTheDocument();
+    expect(screen.getByText('150 tokens · 输入 120 · 输出 30')).toBeInTheDocument();
+  });
+
   it('copies message content from the hover action button', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(window.navigator, 'clipboard', {

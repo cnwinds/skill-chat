@@ -8,6 +8,34 @@ export type AssistantToolDefinition = {
   executionKind: 'service' | 'runner';
 };
 
+export type ToolRuntimeCallbacks = {
+  onToolCall?: (event: {
+    callId: string;
+    tool: string;
+    arguments: Record<string, unknown>;
+    hidden?: boolean;
+    meta?: Record<string, unknown>;
+  }) => Promise<void> | void;
+  onToolProgress?: (event: {
+    callId: string;
+    tool: string;
+    message: string;
+    percent?: number;
+    status?: string;
+    hidden?: boolean;
+    meta?: Record<string, unknown>;
+  }) => Promise<void> | void;
+  onToolResult?: (event: {
+    callId: string;
+    tool: string;
+    summary: string;
+    content?: string;
+    hidden?: boolean;
+    meta?: Record<string, unknown>;
+  }) => Promise<void> | void;
+  onArtifact?: (file: import('@skillchat/shared').FileRecord) => Promise<void> | void;
+};
+
 const createServiceTool = (tool: Omit<AssistantToolDefinition, 'executionKind'>): AssistantToolDefinition => ({
   ...tool,
   executionKind: 'service',

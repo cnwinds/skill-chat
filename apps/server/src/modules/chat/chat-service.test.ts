@@ -58,6 +58,11 @@ const testConfig = (): AppConfig => ({
   TOOL_MAX_OUTPUT_TOKENS: 3072,
   ENABLE_ASSISTANT_TOOLS: true,
   LLM_REQUEST_TIMEOUT_MS: 1000,
+  STREAM_MAX_RETRIES: 5,
+  STREAM_BACKOFF_BASE_MS: 1000,
+  STREAM_BACKOFF_MULTIPLIER: 2,
+  ENABLE_TOKEN_TRACKING: true,
+  ENABLE_REASONING_EVENTS: false,
   MAX_CONCURRENT_RUNS: 5,
   RUN_TIMEOUT_MS: 120000,
   USER_STORAGE_QUOTA_MB: 1024,
@@ -178,6 +183,11 @@ describe('ChatService harness-only flow', () => {
         }) => Promise<void> | void;
         onArtifact?: (file: Record<string, unknown>) => Promise<void> | void;
         onTextDelta?: (content: string) => Promise<void> | void;
+        onTokenUsage?: (usage: {
+          inputTokens: number;
+          outputTokens: number;
+          totalTokens: number;
+        }) => Promise<void> | void;
       };
     }) => {
       expect(availableSkills?.map((item) => item.name)).toEqual(['zhangxuefeng-perspective']);
@@ -213,7 +223,20 @@ describe('ChatService harness-only flow', () => {
       });
       await callbacks?.onTextDelta?.('先看数据。');
       await callbacks?.onTextDelta?.('再给结论。');
-      return { finalText: '先看数据。再给结论。', roundsUsed: 1 };
+      await callbacks?.onTokenUsage?.({
+        inputTokens: 120,
+        outputTokens: 45,
+        totalTokens: 165,
+      });
+      return {
+        finalText: '先看数据。再给结论。',
+        roundsUsed: 1,
+        tokenUsage: {
+          inputTokens: 120,
+          outputTokens: 45,
+          totalTokens: 165,
+        },
+      };
     });
 
     const { service, storedEvents, publish } = createService({
@@ -240,6 +263,15 @@ describe('ChatService harness-only flow', () => {
       kind: 'message',
       role: 'assistant',
       content: '先看数据。再给结论。',
+      meta: {
+        turnId: expect.any(String),
+        durationMs: expect.any(Number),
+        tokenUsage: {
+          inputTokens: 120,
+          outputTokens: 45,
+          totalTokens: 165,
+        },
+      },
     });
     expect(publish).toHaveBeenCalledWith('s1', expect.objectContaining({
       event: 'file_ready',

@@ -1,4 +1,5 @@
 import { runWithInactivityTimeout } from './inactivity-timeout.js';
+import { HarnessError } from './harness-error.js';
 
 type JsonObject = Record<string, unknown>;
 
@@ -75,15 +76,33 @@ const toErrorMessage = (value: unknown) => {
   return '';
 };
 
+const toRetryDelayMs = (retryAfter: string | null) => {
+  if (!retryAfter) {
+    return undefined;
+  }
+
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+
+  const retryDate = Date.parse(retryAfter);
+  if (Number.isFinite(retryDate)) {
+    return Math.max(0, retryDate - Date.now());
+  }
+
+  return undefined;
+};
+
 const maybeThrowStreamError = (event: OpenAIResponsesStreamEvent) => {
   if (event.event === 'error') {
     const message = toErrorMessage(event.data) || 'OpenAI Responses stream failed';
-    throw new Error(message);
+    throw new HarnessError('stream_disconnected', message, true);
   }
 
   if (isRecord(event.data) && typeof event.data.type === 'string' && /failed|error/.test(event.data.type)) {
     const message = toErrorMessage(event.data) || `OpenAI Responses event failed: ${event.data.type}`;
-    throw new Error(message);
+    throw new HarnessError('stream_disconnected', message, true);
   }
 };
 
@@ -114,11 +133,22 @@ export async function* streamOpenAIResponsesEvents(options: StreamResponsesOptio
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`OpenAI Responses request failed: ${response.status} ${body}`.trim());
+    const message = `OpenAI Responses request failed: ${response.status} ${body}`.trim();
+    const retryDelayMs = toRetryDelayMs(response.headers.get('retry-after'));
+    if (response.status === 429) {
+      throw new HarnessError('usage_limit_reached', message, true, response.status, retryDelayMs);
+    }
+    if (response.status >= 500 || response.status === 408) {
+      throw new HarnessError('stream_disconnected', message, true, response.status, retryDelayMs, 'http');
+    }
+    if (response.status === 400 && /context|token/i.test(body)) {
+      throw new HarnessError('context_window_exceeded', message, true, response.status);
+    }
+    throw new HarnessError('unknown', message, false, response.status);
   }
 
   if (!response.body) {
-    throw new Error('OpenAI Responses response body is empty');
+    throw new HarnessError('stream_disconnected', 'OpenAI Responses response body is empty', true);
   }
 
   const reader = response.body.getReader();

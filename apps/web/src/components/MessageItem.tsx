@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import type { FileRecord, StoredEvent } from '@skillchat/shared';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import type { AssistantMessageMeta, FileRecord, StoredEvent, TokenUsageStats } from '@skillchat/shared';
 import { cn, formatBytes } from '../lib/utils';
 import type { ToolTraceDisplayEvent } from '../lib/timeline';
 
@@ -9,6 +10,7 @@ type Props = {
     | StoredEvent
     | ToolTraceDisplayEvent
     | { kind: 'pending_text'; content: string };
+  assistantMeta?: AssistantMessageMeta;
   onDownload?: (file: FileRecord) => void;
   downloading?: boolean;
   canExpandToolTrace?: boolean;
@@ -114,14 +116,75 @@ const getThinkingBubbleLabel = (content: string) => (
     : '思考中'
 );
 
+const formatTokenUsage = (tokenUsage?: TokenUsageStats) => {
+  if (!tokenUsage) {
+    return '';
+  }
+  return `${tokenUsage.totalTokens} tokens · 输入 ${tokenUsage.inputTokens} · 输出 ${tokenUsage.outputTokens}`;
+};
+
+const formatDurationMs = (durationMs?: number) => {
+  if (!durationMs || durationMs <= 0) {
+    return '';
+  }
+
+  if (durationMs < 1_000) {
+    return `${durationMs}ms`;
+  }
+
+  if (durationMs < 60_000) {
+    return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
+  }
+
+  const totalSeconds = Math.round(durationMs / 1_000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+};
+
+const AssistantMetaFooter = ({ meta }: { meta?: AssistantMessageMeta }) => {
+  const metrics = [
+    formatTokenUsage(meta?.tokenUsage),
+    formatDurationMs(meta?.durationMs),
+  ].filter(Boolean);
+
+  if (metrics.length === 0 && !meta?.reasoningSummary) {
+    return null;
+  }
+
+  return (
+    <div className="assistant-meta">
+      {meta?.reasoningSummary ? (
+        <div className="assistant-meta-reasoning">
+          <strong>推理摘要</strong>
+          <span>{meta.reasoningSummary}</span>
+        </div>
+      ) : null}
+      {metrics.length > 0 ? (
+        <div className="assistant-meta-metrics">{metrics.join(' · ')}</div>
+      ) : null}
+    </div>
+  );
+};
+
+const markdownComponents: Components = {
+  table: ({ node: _node, ...props }) => (
+    <div className="message-table-shell">
+      <table className="message-markdown-table" {...props} />
+    </div>
+  ),
+};
+
 const CopyableMessageBubble = ({
   bubbleClassName,
   content,
   markdown,
+  assistantMeta,
 }: {
   bubbleClassName: string;
   content: string;
   markdown: string;
+  assistantMeta?: AssistantMessageMeta;
 }) => {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
@@ -170,8 +233,16 @@ const CopyableMessageBubble = ({
       >
         {buttonLabel}
       </button>
-      <div className={bubbleClassName}>
-        <ReactMarkdown>{markdown}</ReactMarkdown>
+      <div className="message-bubble-stack">
+        <div className={bubbleClassName}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={markdownComponents}
+          >
+            {markdown}
+          </ReactMarkdown>
+        </div>
+        <AssistantMetaFooter meta={assistantMeta} />
       </div>
     </div>
   );
@@ -206,7 +277,7 @@ const ThinkingBubble = ({ createdAt, content }: { createdAt: string; content: st
   );
 };
 
-export const MessageItem = ({ event, onDownload, downloading = false, canExpandToolTrace = true }: Props) => {
+export const MessageItem = ({ event, assistantMeta, onDownload, downloading = false, canExpandToolTrace = true }: Props) => {
   if (event.kind === 'pending_text') {
     return (
       <article className="message-row assistant">
@@ -214,6 +285,7 @@ export const MessageItem = ({ event, onDownload, downloading = false, canExpandT
           bubbleClassName="message-bubble assistant pending"
           content={event.content}
           markdown={event.content}
+          assistantMeta={assistantMeta}
         />
       </article>
     );
@@ -226,6 +298,7 @@ export const MessageItem = ({ event, onDownload, downloading = false, canExpandT
           bubbleClassName={cn('message-bubble', event.role === 'user' ? 'user' : 'assistant')}
           content={event.content}
           markdown={event.content}
+          assistantMeta={event.role === 'assistant' ? event.meta : undefined}
         />
       </article>
     );

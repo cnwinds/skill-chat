@@ -4,6 +4,7 @@ import type {
   MessageDispatchResult,
   SessionRuntimeRecovery,
   SessionRuntimeSnapshot,
+  TurnConfig,
   TurnKind,
   TurnPhase,
   TurnStatus,
@@ -21,6 +22,7 @@ export type RuntimeInput = {
   createdAt: string;
   source: 'direct' | 'steer' | 'queued';
   requestedKind: TurnKind;
+  turnConfig?: TurnConfig;
   consumedInputIds?: string[];
 };
 
@@ -46,6 +48,7 @@ export type TurnDispatchArgs = {
   mode?: MessageDispatchMode;
   turnId?: string;
   kind?: TurnKind;
+  turnConfig?: TurnConfig;
 };
 
 export type TurnDispatchResult = {
@@ -93,6 +96,7 @@ export type PersistedRuntimeInput = {
   createdAt: string;
   source: 'steer' | 'queued';
   requestedKind: TurnKind;
+  turnConfig?: TurnConfig;
 };
 
 export type PersistedActiveTurnState = {

@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import type {
+  AssistantMessageMeta,
   FollowUpQueueMutationResponse,
   MessageDispatchRequest,
   MessageDispatchResponse,
@@ -17,9 +18,13 @@ import { SessionTurnRegistry } from '../../core/turn/session-turn-registry.js';
 import { SessionTurnRuntime } from '../../core/turn/session-turn-runtime.js';
 import { FileRuntimePersistence } from '../../core/turn/turn-persistence.js';
 import type { RuntimeInput, TurnExecutionContext } from '../../core/turn/turn-types.js';
+import type { TurnTaskExecutionArgs } from '../../core/turn/turn-task.js';
 import type { StreamHub } from '../../core/stream/stream-hub.js';
 import { MessageStore } from '../../core/storage/message-store.js';
 import { getSessionTurnRuntimePath } from '../../core/storage/paths.js';
+import { RegularTurnTask } from '../../core/turn/regular-turn-task.js';
+import { CompactTurnTask } from '../../core/turn/compact-turn-task.js';
+import { accumulateSessionTokenUsage } from '../../core/llm/token-tracker.js';
 import type { RegisteredSkill, SkillRegistry } from '../skills/skill-registry.js';
 import { FileService } from '../files/file-service.js';
 import { SessionService } from '../sessions/session-service.js';
@@ -95,6 +100,7 @@ export class ChatService {
       mode: input.dispatch,
       turnId: input.turnId,
       kind: input.kind,
+      turnConfig: input.turnConfig,
     });
   }
 
@@ -159,73 +165,38 @@ export class ChatService {
   }
 
   private async executeTurn(sessionId: string, execution: TurnExecutionContext) {
-    const { user } = execution;
-    let currentInput = execution.initialInput;
-    let nextRound = 1;
+    const args: TurnTaskExecutionArgs = {
+      sessionId,
+      userId: execution.user.id,
+      execution,
+      input: execution.initialInput,
+      history: await this.messageStore.readEvents(execution.user.id, sessionId),
+      contextState: await this.sessionContextStore.load(execution.user.id, sessionId),
+      files: this.fileService.getFileContext(execution.user.id, sessionId),
+    };
+    const task = this.resolveTurnTask(execution.kind);
+    await task.execute(args);
+  }
 
-    while (true) {
-      const session = this.sessionService.requireOwned(user.id, sessionId);
-      let history = await this.messageStore.readEvents(user.id, sessionId);
-      let contextState = await this.sessionContextStore.load(user.id, sessionId);
-      execution.throwIfAborted();
-      const files = this.fileService.getFileContext(user.id, sessionId);
-
-      if (execution.kind === 'compact') {
-        await this.executeCompactTurn({
-          sessionId,
-          userId: user.id,
-          history,
-          contextState,
-          execution,
-          input: currentInput,
-        });
-        return;
-      }
-
-      if (execution.kind === 'regular') {
-        contextState = await this.maybeAutoCompactHistory({
-          sessionId,
-          userId: user.id,
-          history,
-          contextState,
-          execution,
-          input: currentInput,
-        });
-        history = await this.messageStore.readEvents(user.id, sessionId);
-      }
-
-      const { roundsUsed } = await this.executeTurnRound({
-        sessionId,
-        session,
-        history,
-        contextState,
-        files,
-        execution,
-        input: currentInput,
-        startingRound: nextRound,
+  private resolveTurnTask(kind: TurnExecutionContext['kind']) {
+    if (kind === 'compact') {
+      return new CompactTurnTask({
+        executeCompactTurn: async (args) => this.executeCompactTurn(args),
       });
-
-      nextRound += roundsUsed;
-      execution.throwIfAborted();
-      execution.updatePhase('finalizing');
-      execution.setCanSteer(false);
-
-      if (execution.kind !== 'regular') {
-        return;
-      }
-
-      const pendingInputs = await execution.drainPendingInputs();
-      if (pendingInputs.length === 0) {
-        return;
-      }
-
-      currentInput = this.mergeContinuationInputs(pendingInputs);
     }
+
+    return new RegularTurnTask({
+      maybeAutoCompactHistory: async (args) => this.maybeAutoCompactHistory(args),
+      readHistory: async (userId, sessionId) => this.messageStore.readEvents(userId, sessionId),
+      getFiles: (userId, sessionId) => this.fileService.getFileContext(userId, sessionId),
+      executeTurnRound: async (args) => this.executeTurnRound(args),
+      mergeContinuationInputs: (inputs) => this.mergeContinuationInputs(inputs),
+      evaluateStopCondition: async () => ({ shouldContinue: false as const }),
+    });
   }
 
   private async executeTurnRound(args: {
     sessionId: string;
-    session: ReturnType<SessionService['requireOwned']>;
     history: StoredEvent[];
     contextState: Awaited<ReturnType<SessionContextStore['load']>>;
     files: ReturnType<FileService['getFileContext']>;
@@ -233,9 +204,12 @@ export class ChatService {
     input: RuntimeInput;
     startingRound: number;
   }) {
-    const { sessionId, session, history, contextState, files, execution, input, startingRound } = args;
+    const { sessionId, history, contextState, files, execution, input, startingRound } = args;
     const { user } = execution;
+    const session = this.sessionService.requireOwned(user.id, sessionId);
     const availableSkills = this.resolveSessionSkills(session.activeSkills ?? []);
+    const samplingStartedAt = Date.now();
+    let latestReasoningSummary = '';
 
     execution.setRound(startingRound);
     execution.updatePhase('sampling');
@@ -254,6 +228,7 @@ export class ChatService {
       signal: execution.signal,
       drainPendingInputs: async () => execution.drainPendingInputs(),
       startingRound,
+      turnConfig: input.turnConfig,
       callbacks: {
         onRoundStart: (round) => {
           execution.throwIfAborted();
@@ -338,6 +313,37 @@ export class ChatService {
             },
           });
         },
+        onReasoningDelta: async ({ content, summaryIndex }) => {
+          execution.throwIfAborted();
+          latestReasoningSummary += content;
+          this.publish(sessionId, {
+            id: createEventId(),
+            event: 'reasoning_delta',
+            data: {
+              content,
+              summaryIndex,
+            },
+          });
+        },
+        onTokenUsage: async (usage) => {
+          execution.throwIfAborted();
+          const state = await this.sessionContextStore.load(user.id, sessionId);
+          const cumulative = accumulateSessionTokenUsage(state.tokenUsage ?? null, usage, now());
+          await this.sessionContextStore.save(user.id, sessionId, {
+            ...state,
+            tokenUsage: cumulative,
+          });
+          this.publish(sessionId, {
+            id: createEventId(),
+            event: 'token_count',
+            data: {
+              ...usage,
+              cumulativeInputTokens: cumulative.totalInputTokens,
+              cumulativeOutputTokens: cumulative.totalOutputTokens,
+              cumulativeTotalTokens: cumulative.totalInputTokens + cumulative.totalOutputTokens,
+            },
+          });
+        },
         onContextCompactionStart: async () => {
           execution.throwIfAborted();
           execution.updatePhase('sampling');
@@ -349,7 +355,15 @@ export class ChatService {
 
     execution.throwIfAborted();
     if (finalText.trim()) {
-      await this.persistTextMessage(user.id, sessionId, finalText, 'assistant');
+      const messageMeta: AssistantMessageMeta = {
+        turnId: execution.turnId,
+        durationMs: Math.max(0, Date.now() - samplingStartedAt),
+        tokenUsage: result.tokenUsage,
+      };
+      if (latestReasoningSummary.trim()) {
+        messageMeta.reasoningSummary = latestReasoningSummary.trim();
+      }
+      await this.persistTextMessage(user.id, sessionId, finalText, 'assistant', undefined, messageMeta);
     }
     return {
       roundsUsed: result.roundsUsed,
@@ -369,6 +383,7 @@ export class ChatService {
       history: args.history,
       currentMessage: args.input.content,
       contextState: args.contextState,
+      injectionStrategy: 'prepend',
     });
 
     if (!shouldAutoCompactHistory({ config: this.config, buildResult })) {
@@ -401,19 +416,13 @@ export class ChatService {
         baselineCreatedAt,
         trigger: 'auto' as const,
       },
+      tokenUsage: args.contextState.tokenUsage ?? null,
     };
     await this.sessionContextStore.save(args.userId, args.sessionId, nextState);
     return nextState;
   }
 
-  private async executeCompactTurn(args: {
-    sessionId: string;
-    userId: string;
-    history: StoredEvent[];
-    contextState: Awaited<ReturnType<SessionContextStore['load']>>;
-    execution: TurnExecutionContext;
-    input: RuntimeInput;
-  }) {
+  private async executeCompactTurn(args: TurnTaskExecutionArgs) {
     const historyBeforeCompactCommand = args.history.filter((event) => event.createdAt < args.input.createdAt);
     args.execution.throwIfAborted();
     args.execution.updatePhase('sampling');
@@ -439,6 +448,7 @@ export class ChatService {
         baselineCreatedAt: replyCreatedAt,
         trigger: 'manual',
       },
+      tokenUsage: args.contextState.tokenUsage ?? null,
     });
 
     this.publish(args.sessionId, {
@@ -479,6 +489,7 @@ export class ChatService {
     content: string,
     role: MessageRole,
     createdAt = now(),
+    meta?: AssistantMessageMeta,
   ) {
     const event: TextMessageEvent = {
       id: createEventId(),
@@ -488,6 +499,7 @@ export class ChatService {
       type: 'text',
       content,
       createdAt,
+      meta,
     };
     await this.messageStore.appendEvent(userId, sessionId, event);
     await this.sessionService.touch(userId, sessionId);

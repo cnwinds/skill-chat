@@ -2,7 +2,12 @@ import type { SessionFileContext, StoredEvent } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
 import type { RegisteredSkill } from '../skills/skill-registry.js';
 import type { SessionContextState } from './session-context-store.js';
-import { buildDynamicFileSection, buildResponsesHistoryInput, type ResponsesMessageInput } from './openai-harness-context.js';
+import {
+  buildDynamicFileSection,
+  buildResponsesHistoryInput,
+  type ContextInjectionStrategy,
+  type ResponsesMessageInput,
+} from './openai-harness-context.js';
 
 const toSessionToolPath = (relativePath: string) => {
   const normalized = relativePath.replace(/\\/g, '/');
@@ -55,12 +60,8 @@ export const buildOpenAIHarnessInstructions = (args: {
   availableSkills: RegisteredSkill[];
 }) => {
   const today = new Date().toISOString().slice(0, 10);
-
-  return [
-    '## Role',
-    '你是 SkillChat 的中文智能体。让模型承担智能判断，程序只负责提供工具和执行流程。',
-    '',
-    '## Working Style',
+  const roleDescription = '你是 SkillChat 的中文智能体。让模型承担智能判断，程序只负责提供工具和执行流程。';
+  const workingStyle = [
     '- 你自己决定是否需要读文件、使用 skill、联网搜索或生成产物；不要把这些流程外包给用户。',
     '- Skill 是本地说明书，不是特殊流程节点。需要使用某个 skill 时，先读取 `SKILL.md`，再按需读取它指向的具体文件。',
     '- 只有在会话已启用某个 skill 时，才可以读取它的说明或使用它相关的脚本与资源。',
@@ -68,15 +69,31 @@ export const buildOpenAIHarnessInstructions = (args: {
     '- 如果工具已经返回足够信息，就直接组织结论，不要继续堆叠无意义的调用。',
     '- 不要原样转储工具输出、网页正文或大段文件原文；把它们整理成自然答复。',
     '- 如果已经拿到足够信息，就直接给出结论，不要为了显得像 agent 而额外调用工具。',
+  ].join('\n');
+
+  const template = [
+    '## Role',
+    '{role_description}',
+    '',
+    '## Working Style',
+    '{working_style}',
     '',
     '## Runtime Context',
-    `当前日期：${today}`,
-    `工作区根目录：${args.config.CWD}`,
+    '当前日期：{today}',
+    '工作区根目录：{cwd}',
     '',
-    formatFilesSection(args.files),
+    '{files_section}',
     '',
-    formatSkillsSection(args.availableSkills),
-  ].filter(Boolean).join('\n');
+    '{skills_section}',
+  ].join('\n');
+
+  return template
+    .replace('{role_description}', roleDescription)
+    .replace('{working_style}', workingStyle)
+    .replace('{today}', today)
+    .replace('{cwd}', args.config.CWD)
+    .replace('{files_section}', formatFilesSection(args.files))
+    .replace('{skills_section}', formatSkillsSection(args.availableSkills));
 };
 
 export const toResponsesHarnessInput = (
@@ -85,6 +102,7 @@ export const toResponsesHarnessInput = (
   options: {
     config?: AppConfig;
     contextState?: SessionContextState | null;
+    injectionStrategy?: ContextInjectionStrategy;
   } = {},
 ): ResponsesMessageInput[] => {
   return buildResponsesHistoryInput({
@@ -92,5 +110,6 @@ export const toResponsesHarnessInput = (
     history,
     currentMessage,
     contextState: options.contextState,
+    injectionStrategy: options.injectionStrategy,
   }).input;
 };

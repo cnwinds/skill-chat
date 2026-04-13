@@ -331,6 +331,12 @@ a {
   max-width: 100%;
 }
 
+.message-bubble-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .message-copy-button {
   position: absolute;
   top: -10px;
@@ -393,6 +399,44 @@ a {
   margin-top: 0.15em;
 }
 
+.message-table-shell {
+  width: 100%;
+  overflow-x: auto;
+  margin: 0.5em 0;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+
+.message-markdown-table {
+  width: 100%;
+  min-width: max-content;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.message-markdown-table th,
+.message-markdown-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-markdown-table thead th {
+  background: color-mix(in srgb, var(--surface-soft) 85%, white 15%);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.message-markdown-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--surface-soft) 55%, transparent);
+}
+
+.message-markdown-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .message-bubble.user {
   background: linear-gradient(135deg, rgba(239, 125, 50, 0.95), rgba(245, 155, 63, 0.95));
   color: #17171a;
@@ -428,6 +472,37 @@ a {
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
+}
+
+.assistant-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 4px;
+  color: var(--text-soft);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.assistant-meta-reasoning {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.assistant-meta-reasoning strong {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-2);
+}
+
+.assistant-meta-metrics {
+  padding: 0 2px;
 }
 
 .status-card,

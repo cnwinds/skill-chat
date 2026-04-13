@@ -4,6 +4,8 @@ export const DEFAULT_SESSION_TITLE = '新会话';
 
 export const SSE_EVENT_NAMES = [
   'text_delta',
+  'reasoning_delta',
+  'token_count',
   'thinking',
   'tool_start',
   'tool_progress',

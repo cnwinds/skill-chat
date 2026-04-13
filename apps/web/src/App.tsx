@@ -1534,6 +1534,13 @@ const SessionWorkspace = () => {
                     {stream.pendingText ? (
                       <MessageItem
                         event={{ kind: 'pending_text', content: stream.pendingText }}
+                        assistantMeta={{
+                          durationMs: stream.activeTurnStartedAt
+                            ? Math.max(0, Date.now() - new Date(stream.activeTurnStartedAt).getTime())
+                            : undefined,
+                          tokenUsage: stream.currentTurnTokenUsage ?? undefined,
+                          reasoningSummary: stream.reasoningSummary || undefined,
+                        }}
                         onDownload={(file) => downloadMutation.mutate(file)}
                         downloading={downloadMutation.isPending}
                         canExpandToolTrace={user.role === 'admin'}
