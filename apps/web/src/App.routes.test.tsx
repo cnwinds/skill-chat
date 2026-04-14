@@ -944,6 +944,170 @@ describe('App routes', () => {
     });
   });
 
+  it('keeps the streaming assistant footer stable after turn completion and suppresses the duplicate final reply', async () => {
+    const finalAssistantMessage = {
+      id: 'evt_assistant_1',
+      sessionId: 's1',
+      kind: 'message' as const,
+      role: 'assistant' as const,
+      type: 'text' as const,
+      content: '最终建议',
+      createdAt: '2026-04-12T00:00:04.200Z',
+      meta: {
+        durationMs: 4200,
+        tokenUsage: {
+          inputTokens: 120,
+          outputTokens: 45,
+          totalTokens: 165,
+        },
+      },
+    };
+    const refetchMessages = createDeferred<Response>();
+    let messageRequestCount = 0;
+    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
+
+    fetchEventSourceMock.mockImplementation(async (_input, init) => {
+      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
+      await init?.onopen?.(new Response(null, { status: 200 }));
+    });
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Streaming Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        messageRequestCount += 1;
+        if (messageRequestCount === 1) {
+          return jsonResponse({ body: [] });
+        }
+        return refetchMessages.promise;
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/sessions/s1/messages' && method === 'POST') {
+        return jsonResponse({
+          body: {
+            accepted: true,
+            dispatch: 'turn_started',
+            messageId: 'input_start_1',
+            runId: 'turn_1',
+            turnId: 'turn_1',
+            inputId: 'input_start_1',
+            runtime: {
+              sessionId: 's1',
+              activeTurn: {
+                turnId: 'turn_1',
+                kind: 'regular',
+                status: 'running',
+                phase: 'sampling',
+                phaseStartedAt: '2026-04-12T00:00:00.000Z',
+                canSteer: true,
+                startedAt: '2026-04-12T00:00:00.000Z',
+                round: 1,
+              },
+              followUpQueue: [],
+              recovery: null,
+            },
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    renderApp(['/app/session/s1']);
+
+    const textarea = await screen.findByLabelText('聊天输入框');
+    fireEvent.change(textarea, {
+      target: { value: '帮我给个结论' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await act(async () => {
+      handleStreamMessage?.({
+        id: 'evt_delta_1',
+        event: 'text_delta',
+        data: JSON.stringify({
+          content: finalAssistantMessage.content,
+        }),
+      });
+      handleStreamMessage?.({
+        id: 'evt_token_1',
+        event: 'token_count',
+        data: JSON.stringify({
+          inputTokens: 120,
+          outputTokens: 45,
+          totalTokens: 165,
+        }),
+      });
+    });
+
+    expect(await screen.findByText(/165 \(120\/45\) tokens/)).toBeInTheDocument();
+
+    await act(async () => {
+      handleStreamMessage?.({
+        id: 'evt_complete_1',
+        event: 'turn_completed',
+        data: JSON.stringify({
+          turnId: 'turn_1',
+          kind: 'regular',
+          status: 'completed',
+        }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/165 \(120\/45\) tokens/)).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      handleStreamMessage?.({
+        id: 'evt_done_1',
+        event: 'done',
+        data: JSON.stringify({}),
+      });
+    });
+
+    refetchMessages.resolve(jsonResponse({ body: [finalAssistantMessage] }));
+
+    await waitFor(() => {
+      expect(messageRequestCount).toBe(2);
+      expect(screen.getAllByText(finalAssistantMessage.content)).toHaveLength(1);
+      expect(screen.getAllByText(/165 \(120\/45\) tokens/)).toHaveLength(1);
+    });
+  });
+
   it('replaces the optimistic user message with the committed one instead of rendering both', async () => {
     const committedMessage = {
       id: 'evt_user_1',

@@ -120,7 +120,7 @@ const formatTokenUsage = (tokenUsage?: TokenUsageStats) => {
   if (!tokenUsage) {
     return '';
   }
-  return `${tokenUsage.totalTokens} tokens · 输入 ${tokenUsage.inputTokens} · 输出 ${tokenUsage.outputTokens}`;
+  return `${tokenUsage.totalTokens} (${tokenUsage.inputTokens}/${tokenUsage.outputTokens}) tokens`;
 };
 
 const formatDurationMs = (durationMs?: number) => {

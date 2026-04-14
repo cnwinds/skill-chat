@@ -12,12 +12,14 @@
 
 - Web UI：`http://localhost:7070`
 
+以下文档里的 `7070` 都以 `.env.docker.example` 的默认值为准；如果你把 `.env.docker` 里的 `WEB_PORT` 改成别的端口，例如 `8080`，下面的访问与验证命令也要同步替换。
+
 ## 1. 准备环境变量
 
 先复制模板：
 
 ```bash
-cp .env.example .env
+cp .env.docker.example .env.docker
 ```
 
 生产环境至少检查这些变量：
@@ -25,6 +27,7 @@ cp .env.example .env
 ```dotenv
 NODE_ENV=production
 PORT=3000
+WEB_PORT=7070
 WEB_ORIGIN=http://localhost:7070
 JWT_SECRET=请替换成长度足够的随机字符串
 OPENAI_API_KEY=
@@ -34,7 +37,7 @@ OPENAI_API_KEY=
 
 - `WEB_ORIGIN` 要改成你的实际访问地址，例如 `https://chat.example.com`。
 - `OPENAI_API_KEY` 是必填项；当前版本只保留 OpenAI harness 单流程，不再提供 Anthropic / rule-based 回退链路。
-- `WEB_PORT` 不是应用变量，而是 `docker compose` 的端口映射变量。默认是 `7070`，如果要改成 `80`，可以在启动前执行 `export WEB_PORT=80`。
+- `WEB_PORT` 不是应用变量，而是 `docker compose` 的端口映射变量。现在统一写在 `.env.docker` 里，不再依赖临时 `export`。
 
 ## 1.1 国内网络镜像源加速
 
@@ -59,25 +62,25 @@ export PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 然后再启动：
 
 ```bash
-docker compose up -d --build
+docker compose --env-file .env.docker up -d --build
 ```
 
 ## 2. 一键启动
 
 ```bash
-docker compose up -d --build
+docker compose --env-file .env.docker up -d --build
 ```
 
 查看状态：
 
 ```bash
-docker compose ps
+docker compose --env-file .env.docker ps
 ```
 
 查看日志：
 
 ```bash
-docker compose logs -f
+docker compose --env-file .env.docker logs -f
 ```
 
 ## 3. 验证部署
@@ -91,7 +94,7 @@ curl -I http://127.0.0.1:7070
 验证后端健康检查：
 
 ```bash
-docker compose exec api curl -fsS http://127.0.0.1:3000/health
+docker compose --env-file .env.docker exec api curl -fsS http://127.0.0.1:3000/health
 ```
 
 验证前端反代到后端：
@@ -105,19 +108,19 @@ curl -fsS http://127.0.0.1:7070/api/system/status
 停止服务：
 
 ```bash
-docker compose down
+docker compose --env-file .env.docker down
 ```
 
 停止并删除数据卷：
 
 ```bash
-docker compose down -v
+docker compose --env-file .env.docker down -v
 ```
 
 重新构建并启动：
 
 ```bash
-docker compose up -d --build
+docker compose --env-file .env.docker up -d --build
 ```
 
 ## 5. 数据位置
@@ -141,5 +144,5 @@ docker compose up -d --build
 如果你前面还有一层 Nginx、Caddy 或云负载均衡：
 
 - 外层代理只需要把流量转发到本机 `7070`。
-- 同时把 `.env` 里的 `WEB_ORIGIN` 改成最终对外域名。
+- 同时把 `.env.docker` 里的 `WEB_ORIGIN` 改成最终对外域名。
 - `/api/sessions/:id/stream` 是 SSE，外层代理不要开启强缓存和响应缓冲。

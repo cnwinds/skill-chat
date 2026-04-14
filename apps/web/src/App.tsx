@@ -1193,6 +1193,20 @@ const SessionWorkspace = () => {
       stream.status,
     ],
   );
+  const shouldRenderPendingText = useMemo(() => {
+    if (!stream.pendingText) {
+      return false;
+    }
+
+    for (let index = timeline.length - 1; index >= 0; index -= 1) {
+      const item = timeline[index];
+      if (item?.kind === 'message' && item.role === 'assistant') {
+        return item.content !== stream.pendingText;
+      }
+    }
+
+    return true;
+  }, [stream.pendingText, timeline]);
 
   useEffect(() => {
     const target = messageListRef.current;
@@ -1531,7 +1545,7 @@ const SessionWorkspace = () => {
                         canExpandToolTrace={user.role === 'admin'}
                       />
                     ))}
-                    {stream.pendingText ? (
+                    {shouldRenderPendingText ? (
                       <MessageItem
                         event={{ kind: 'pending_text', content: stream.pendingText }}
                         assistantMeta={{

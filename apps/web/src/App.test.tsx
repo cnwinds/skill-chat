@@ -70,7 +70,7 @@ describe('MessageItem', () => {
     };
 
     render(<MessageItem event={event} />);
-    expect(screen.getByText('165 tokens · 输入 120 · 输出 45 · 4.2s')).toBeInTheDocument();
+    expect(screen.getByText('165 (120/45) tokens · 4.2s')).toBeInTheDocument();
   });
 
   it('renders reasoning summary for pending assistant output', () => {
@@ -90,7 +90,7 @@ describe('MessageItem', () => {
 
     expect(screen.getByText('推理摘要')).toBeInTheDocument();
     expect(screen.getByText('先看分数线，再看就业密度。')).toBeInTheDocument();
-    expect(screen.getByText('150 tokens · 输入 120 · 输出 30')).toBeInTheDocument();
+    expect(screen.getByText('150 (120/30) tokens')).toBeInTheDocument();
   });
 
   it('copies message content from the hover action button', async () => {

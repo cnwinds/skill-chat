@@ -11,7 +11,7 @@ services:
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
     restart: unless-stopped
     env_file:
-      - .env
+      - .env.docker
     environment:
       NODE_ENV: production
       PORT: 3000

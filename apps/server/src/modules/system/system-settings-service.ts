@@ -7,6 +7,8 @@ type SettingRow = {
   value: string;
 };
 
+type EnvironmentManagedSettings = Pick<SystemSettings, 'enableAssistantTools' | 'webOrigin' | 'modelConfig'>;
+
 const SYSTEM_SETTING_KEYS = {
   registrationRequiresInviteCode: 'registration_requires_invite_code',
   enableAssistantTools: 'enable_assistant_tools',
@@ -49,14 +51,30 @@ const parseNumber = (value: string | undefined, fallback: number) => {
 };
 
 export class SystemSettingsService {
+  private readonly environmentDefaults: EnvironmentManagedSettings;
+
   constructor(
     private readonly db: AppDatabase,
     private readonly config: AppConfig,
-  ) {}
+  ) {
+    this.environmentDefaults = {
+      enableAssistantTools: config.ENABLE_ASSISTANT_TOOLS,
+      webOrigin: config.WEB_ORIGIN,
+      modelConfig: {
+        openaiBaseUrl: config.OPENAI_BASE_URL,
+        openaiApiKey: config.OPENAI_API_KEY,
+        openaiModel: config.OPENAI_MODEL,
+        openaiReasoningEffort: config.OPENAI_REASONING_EFFORT,
+        llmMaxOutputTokens: config.LLM_MAX_OUTPUT_TOKENS,
+        toolMaxOutputTokens: config.TOOL_MAX_OUTPUT_TOKENS,
+      },
+    };
+  }
 
   initialize() {
-    const current = this.getSettings();
+    let current = this.getSettings();
     this.persistDefaults(current);
+    current = this.syncDevelopmentEnvironmentSettings(current);
     this.cleanupObsoleteSettings();
     this.applyToRuntimeConfig(current);
   }
@@ -170,6 +188,77 @@ export class SystemSettingsService {
       upsert.run(SYSTEM_SETTING_KEYS.llmMaxOutputTokens, String(settings.modelConfig.llmMaxOutputTokens));
       upsert.run(SYSTEM_SETTING_KEYS.toolMaxOutputTokens, String(settings.modelConfig.toolMaxOutputTokens));
     })();
+  }
+
+  private syncDevelopmentEnvironmentSettings(current: SystemSettings): SystemSettings {
+    if (this.config.NODE_ENV !== 'development') {
+      return current;
+    }
+
+    const next: SystemSettings = {
+      ...current,
+      enableAssistantTools: this.environmentDefaults.enableAssistantTools,
+      webOrigin: this.environmentDefaults.webOrigin,
+      modelConfig: {
+        ...current.modelConfig,
+        ...this.environmentDefaults.modelConfig,
+      },
+    };
+
+    if (this.matchesEnvironmentManagedSettings(current, next)) {
+      return next;
+    }
+
+    const now = new Date().toISOString();
+    const upsert = this.db.prepare(`
+      INSERT INTO system_settings (key, value, updated_at, updated_by)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at, updated_by = excluded.updated_by
+    `);
+
+    this.db.transaction(() => {
+      upsert.run(
+        SYSTEM_SETTING_KEYS.enableAssistantTools,
+        String(next.enableAssistantTools),
+        now,
+        null,
+      );
+      upsert.run(SYSTEM_SETTING_KEYS.webOrigin, next.webOrigin, now, null);
+      upsert.run(SYSTEM_SETTING_KEYS.openaiBaseUrl, next.modelConfig.openaiBaseUrl, now, null);
+      upsert.run(SYSTEM_SETTING_KEYS.openaiApiKey, next.modelConfig.openaiApiKey, now, null);
+      upsert.run(SYSTEM_SETTING_KEYS.openaiModel, next.modelConfig.openaiModel, now, null);
+      upsert.run(
+        SYSTEM_SETTING_KEYS.openaiReasoningEffort,
+        next.modelConfig.openaiReasoningEffort,
+        now,
+        null,
+      );
+      upsert.run(
+        SYSTEM_SETTING_KEYS.llmMaxOutputTokens,
+        String(next.modelConfig.llmMaxOutputTokens),
+        now,
+        null,
+      );
+      upsert.run(
+        SYSTEM_SETTING_KEYS.toolMaxOutputTokens,
+        String(next.modelConfig.toolMaxOutputTokens),
+        now,
+        null,
+      );
+    })();
+
+    return next;
+  }
+
+  private matchesEnvironmentManagedSettings(left: SystemSettings, right: SystemSettings) {
+    return left.enableAssistantTools === right.enableAssistantTools
+      && left.webOrigin === right.webOrigin
+      && left.modelConfig.openaiBaseUrl === right.modelConfig.openaiBaseUrl
+      && left.modelConfig.openaiApiKey === right.modelConfig.openaiApiKey
+      && left.modelConfig.openaiModel === right.modelConfig.openaiModel
+      && left.modelConfig.openaiReasoningEffort === right.modelConfig.openaiReasoningEffort
+      && left.modelConfig.llmMaxOutputTokens === right.modelConfig.llmMaxOutputTokens
+      && left.modelConfig.toolMaxOutputTokens === right.modelConfig.toolMaxOutputTokens;
   }
 
   private applyToRuntimeConfig(settings: SystemSettings) {
