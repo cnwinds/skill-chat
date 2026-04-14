@@ -1510,7 +1510,7 @@ describe('App routes', () => {
     fireEvent.change(screen.getByLabelText('会话标题'), {
       target: { value: '高校咨询' },
     });
-    fireEvent.click(screen.getByRole('button', { name: '加入会话' }));
+    fireEvent.click(screen.getByRole('button', { name: '加入会话：zhangxuefeng-perspective' }));
     fireEvent.click(screen.getByRole('button', { name: '创建会话' }));
 
     await waitFor(() => {
@@ -1621,7 +1621,7 @@ describe('App routes', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '新建' }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '加入会话' }));
+    fireEvent.click(screen.getByRole('button', { name: '加入会话：pdf' }));
     fireEvent.click(screen.getByRole('button', { name: '创建会话' }));
 
     await waitFor(() => {

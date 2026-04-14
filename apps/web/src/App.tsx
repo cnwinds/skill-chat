@@ -18,6 +18,7 @@ import {
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, api } from './lib/api';
 import { MessageItem } from './components/MessageItem';
+import { SkillCard } from './components/SkillCard';
 import { useAuthStore } from './stores/auth-store';
 import { useUiStore } from './stores/ui-store';
 import { useSessionStream } from './hooks/useSessionStream';
@@ -404,19 +405,12 @@ const CreateSessionDialog = ({
             </div>
             <div className="skill-picker-grid">
               {skills.map((skill) => (
-                <article key={skill.name} className="skill-card">
-                  <div className="skill-card-header">
-                    <div className="skill-title">{skill.name}</div>
-                    <button
-                      type="button"
-                      className={cn('subtle-button', selectedSkills.includes(skill.name) && 'is-active-skill')}
-                      onClick={() => onToggleSkill(skill.name)}
-                    >
-                      {selectedSkills.includes(skill.name) ? '本会话已启用' : '加入会话'}
-                    </button>
-                  </div>
-                  <p>{skill.description}</p>
-                </article>
+                <SkillCard
+                  key={skill.name}
+                  skill={skill}
+                  selected={selectedSkills.includes(skill.name)}
+                  onToggle={() => onToggleSkill(skill.name)}
+                />
               ))}
               {skills.length === 0 ? (
                 <div className="inline-empty">项目中还没有可选的 skill。</div>
@@ -1811,34 +1805,27 @@ const SessionWorkspace = () => {
                   : '项目中可以安装很多 skill，但只有加入当前会话的 skill 才会被读取、参考或执行。'}
               </div>
             </div>
-            {installedSkills.map((skill: SkillMetadata) => (
-              <article key={skill.name} className="skill-card">
-                <div className="skill-card-header">
-                  <div className="skill-title">{skill.name}</div>
-                  {hasActiveSession ? (
-                    <button
-                      type="button"
-                      className={cn('subtle-button', activeSkills.includes(skill.name) && 'is-active-skill')}
-                      disabled={updateSessionMutation.isPending}
-                      onClick={() => {
-                        const nextSkills = activeSkills.includes(skill.name)
-                          ? activeSkills.filter((item) => item !== skill.name)
-                          : [...activeSkills, skill.name];
-                        updateSessionMutation.mutate({
-                          sessionId: activeSessionId!,
-                          activeSkills: nextSkills,
-                        });
-                      }}
-                    >
-                      {activeSkills.includes(skill.name) ? '本会话已启用' : '加入会话'}
-                    </button>
-                  ) : (
-                    <span className="stream-pill">已安装</span>
-                  )}
-                </div>
-                <p>{skill.description}</p>
-              </article>
-            ))}
+            <div className="skill-library-grid">
+              {installedSkills.map((skill: SkillMetadata) => (
+                <SkillCard
+                  key={skill.name}
+                  skill={skill}
+                  selected={activeSkills.includes(skill.name)}
+                  disabled={updateSessionMutation.isPending}
+                  onToggle={hasActiveSession
+                    ? () => {
+                      const nextSkills = activeSkills.includes(skill.name)
+                        ? activeSkills.filter((item) => item !== skill.name)
+                        : [...activeSkills, skill.name];
+                      updateSessionMutation.mutate({
+                        sessionId: activeSessionId!,
+                        activeSkills: nextSkills,
+                      });
+                    }
+                    : undefined}
+                />
+              ))}
+            </div>
             {installedSkills.length === 0 ? (
               <div className="inline-empty">项目中还没有安装 skill。</div>
             ) : null}
