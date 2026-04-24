@@ -48,7 +48,6 @@ const jsonResponse = ({ body, status = 200 }: MockResponseInit) =>
 const systemSettings = {
   registrationRequiresInviteCode: true,
   enableAssistantTools: true,
-  webOrigin: 'http://localhost:5173',
   modelConfig: {
     openaiBaseUrl: 'https://api.openai.com/v1',
     openaiApiKey: 'sk-test',

@@ -12,8 +12,7 @@ const createConfig = (overrides: Partial<AppConfig> = {}): AppConfig => ({
   DB_PATH: '/tmp/skillchat-data/skillchat.sqlite',
   CWD: '/workspace/qizhi',
   INLINE_JOBS: true,
-  JWT_SECRET: 'test-secret',
-  JWT_EXPIRES_IN: '7d',
+  SESSION_EXPIRES_IN: '7d',
   OPENAI_BASE_URL: 'http://example.com/v1',
   OPENAI_API_KEY: 'test-token',
   OPENAI_MODEL: 'gpt-5.4',
@@ -30,7 +29,6 @@ const createConfig = (overrides: Partial<AppConfig> = {}): AppConfig => ({
   ENABLE_REASONING_EVENTS: false,
   MAX_CONCURRENT_RUNS: 5,
   RUN_TIMEOUT_MS: 120_000,
-  USER_STORAGE_QUOTA_MB: 1024,
   ...overrides,
 });
 

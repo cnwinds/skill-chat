@@ -42,7 +42,7 @@ const buildBaseAttributes = (config: AppConfig) => {
 
 export const buildSessionCookieHeader = (config: AppConfig, token: string) => {
   const attributes = buildBaseAttributes(config);
-  const maxAge = parseDurationToSeconds(config.JWT_EXPIRES_IN);
+  const maxAge = parseDurationToSeconds(config.SESSION_EXPIRES_IN);
   if (maxAge && Number.isFinite(maxAge) && maxAge > 0) {
     attributes.push(`Max-Age=${Math.floor(maxAge)}`);
   }

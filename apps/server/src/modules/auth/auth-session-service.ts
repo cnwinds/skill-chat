@@ -30,7 +30,7 @@ const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 const resolveSessionTtlMs = (config: AppConfig) => {
-  const ttlSeconds = parseDurationToSeconds(config.JWT_EXPIRES_IN) ?? DEFAULT_SESSION_TTL_SECONDS;
+  const ttlSeconds = parseDurationToSeconds(config.SESSION_EXPIRES_IN) ?? DEFAULT_SESSION_TTL_SECONDS;
   return Math.max(1, ttlSeconds) * 1000;
 };
 

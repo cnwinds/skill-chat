@@ -67,7 +67,6 @@ export const adminInviteCreateSchema = z.object({
 export const systemSettingsPatchSchema = z.object({
   registrationRequiresInviteCode: z.boolean().optional(),
   enableAssistantTools: z.boolean().optional(),
-  webOrigin: z.string().url().optional(),
   modelConfig: z.object({
     openaiBaseUrl: z.string().url().optional(),
     openaiApiKey: z.string().optional(),

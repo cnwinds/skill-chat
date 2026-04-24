@@ -231,7 +231,6 @@ CREATE TABLE IF NOT EXISTS system_settings (
 - 第一批
   - `registration_requires_invite_code`
   - `enable_assistant_tools`
-  - `web_origin`
   - `openai_base_url`
   - `openai_api_key`
   - `openai_model`
@@ -426,7 +425,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
 {
   "registrationRequiresInviteCode": true,
   "enableAssistantTools": true,
-  "webOrigin": "http://localhost:5173",
   "modelConfig": {
     "openaiBaseUrl": "https://api.openai.com/v1",
     "openaiApiKey": "",
@@ -655,7 +653,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
 - 注册是否需要邀请码
 - 默认会话激活技能
 - 是否启用 Assistant Tools
-- Web Origin
 - 模型相关配置
   - Router / Planner / Reply model
   - reasoning effort

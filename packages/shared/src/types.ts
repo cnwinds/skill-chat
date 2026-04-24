@@ -38,7 +38,6 @@ export interface SystemStatus {
 export interface SystemSettings {
   registrationRequiresInviteCode: boolean;
   enableAssistantTools: boolean;
-  webOrigin: string;
   modelConfig: {
     openaiBaseUrl: string;
     openaiApiKey: string;

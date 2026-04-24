@@ -28,7 +28,8 @@ cp .env.docker.example .env.docker
 NODE_ENV=production
 PORT=3000
 WEB_PORT=7070
-JWT_SECRET=请替换成长度足够的随机字符串
+WEB_ORIGIN=https://app.example.com
+SESSION_EXPIRES_IN=7d
 ```
 
 说明：

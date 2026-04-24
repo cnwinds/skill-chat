@@ -9,8 +9,7 @@ const envSchema = z.object({
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
   DATA_ROOT: z.string().default('./data'),
   SKILLS_ROOT: z.string().default('./skills'),
-  JWT_SECRET: z.string().min(8).default('change-me-now'),
-  JWT_EXPIRES_IN: z.string().default('7d'),
+  SESSION_EXPIRES_IN: z.string().default('7d'),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_API_KEY: z.string().optional().default(''),
   OPENAI_MODEL: z.string().default('gpt-5.4'),
@@ -29,7 +28,6 @@ const envSchema = z.object({
   ENABLE_REASONING_EVENTS: z.coerce.boolean().default(false),
   MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(5),
   RUN_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
-  USER_STORAGE_QUOTA_MB: z.coerce.number().int().positive().default(1024),
 });
 
 export type AppConfig = z.infer<typeof envSchema> & {
@@ -53,6 +51,7 @@ export const loadConfig = (cwd: string, overrides: ConfigOverrides = {}): AppCon
   const raw = envSchema.parse({
     ...process.env,
     ...overrides,
+    SESSION_EXPIRES_IN: overrides.SESSION_EXPIRES_IN ?? process.env.SESSION_EXPIRES_IN ?? process.env.JWT_EXPIRES_IN,
     OPENAI_MODEL: overrides.OPENAI_MODEL ?? process.env.OPENAI_MODEL,
     MODEL_CONTEXT_WINDOW_TOKENS: overrides.MODEL_CONTEXT_WINDOW_TOKENS ?? process.env.MODEL_CONTEXT_WINDOW_TOKENS,
     MODEL_AUTO_COMPACT_TOKEN_LIMIT: overrides.MODEL_AUTO_COMPACT_TOKEN_LIMIT ?? process.env.MODEL_AUTO_COMPACT_TOKEN_LIMIT,

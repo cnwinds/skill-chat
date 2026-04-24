@@ -10,7 +10,6 @@ type SettingRow = {
 const SYSTEM_SETTING_KEYS = {
   registrationRequiresInviteCode: 'registration_requires_invite_code',
   enableAssistantTools: 'enable_assistant_tools',
-  webOrigin: 'web_origin',
   openaiBaseUrl: 'openai_base_url',
   openaiApiKey: 'openai_api_key',
   openaiModel: 'openai_model',
@@ -25,6 +24,7 @@ const LEGACY_SYSTEM_SETTING_KEYS = [
   'openai_model_planner',
   'openai_model_reply',
   'openai_reasoning_effort_reply',
+  'web_origin',
   'anthropic_base_url',
   'anthropic_api_key',
   'anthropic_model_router',
@@ -87,7 +87,6 @@ export class SystemSettingsService {
         map.get(SYSTEM_SETTING_KEYS.enableAssistantTools),
         this.config.ENABLE_ASSISTANT_TOOLS,
       ),
-      webOrigin: map.get(SYSTEM_SETTING_KEYS.webOrigin) ?? this.config.WEB_ORIGIN,
       modelConfig: {
         openaiBaseUrl: map.get(SYSTEM_SETTING_KEYS.openaiBaseUrl) ?? this.config.OPENAI_BASE_URL,
         openaiApiKey: map.get(SYSTEM_SETTING_KEYS.openaiApiKey) ?? this.config.OPENAI_API_KEY,
@@ -122,7 +121,6 @@ export class SystemSettingsService {
     const next: SystemSettings = {
       registrationRequiresInviteCode: patch.registrationRequiresInviteCode ?? current.registrationRequiresInviteCode,
       enableAssistantTools: patch.enableAssistantTools ?? current.enableAssistantTools,
-      webOrigin: patch.webOrigin ?? current.webOrigin,
       modelConfig: {
         ...current.modelConfig,
         ...(patch.modelConfig ?? {}),
@@ -139,7 +137,6 @@ export class SystemSettingsService {
     this.db.transaction(() => {
       upsert.run(SYSTEM_SETTING_KEYS.registrationRequiresInviteCode, String(next.registrationRequiresInviteCode), now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.enableAssistantTools, String(next.enableAssistantTools), now, updatedBy);
-      upsert.run(SYSTEM_SETTING_KEYS.webOrigin, next.webOrigin, now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.openaiBaseUrl, next.modelConfig.openaiBaseUrl, now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.openaiApiKey, next.modelConfig.openaiApiKey, now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.openaiModel, next.modelConfig.openaiModel, now, updatedBy);
@@ -162,7 +159,6 @@ export class SystemSettingsService {
     this.db.transaction(() => {
       upsert.run(SYSTEM_SETTING_KEYS.registrationRequiresInviteCode, String(settings.registrationRequiresInviteCode));
       upsert.run(SYSTEM_SETTING_KEYS.enableAssistantTools, String(settings.enableAssistantTools));
-      upsert.run(SYSTEM_SETTING_KEYS.webOrigin, settings.webOrigin);
       upsert.run(SYSTEM_SETTING_KEYS.openaiBaseUrl, settings.modelConfig.openaiBaseUrl);
       upsert.run(SYSTEM_SETTING_KEYS.openaiApiKey, settings.modelConfig.openaiApiKey);
       upsert.run(SYSTEM_SETTING_KEYS.openaiModel, settings.modelConfig.openaiModel);
@@ -174,7 +170,6 @@ export class SystemSettingsService {
 
   private applyToRuntimeConfig(settings: SystemSettings) {
     this.config.ENABLE_ASSISTANT_TOOLS = settings.enableAssistantTools;
-    this.config.WEB_ORIGIN = settings.webOrigin;
     this.config.OPENAI_BASE_URL = settings.modelConfig.openaiBaseUrl;
     this.config.OPENAI_API_KEY = settings.modelConfig.openaiApiKey;
     this.config.OPENAI_MODEL = settings.modelConfig.openaiModel;

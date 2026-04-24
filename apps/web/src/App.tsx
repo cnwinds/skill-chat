@@ -635,18 +635,6 @@ const AdminSettingsView = ({
           <article className="status-card">
             <strong>运行配置</strong>
             <div className="settings-stack">
-              <label className="field-group">
-                <span>Web Origin</span>
-                <input
-                  value={systemDraft.webOrigin}
-                  onChange={(event) => {
-                    updateSystemDraft((current) => ({
-                      ...current,
-                      webOrigin: event.target.value,
-                    }));
-                  }}
-                />
-              </label>
               <div className="settings-grid two-columns">
                 <label className="field-group">
                   <span>OpenAI Base URL</span>

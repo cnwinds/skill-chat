@@ -426,7 +426,7 @@ services:
       - ./skills:/skills       # Skill 仓库
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - JWT_SECRET=${JWT_SECRET}
+      - SESSION_EXPIRES_IN=${SESSION_EXPIRES_IN}
 
   nginx:
     image: nginx:alpine
