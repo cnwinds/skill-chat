@@ -1,7 +1,10 @@
+name: skillchat
+
 services:
   api:
     build:
-      context: .
+      context: ..
+      dockerfile: docker/Dockerfile
       target: api
       args:
         APT_MIRROR: ${APT_MIRROR:-http://mirrors.aliyun.com/debian}
@@ -11,7 +14,7 @@ services:
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
     restart: unless-stopped
     env_file:
-      - .env.docker
+      - .env
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -19,7 +22,7 @@ services:
       SKILLS_ROOT: /app/skills
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:7070}
     volumes:
-      - skillchat_data:/app/data
+      - ./data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/health"]
       interval: 15s
@@ -29,7 +32,8 @@ services:
 
   web:
     build:
-      context: .
+      context: ..
+      dockerfile: docker/Dockerfile
       target: web
       args:
         APT_MIRROR: ${APT_MIRROR:-http://mirrors.aliyun.com/debian}
@@ -41,6 +45,3 @@ services:
         condition: service_healthy
     ports:
       - "${WEB_PORT:-7070}:80"
-
-volumes:
-  skillchat_data:

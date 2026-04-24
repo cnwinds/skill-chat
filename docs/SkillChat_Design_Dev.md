@@ -63,7 +63,7 @@
 ├── skills/                      # Skill 仓库
 ├── data/                        # 本地开发数据目录
 ├── docs/
-└── docker-compose.yml
+└── docker/
 ```
 
 这样可以：

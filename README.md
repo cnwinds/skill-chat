@@ -136,22 +136,24 @@ tail -f logs/dev-web.log
 
 如果你要在服务器上一键启动，仓库根目录已经提供：
 
-- `docker-compose.yml`
-- `Dockerfile`
+- `docker/compose.yml`
+- `docker/Dockerfile`
 - `docker/nginx.conf`
+- `docker/.env.example`
 
 最短流程：
 
 ```bash
-cp .env.docker.example .env.docker
-docker compose --env-file .env.docker up -d --build
+cd docker
+cp .env.example .env
+docker compose up -d --build
 ```
 
 国内服务器如果拉镜像或装依赖慢，compose 已经支持国内源构建参数，详见：
 
 - `docs/Docker_Deployment.md`
 
-默认访问地址（按 `.env.docker.example` 模板）：
+默认访问地址（按 `docker/.env.example` 模板）：
 
 ```text
 http://localhost:7070

@@ -16,6 +16,9 @@ apps/web/playwright-report
 apps/web/test-results
 
 .env
-.env.docker
 .env.local
 .env.*.local
+
+docker/.env
+docker/data/*
+!docker/data/.gitkeep
