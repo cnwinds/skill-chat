@@ -118,9 +118,8 @@ const installFetchMock = (handler: (url: string, init?: RequestInit) => Response
 };
 
 beforeEach(() => {
-  localStorage.clear();
-  document.documentElement.dataset.theme = 'dark';
-  useAuthStore.setState({ token: null, user: null });
+    document.documentElement.dataset.theme = 'dark';
+  useAuthStore.setState({ user: null, ready: true });
   usePreferencesStore.setState({ themeMode: 'dark' });
   useUiStore.setState({
     activeSessionId: null,
@@ -182,6 +181,48 @@ describe('App routes', () => {
     expect(screen.queryByLabelText('邀请码')).not.toBeInTheDocument();
   });
 
+  it('hydrates the current user from the server session before entering a protected route', async () => {
+    useAuthStore.setState({ user: null, ready: false });
+
+    installFetchMock((url) => {
+      if (url === '/api/auth/session') {
+        return jsonResponse({ body: { user: memberUser } });
+      }
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Recovered Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    renderApp(['/app/session/s1']);
+
+    expect(await screen.findByText(/当前用户：member/, { selector: 'p' })).toBeInTheDocument();
+  });
+
   it('shows the admin settings entry only for admins', async () => {
     installFetchMock((url) => {
       if (url === '/api/me/settings') {
@@ -214,18 +255,72 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-admin', user: adminUser });
+    useAuthStore.setState({ user: adminUser, ready: true });
     const adminView = renderApp(['/app/session/s1']);
     expect(await screen.findByText('系统配置 / 用户 / 邀请码')).toBeInTheDocument();
 
     adminView.unmount();
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     await waitFor(() => {
       expect(screen.queryByText('系统配置 / 用户 / 邀请码')).not.toBeInTheDocument();
     });
+  });
+
+  it('logs out through the server endpoint and returns to the login page', async () => {
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Logout Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/auth/logout' && method === 'POST') {
+        return new Response(null, { status: 204 });
+      }
+      if (url === '/api/system/status') {
+        return jsonResponse({
+          body: {
+            initialized: true,
+            hasAdmin: true,
+            registrationRequiresInviteCode: true,
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    fireEvent.click(await screen.findByRole('button', { name: '退出' }));
+
+    expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument();
   });
 
   it('persists theme changes to user settings', async () => {
@@ -266,7 +361,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-admin', user: adminUser });
+    useAuthStore.setState({ user: adminUser, ready: true });
     renderApp(['/app/session/s1']);
 
     const toggle = await screen.findByRole('button', { name: '浅色' });
@@ -331,7 +426,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText(/已从重启中恢复/)).toBeInTheDocument();
@@ -422,7 +517,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText('可以考公务员')).toBeInTheDocument();
@@ -499,7 +594,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     useUiStore.setState({
       activeSessionId: 's1',
       mobilePanel: null,
@@ -604,7 +699,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-admin', user: adminUser });
+    useAuthStore.setState({ user: adminUser, ready: true });
     renderApp(['/app/settings']);
 
     expect(await screen.findByText('设置中心')).toBeInTheDocument();
@@ -645,7 +740,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText('Session 5')).toBeInTheDocument();
@@ -726,7 +821,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
@@ -810,7 +905,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
@@ -909,7 +1004,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     const textarea = await screen.findByLabelText('聊天输入框');
@@ -1045,7 +1140,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     const textarea = await screen.findByLabelText('聊天输入框');
@@ -1201,7 +1296,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     const textarea = await screen.findByLabelText('聊天输入框');
@@ -1298,7 +1393,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     const textarea = await screen.findByLabelText('聊天输入框');
@@ -1366,7 +1461,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText('当前会话已启用：zhangxuefeng-perspective')).toBeInTheDocument();
@@ -1425,7 +1520,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText('开始一个任务')).toBeInTheDocument();
@@ -1498,7 +1593,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app']);
 
     expect(await screen.findByText('还没有会话')).toBeInTheDocument();
@@ -1614,7 +1709,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByRole('heading', { level: 1, name: '旧会话' })).toBeInTheDocument();
@@ -1778,7 +1873,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
@@ -1942,7 +2037,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByRole('button', { name: '中断当前 turn' })).toBeInTheDocument();
@@ -2091,7 +2186,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText('待处理队列（按顺序处理）')).toBeInTheDocument();
@@ -2209,7 +2304,7 @@ describe('App routes', () => {
       throw new Error(`Unhandled fetch: ${url}`);
     });
 
-    useAuthStore.setState({ token: 'token-member', user: memberUser });
+    useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText('待处理队列（按顺序处理）')).toBeInTheDocument();
@@ -2243,3 +2338,4 @@ describe('App routes', () => {
     });
   });
 });
+

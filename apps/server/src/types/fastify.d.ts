@@ -6,15 +6,7 @@ declare module 'fastify' {
     config: AppConfig;
     authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
   }
-}
-
-declare module '@fastify/jwt' {
-  interface FastifyJWT {
-    payload: {
-      sub: string;
-      username: string;
-      role: 'admin' | 'member';
-    };
+  interface FastifyRequest {
     user: {
       sub: string;
       username: string;

@@ -133,6 +133,22 @@ const seedInviteCode = (dbPath: string, code: string) => {
   db.close();
 };
 
+type TestAuthSession = {
+  cookie: string;
+  user: {
+    id: string;
+    username: string;
+    role: string;
+  };
+};
+
+const readSessionCookie = (response: Awaited<ReturnType<FastifyInstance['inject']>>) => {
+  const header = response.headers['set-cookie'];
+  const rawCookie = Array.isArray(header) ? header[0] : header;
+  expect(rawCookie).toBeTruthy();
+  return String(rawCookie).split(';')[0]!;
+};
+
 const bootstrapAdmin = async (app: FastifyInstance, username = 'admin_user') => {
   const response = await app.inject({
     method: 'POST',
@@ -144,7 +160,10 @@ const bootstrapAdmin = async (app: FastifyInstance, username = 'admin_user') => 
   });
 
   expect(response.statusCode).toBe(200);
-  return response.json() as { token: string; user: { id: string; username: string; role: string } };
+  return {
+    cookie: readSessionCookie(response),
+    user: (response.json() as { user: { id: string; username: string; role: string } }).user,
+  } satisfies TestAuthSession;
 };
 
 const registerAndLogin = async (app: FastifyInstance, username: string) => {
@@ -162,15 +181,19 @@ const registerAndLogin = async (app: FastifyInstance, username: string) => {
   });
 
   expect(registerResponse.statusCode).toBe(200);
-  return registerResponse.json() as { token: string; user: { id: string; username: string } };
+  const payload = registerResponse.json() as { user: { id: string; username: string; role: string } };
+  return {
+    cookie: readSessionCookie(registerResponse),
+    user: payload.user,
+  } satisfies TestAuthSession;
 };
 
-const createSession = async (app: FastifyInstance, token: string, title?: string, activeSkills?: string[]) => {
+const createSession = async (app: FastifyInstance, cookie: string, title?: string, activeSkills?: string[]) => {
   const response = await app.inject({
     method: 'POST',
     url: '/api/sessions',
     headers: {
-      authorization: `Bearer ${token}`,
+      cookie,
     },
     payload: {
       ...(title ? { title } : {}),
@@ -250,13 +273,13 @@ describe('SkillChat server', () => {
 
   it('registers, creates a session, and completes a plain chat response', async () => {
     const auth = await registerAndLogin(app, 'alice_test');
-    const session = await createSession(app, auth.token, '测试会话');
+    const session = await createSession(app, auth.cookie, '测试会话');
 
     const messageResponse = await app.inject({
       method: 'POST',
       url: `/api/sessions/${session.id}/messages`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
       payload: {
         content: '你好，介绍一下你能做什么',
@@ -269,7 +292,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: `/api/sessions/${session.id}/messages?limit=200`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -278,9 +301,84 @@ describe('SkillChat server', () => {
     expect(messages.some((message) => message.kind === 'message' && message.role === 'assistant')).toBe(true);
   });
 
+  it('restores auth state from the session cookie and clears it on logout', async () => {
+    const auth = await registerAndLogin(app, 'session_cookie_user');
+    const originalCookie = auth.cookie;
+
+    const sessionResponse = await app.inject({
+      method: 'GET',
+      url: '/api/auth/session',
+      headers: {
+        cookie: auth.cookie,
+      },
+    });
+
+    expect(sessionResponse.statusCode).toBe(200);
+    expect(sessionResponse.json()).toEqual({
+      user: expect.objectContaining({
+        id: auth.user.id,
+        username: auth.user.username,
+        role: auth.user.role,
+      }),
+    });
+
+    const logoutResponse = await app.inject({
+      method: 'POST',
+      url: '/api/auth/logout',
+      headers: {
+        cookie: auth.cookie,
+      },
+    });
+
+    expect(logoutResponse.statusCode).toBe(204);
+    expect(String(logoutResponse.headers['set-cookie'] ?? '')).toContain('Max-Age=0');
+    const clearedCookie = readSessionCookie(logoutResponse);
+
+    const replayedCookieResponse = await app.inject({
+      method: 'GET',
+      url: '/api/auth/session',
+      headers: {
+        cookie: originalCookie,
+      },
+    });
+
+    expect(replayedCookieResponse.statusCode).toBe(401);
+
+    const afterLogoutResponse = await app.inject({
+      method: 'GET',
+      url: '/api/auth/session',
+      headers: {
+        cookie: clearedCookie,
+      },
+    });
+
+    expect(afterLogoutResponse.statusCode).toBe(401);
+  });
+
+  it('rejects cross-origin mutating requests when using cookie auth', async () => {
+    const auth = await registerAndLogin(app, 'origin_guard_user');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: {
+        cookie: auth.cookie,
+        origin: 'https://evil.example',
+      },
+      payload: {
+        title: '恶意跨源请求',
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json()).toEqual({
+      message: '请求来源不受信任',
+    });
+  });
+
   it('creates sessions without enabled skills unless explicitly selected', async () => {
     const auth = await registerAndLogin(app, 'default_skill_user');
-    const session = await createSession(app, auth.token, '默认技能会话');
+    const session = await createSession(app, auth.cookie, '默认技能会话');
 
     expect(session).toMatchObject({
       activeSkills: [],
@@ -294,7 +392,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: '/api/skills',
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -312,13 +410,13 @@ describe('SkillChat server', () => {
 
   it('exposes idle runtime snapshots and rejects explicit steer or interrupt without an active turn', async () => {
     const auth = await registerAndLogin(app, 'runtime_user');
-    const session = await createSession(app, auth.token, '运行态测试');
+    const session = await createSession(app, auth.cookie, '运行态测试');
 
     const runtimeResponse = await app.inject({
       method: 'GET',
       url: `/api/sessions/${session.id}/runtime`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -334,7 +432,7 @@ describe('SkillChat server', () => {
       method: 'POST',
       url: `/api/sessions/${session.id}/turns/turn_missing/steer`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
       payload: {
         content: '补充说明',
@@ -350,7 +448,7 @@ describe('SkillChat server', () => {
       method: 'POST',
       url: `/api/sessions/${session.id}/turns/turn_missing/interrupt`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
       payload: {},
     });
@@ -363,7 +461,7 @@ describe('SkillChat server', () => {
 
   it('recovers a persisted runtime snapshot after process restart', async () => {
     const auth = await registerAndLogin(app, 'recovery_user');
-    const session = await createSession(app, auth.token, '恢复测试');
+    const session = await createSession(app, auth.cookie, '恢复测试');
     const runtimePath = getSessionTurnRuntimePath(app.config, auth.user.id, session.id);
 
     await fs.writeFile(runtimePath, JSON.stringify({
@@ -418,7 +516,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: `/api/sessions/${session.id}/runtime`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -448,7 +546,7 @@ describe('SkillChat server', () => {
 
   it('removes a queued follow-up input through the runtime api', async () => {
     const auth = await registerAndLogin(app, 'remove_runtime_user');
-    const session = await createSession(app, auth.token, '删除待处理输入');
+    const session = await createSession(app, auth.cookie, '删除待处理输入');
     const runtimePath = getSessionTurnRuntimePath(app.config, auth.user.id, session.id);
 
     await fs.writeFile(runtimePath, JSON.stringify({
@@ -477,7 +575,7 @@ describe('SkillChat server', () => {
       method: 'DELETE',
       url: `/api/sessions/${session.id}/runtime/queue/input_queued_1`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -502,13 +600,13 @@ describe('SkillChat server', () => {
 
   it('updates session active skills through the session api', async () => {
     const auth = await registerAndLogin(app, 'update_skill_user');
-    const session = await createSession(app, auth.token, '测试会话');
+    const session = await createSession(app, auth.cookie, '测试会话');
 
     const response = await app.inject({
       method: 'PATCH',
       url: `/api/sessions/${session.id}`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
       payload: {
         activeSkills: ['pdf', 'zhangxuefeng-perspective'],
@@ -590,7 +688,7 @@ describe('SkillChat server', () => {
       method: 'PATCH',
       url: '/api/admin/system-settings',
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
       payload: {
         registrationRequiresInviteCode: false,
@@ -630,7 +728,7 @@ describe('SkillChat server', () => {
       method: 'POST',
       url: '/api/admin/invite-codes',
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
       payload: {
         count: 2,
@@ -657,7 +755,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: '/api/admin/users',
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
     });
 
@@ -670,7 +768,7 @@ describe('SkillChat server', () => {
       method: 'PATCH',
       url: `/api/admin/users/${managedUser!.id}`,
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
       payload: {
         status: 'disabled',
@@ -701,7 +799,7 @@ describe('SkillChat server', () => {
       method: 'PATCH',
       url: '/api/me/settings',
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
       payload: {
         themeMode: 'light',
@@ -717,7 +815,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: '/api/me/settings',
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
     });
 
@@ -730,7 +828,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: '/api/admin/invite-codes',
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
     });
 
@@ -742,7 +840,7 @@ describe('SkillChat server', () => {
       method: 'DELETE',
       url: `/api/admin/invite-codes/${createdInvites.codes[0]}`,
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
     });
     expect(deleteUsedInvite.statusCode).toBe(400);
@@ -751,7 +849,7 @@ describe('SkillChat server', () => {
       method: 'DELETE',
       url: `/api/admin/invite-codes/${createdInvites.codes[1]}`,
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
     });
     expect(deleteUnusedInvite.statusCode).toBe(204);
@@ -763,7 +861,7 @@ describe('SkillChat server', () => {
       method: 'PATCH',
       url: '/api/admin/system-settings',
       headers: {
-        authorization: `Bearer ${admin.token}`,
+        cookie: admin.cookie,
       },
       payload: {
         registrationRequiresInviteCode: false,
@@ -780,13 +878,16 @@ describe('SkillChat server', () => {
       },
     });
     expect(memberRegister.statusCode).toBe(200);
-    const member = memberRegister.json() as { token: string };
+    const member = {
+      cookie: readSessionCookie(memberRegister),
+      user: (memberRegister.json() as { user: { id: string; username: string; role: string } }).user,
+    } satisfies TestAuthSession;
 
     const memberAdminAccess = await app.inject({
       method: 'GET',
       url: '/api/admin/users',
       headers: {
-        authorization: `Bearer ${member.token}`,
+        cookie: member.cookie,
       },
     });
 
@@ -798,7 +899,7 @@ describe('SkillChat server', () => {
 
   it('sanitizes tool details for non-admin users when reading session messages', async () => {
     const member = await registerAndLogin(app, 'tooltrace_member');
-    const session = await createSession(app, member.token, '工具权限测试');
+    const session = await createSession(app, member.cookie, '工具权限测试');
     const messagesPath = getSessionMessagesPath(app.config, member.user.id, session.id);
 
     await fs.appendFile(messagesPath, `${JSON.stringify({
@@ -827,7 +928,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: `/api/sessions/${session.id}/messages?limit=200`,
       headers: {
-        authorization: `Bearer ${member.token}`,
+        cookie: member.cookie,
       },
     });
 
@@ -852,13 +953,13 @@ describe('SkillChat server', () => {
 
   it('generates a PDF file and supports sharing and downloading it', async () => {
     const auth = await registerAndLogin(app, 'pdf_user');
-    const session = await createSession(app, auth.token, '测试会话', ['artifact-smoke']);
+    const session = await createSession(app, auth.cookie, '测试会话', ['artifact-smoke']);
 
     const messageResponse = await app.inject({
       method: 'POST',
       url: `/api/sessions/${session.id}/messages`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
       payload: {
         content: '帮我生成一份本周销售报告 PDF',
@@ -871,7 +972,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: `/api/files?sessionId=${session.id}`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -884,7 +985,7 @@ describe('SkillChat server', () => {
       method: 'POST',
       url: `/api/files/${pdfFile!.id}/share`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -896,7 +997,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: `/api/files/${sharedFile.id}/download`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -906,7 +1007,7 @@ describe('SkillChat server', () => {
 
   it('uploads CSV and generates an XLSX artifact through the skill pipeline', async () => {
     const auth = await registerAndLogin(app, 'xlsx_user');
-    const session = await createSession(app, auth.token, '测试会话', ['artifact-smoke']);
+    const session = await createSession(app, auth.cookie, '测试会话', ['artifact-smoke']);
 
     const address = await app.listen({ host: '127.0.0.1', port: 0 });
     const form = new FormData();
@@ -919,7 +1020,7 @@ describe('SkillChat server', () => {
     const uploadResponse = await fetch(`${address}/api/files/${session.id}/upload`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${auth.token}`,
+        Cookie: auth.cookie,
       },
       body: form,
     });
@@ -929,7 +1030,7 @@ describe('SkillChat server', () => {
     const messageResponse = await fetch(`${address}/api/sessions/${session.id}/messages`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${auth.token}`,
+        Cookie: auth.cookie,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
@@ -941,7 +1042,7 @@ describe('SkillChat server', () => {
 
     const filesResponse = await fetch(`${address}/api/files?sessionId=${session.id}`, {
       headers: {
-        Authorization: `Bearer ${auth.token}`,
+        Cookie: auth.cookie,
       },
     });
 
@@ -952,13 +1053,13 @@ describe('SkillChat server', () => {
 
   it('activates the zhangxuefeng chat skill for perspective requests', async () => {
     const auth = await registerAndLogin(app, 'zhang_user');
-    const session = await createSession(app, auth.token, '测试会话');
+    const session = await createSession(app, auth.cookie, '测试会话');
 
     const response = await app.inject({
       method: 'POST',
       url: `/api/sessions/${session.id}/messages`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
       payload: {
         content: '用张雪峰的视角帮我分析金融专业',
@@ -971,7 +1072,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: `/api/sessions/${session.id}/messages?limit=200`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -983,13 +1084,13 @@ describe('SkillChat server', () => {
 
   it('derives the session title from the first user question', async () => {
     const auth = await registerAndLogin(app, 'title_user');
-    const session = await createSession(app, auth.token);
+    const session = await createSession(app, auth.cookie);
 
     const response = await app.inject({
       method: 'POST',
       url: `/api/sessions/${session.id}/messages`,
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
       payload: {
         content: '帮我选一个好一点的专业吧',
@@ -1002,7 +1103,7 @@ describe('SkillChat server', () => {
       method: 'GET',
       url: '/api/sessions',
       headers: {
-        authorization: `Bearer ${auth.token}`,
+        cookie: auth.cookie,
       },
     });
 
@@ -1012,3 +1113,4 @@ describe('SkillChat server', () => {
     expect(updated?.title).toBe('选一个好一点的专业');
   });
 });
+

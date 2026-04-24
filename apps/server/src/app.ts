@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import cors from '@fastify/cors';
-import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
 import Fastify from 'fastify';
 import { z } from 'zod';
@@ -22,13 +21,19 @@ import {
   type SSEvent,
   type StoredEvent,
 } from '@skillchat/shared';
-import { getProjectRoot, loadConfig, type ConfigOverrides } from './config/env.js';
+import { getProjectRoot, loadConfig, type AppConfig, type ConfigOverrides } from './config/env.js';
 import { createDatabase, migrateDatabase } from './db/database.js';
 import { ensureBaseDirectories } from './core/storage/fs-utils.js';
 import { MessageStore } from './core/storage/message-store.js';
 import { StreamHub } from './core/stream/stream-hub.js';
 import { SkillRegistry } from './modules/skills/skill-registry.js';
 import { AuthService } from './modules/auth/auth-service.js';
+import { AuthSessionService } from './modules/auth/auth-session-service.js';
+import {
+  clearSessionCookie,
+  readSessionTokenFromRequest,
+  setSessionCookie,
+} from './modules/auth/session-cookie.js';
 import { SessionService } from './modules/sessions/session-service.js';
 import { FileService } from './modules/files/file-service.js';
 import { RunnerManager } from './core/runner/runner-manager.js';
@@ -162,6 +167,11 @@ const normalizeActiveSkills = (input: string[] | undefined, knownSkills: Set<str
   return normalized;
 };
 
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+const isTrustedBrowserOrigin = (config: AppConfig, origin: string | undefined) =>
+  !origin || origin === config.WEB_ORIGIN;
+
 export const createApp = async (options: CreateAppOptions = {}) => {
   const cwd = options.cwd ?? getProjectRoot();
   const config = loadConfig(cwd, {
@@ -181,6 +191,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   const messageStore = new MessageStore(config);
   const streamHub = new StreamHub();
   const authService = new AuthService(db, config);
+  const authSessionService = new AuthSessionService(db, config);
   const systemSettingsService = new SystemSettingsService(db, config);
   systemSettingsService.initialize();
   const userSettingsService = new UserSettingsService(db);
@@ -219,7 +230,9 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   app.decorate('config', config);
 
   await app.register(cors, {
-    origin: true,
+    origin: (origin, callback) => {
+      callback(null, isTrustedBrowserOrigin(config, origin));
+    },
     credentials: true,
   });
   await app.register(multipart, {
@@ -228,16 +241,42 @@ export const createApp = async (options: CreateAppOptions = {}) => {
       files: 1,
     },
   });
-  await app.register(jwt, {
-    secret: config.JWT_SECRET,
+
+  app.addHook('onRequest', async (request, reply) => {
+    if (!MUTATING_METHODS.has(request.method)) {
+      return;
+    }
+
+    if (isTrustedBrowserOrigin(config, request.headers.origin)) {
+      return;
+    }
+
+    return reply.code(403).send({ message: '请求来源不受信任' });
   });
 
   app.decorate('authenticate', async (request, reply) => {
-    await request.jwtVerify();
-    const user = authService.getUserById(request.user.sub);
-    if (!user || user.status === 'disabled') {
+    const token = readSessionTokenFromRequest(request);
+    if (!token) {
+      return reply.code(401).send({ message: '未登录或登录已过期' });
+    }
+
+    const authenticatedSession = authSessionService.getAuthenticatedSession(token);
+    if (!authenticatedSession) {
+      clearSessionCookie(reply, config);
+      return reply.code(401).send({ message: '未登录或登录已过期' });
+    }
+
+    if (authenticatedSession.user.status === 'disabled') {
+      authSessionService.revokeSessionToken(token);
+      clearSessionCookie(reply, config);
       return reply.code(401).send({ message: '用户不存在或已被禁用' });
     }
+
+    request.user = {
+      sub: authenticatedSession.user.id,
+      username: authenticatedSession.user.username,
+      role: authenticatedSession.user.role,
+    };
   });
 
   app.addHook('onClose', async () => {
@@ -255,11 +294,9 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     try {
       const input = bootstrapAdminSchema.parse(request.body);
       const user = await authService.bootstrapAdmin(input);
-      const token = await reply.jwtSign(
-        { sub: user.id, username: user.username, role: user.role },
-        { expiresIn: config.JWT_EXPIRES_IN },
-      );
-      const payload: AuthResponse = { user, token };
+      const token = authSessionService.createSession(user.id);
+      setSessionCookie(reply, config, token);
+      const payload: AuthResponse = { user };
       return payload;
     } catch (error) {
       const message = errorMessage(error, '初始化管理员失败');
@@ -274,11 +311,9 @@ export const createApp = async (options: CreateAppOptions = {}) => {
       const user = await authService.registerMember(input, {
         requireInviteCode: systemSettingsService.getSettings().registrationRequiresInviteCode,
       });
-      const token = await reply.jwtSign(
-        { sub: user.id, username: user.username, role: user.role },
-        { expiresIn: config.JWT_EXPIRES_IN },
-      );
-      const payload: AuthResponse = { user, token };
+      const token = authSessionService.createSession(user.id);
+      setSessionCookie(reply, config, token);
+      const payload: AuthResponse = { user };
       return payload;
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '注册失败') });
@@ -289,15 +324,37 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     try {
       const input = loginSchema.parse(request.body);
       const user = await authService.login(input);
-      const token = await reply.jwtSign(
-        { sub: user.id, username: user.username, role: user.role },
-        { expiresIn: config.JWT_EXPIRES_IN },
-      );
-      const payload: AuthResponse = { user, token };
+      const token = authSessionService.createSession(user.id);
+      setSessionCookie(reply, config, token);
+      const payload: AuthResponse = { user };
       return payload;
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '登录失败') });
     }
+  });
+
+  app.get('/api/auth/session', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      const payload: AuthResponse = {
+        user: {
+          id: request.user.sub,
+          username: request.user.username,
+          role: request.user.role,
+        },
+      };
+      return payload;
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取登录态失败') });
+    }
+  });
+
+  app.post('/api/auth/logout', async (request, reply) => {
+    const token = readSessionTokenFromRequest(request);
+    if (token) {
+      authSessionService.revokeSessionToken(token);
+    }
+    clearSessionCookie(reply, config);
+    return reply.code(204).send();
   });
 
   const ensureAdmin = async (request: typeof app extends { } ? any : never, reply: typeof app extends { } ? any : never) => {

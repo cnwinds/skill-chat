@@ -27,22 +27,19 @@ export class ApiError extends Error {
   }
 }
 
-const readToken = () => useAuthStore.getState().token;
-
 const createHeaders = (headers: HeadersInit = {}, skipJson?: boolean) => {
-  const token = readToken();
   const merged = new Headers(headers);
   if (!skipJson && !merged.has('Content-Type')) {
     merged.set('Content-Type', 'application/json');
-  }
-  if (token) {
-    merged.set('Authorization', `Bearer ${token}`);
   }
   return merged;
 };
 
 const parseResponse = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
+    if (response.status === 401) {
+      useAuthStore.getState().setAnonymous();
+    }
     let message = '请求失败';
     try {
       const payload = await response.json() as { message?: string };
@@ -63,6 +60,7 @@ const parseResponse = async <T>(response: Response): Promise<T> => {
 const requestJson = async <T>(input: string, init: RequestInit = {}) => {
   const response = await fetch(input, {
     ...init,
+    credentials: init.credentials ?? 'include',
     headers: createHeaders(init.headers, init.body instanceof FormData),
   });
   return parseResponse<T>(response);
@@ -87,6 +85,22 @@ export const api = {
     requestJson<AuthResponse>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload),
+    }),
+
+  getAuthSession: async () => {
+    try {
+      return await requestJson<AuthResponse>('/api/auth/session');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        return null;
+      }
+      throw error;
+    }
+  },
+
+  logout: () =>
+    requestJson<void>('/api/auth/logout', {
+      method: 'POST',
     }),
 
   getMySettings: () => requestJson<UserPreferenceSettings>('/api/me/settings'),
@@ -202,6 +216,7 @@ export const api = {
 
   downloadFile: async (file: FileRecord) => {
     const response = await fetch(`/api/files/${file.id}/download`, {
+      credentials: 'include',
       headers: createHeaders({}, true),
     });
 

@@ -138,7 +138,7 @@ const AuthCard = ({
 
 const LoginPage = () => {
   const navigate = useNavigate();
-  const setAuth = useAuthStore((state) => state.setAuth);
+  const setAuthenticated = useAuthStore((state) => state.setAuthenticated);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -150,7 +150,7 @@ const LoginPage = () => {
   const mutation = useMutation({
     mutationFn: () => api.login({ username, password }),
     onSuccess: (payload) => {
-      setAuth(payload);
+      setAuthenticated(payload.user);
       navigate('/app', { replace: true });
     },
     onError: (mutationError) => {
@@ -197,7 +197,7 @@ const LoginPage = () => {
 
 const RegisterPage = () => {
   const navigate = useNavigate();
-  const setAuth = useAuthStore((state) => state.setAuth);
+  const setAuthenticated = useAuthStore((state) => state.setAuthenticated);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
@@ -215,7 +215,7 @@ const RegisterPage = () => {
       inviteCode: inviteCode.trim() ? inviteCode.trim() : undefined,
     }),
     onSuccess: (payload) => {
-      setAuth(payload);
+      setAuthenticated(payload.user);
       navigate('/app', { replace: true });
     },
     onError: (mutationError) => {
@@ -275,7 +275,7 @@ const RegisterPage = () => {
 
 const BootstrapAdminPage = () => {
   const navigate = useNavigate();
-  const setAuth = useAuthStore((state) => state.setAuth);
+  const setAuthenticated = useAuthStore((state) => state.setAuthenticated);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -288,7 +288,7 @@ const BootstrapAdminPage = () => {
   const mutation = useMutation({
     mutationFn: () => api.bootstrapAdmin({ username, password }),
     onSuccess: (payload) => {
-      setAuth(payload);
+      setAuthenticated(payload.user);
       navigate('/app', { replace: true });
     },
     onError: (mutationError) => {
@@ -822,7 +822,7 @@ const SessionWorkspace = () => {
   const queryClient = useQueryClient();
   const { sessionId } = useParams();
   const user = useAuthStore((state) => state.user);
-  const logout = useAuthStore((state) => state.logout);
+  const setAnonymous = useAuthStore((state) => state.setAnonymous);
   const setActiveSessionId = useUiStore((state) => state.setActiveSessionId);
   const activeSessionId = sessionId ?? null;
   const isSettingsView = location.pathname === '/app/settings';
@@ -873,6 +873,21 @@ const SessionWorkspace = () => {
       queryClient.setQueryData(['my-settings'], payload);
     },
     onError: (error) => setPageError(error instanceof ApiError ? error.message : '更新个人设置失败'),
+  });
+
+  const logoutMutation = useMutation({
+    mutationFn: api.logout,
+    onSettled: async () => {
+      setAnonymous();
+      useUiStore.setState({
+        activeSessionId: null,
+        mobilePanel: null,
+        drafts: {},
+        streams: {},
+      });
+      queryClient.clear();
+      navigate('/login', { replace: true });
+    },
   });
 
   useEffect(() => {
@@ -1481,7 +1496,12 @@ const SessionWorkspace = () => {
             >
               {themeMode === 'dark' ? '浅色' : '深色'}
             </button>
-            <button type="button" className="subtle-button" onClick={() => logout()}>
+            <button
+              type="button"
+              className="subtle-button"
+              onClick={() => logoutMutation.mutate()}
+              disabled={logoutMutation.isPending}
+            >
               退出
             </button>
           </div>
@@ -1849,44 +1869,120 @@ const SessionWorkspace = () => {
 };
 
 const ProtectedRoute = ({ children }: { children: ReactNode }) => {
-  const token = useAuthStore((state) => state.token);
-  if (!token) {
+  const ready = useAuthStore((state) => state.ready);
+  const user = useAuthStore((state) => state.user);
+
+  if (!ready) {
+    return <div className="auth-page">正在恢复登录状态...</div>;
+  }
+
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
+
+  return <>{children}</>;
+};
+
+const PublicOnlyRoute = ({ children }: { children: ReactNode }) => {
+  const ready = useAuthStore((state) => state.ready);
+  const user = useAuthStore((state) => state.user);
+
+  if (!ready) {
+    return <div className="auth-page">正在恢复登录状态...</div>;
+  }
+
+  if (user) {
+    return <Navigate to="/app" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+const AuthBootstrap = ({ children }: { children: ReactNode }) => {
+  const ready = useAuthStore((state) => state.ready);
+  const setAuthenticated = useAuthStore((state) => state.setAuthenticated);
+  const setAnonymous = useAuthStore((state) => state.setAnonymous);
+
+  const sessionQuery = useQuery({
+    queryKey: ['auth-session'],
+    queryFn: api.getAuthSession,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+    enabled: !ready,
+  });
+
+  useEffect(() => {
+    if (ready || sessionQuery.isPending) {
+      return;
+    }
+
+    if (sessionQuery.data?.user) {
+      setAuthenticated(sessionQuery.data.user);
+      return;
+    }
+
+    if (sessionQuery.isSuccess || sessionQuery.isError) {
+      setAnonymous();
+    }
+  }, [ready, sessionQuery.data, sessionQuery.isError, sessionQuery.isPending, sessionQuery.isSuccess, setAnonymous, setAuthenticated]);
+
   return <>{children}</>;
 };
 
 const App = () => (
-  <Routes>
-    <Route path="/login" element={<LoginPage />} />
-    <Route path="/register" element={<RegisterPage />} />
-    <Route path="/bootstrap-admin" element={<BootstrapAdminPage />} />
-    <Route
-      path="/app"
-      element={(
-        <ProtectedRoute>
-          <SessionWorkspace />
-        </ProtectedRoute>
-      )}
-    />
-    <Route
-      path="/app/session/:sessionId"
-      element={(
-        <ProtectedRoute>
-          <SessionWorkspace />
-        </ProtectedRoute>
-      )}
-    />
-    <Route
-      path="/app/settings"
-      element={(
-        <ProtectedRoute>
-          <SessionWorkspace />
-        </ProtectedRoute>
-      )}
-    />
-    <Route path="*" element={<Navigate to="/app" replace />} />
-  </Routes>
+  <AuthBootstrap>
+    <Routes>
+      <Route
+        path="/login"
+        element={(
+          <PublicOnlyRoute>
+            <LoginPage />
+          </PublicOnlyRoute>
+        )}
+      />
+      <Route
+        path="/register"
+        element={(
+          <PublicOnlyRoute>
+            <RegisterPage />
+          </PublicOnlyRoute>
+        )}
+      />
+      <Route
+        path="/bootstrap-admin"
+        element={(
+          <PublicOnlyRoute>
+            <BootstrapAdminPage />
+          </PublicOnlyRoute>
+        )}
+      />
+      <Route
+        path="/app"
+        element={(
+          <ProtectedRoute>
+            <SessionWorkspace />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/app/session/:sessionId"
+        element={(
+          <ProtectedRoute>
+            <SessionWorkspace />
+          </ProtectedRoute>
+        )}
+      />
+      <Route
+        path="/app/settings"
+        element={(
+          <ProtectedRoute>
+            <SessionWorkspace />
+          </ProtectedRoute>
+        )}
+      />
+      <Route path="*" element={<Navigate to="/app" replace />} />
+    </Routes>
+  </AuthBootstrap>
 );
 
 export default App;

@@ -27,7 +27,6 @@ export interface UserSummary {
 
 export interface AuthResponse {
   user: UserSummary;
-  token: string;
 }
 
 export interface SystemStatus {

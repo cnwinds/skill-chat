@@ -36,6 +36,15 @@ CREATE TABLE IF NOT EXISTS user_settings (
   PRIMARY KEY (user_id, key)
 );
 
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
@@ -61,6 +70,12 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_updated
   ON sessions(user_id, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+  ON auth_sessions(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires
+  ON auth_sessions(expires_at);
 
 CREATE INDEX IF NOT EXISTS idx_files_user_created
   ON files(user_id, created_at DESC);

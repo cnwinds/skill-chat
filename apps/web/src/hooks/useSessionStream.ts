@@ -40,7 +40,9 @@ const delay = async (ms: number, signal: AbortSignal) => {
 };
 
 export const useSessionStream = (sessionId: string | null) => {
-  const token = useAuthStore((state) => state.token);
+  const user = useAuthStore((state) => state.user);
+  const ready = useAuthStore((state) => state.ready);
+  const setAnonymous = useAuthStore((state) => state.setAnonymous);
   const queryClient = useQueryClient();
   const stream = useUiStore((state) => (sessionId ? state.streams[sessionId] : undefined));
   const appendTextDelta = useUiStore((state) => state.appendTextDelta);
@@ -59,7 +61,7 @@ export const useSessionStream = (sessionId: string | null) => {
   const clearStreamContent = useUiStore((state) => state.clearStreamContent);
 
   useEffect(() => {
-    if (!sessionId || !token) {
+    if (!sessionId || !ready || !user) {
       return;
     }
 
@@ -93,11 +95,12 @@ export const useSessionStream = (sessionId: string | null) => {
           await fetchEventSource(`/api/sessions/${sessionId}/stream`, {
             signal: controller.signal,
             openWhenHidden: true,
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+            credentials: 'include',
             async onopen(response) {
               if (!response.ok) {
+                if (response.status === 401) {
+                  setAnonymous();
+                }
                 throw new Error(`Stream open failed: ${response.status}`);
               }
               reconnectAttempt = 0;
@@ -440,10 +443,12 @@ export const useSessionStream = (sessionId: string | null) => {
     pushToolProgress,
     pushToolResult,
     queryClient,
+    ready,
     sessionId,
     setCurrentTurnTokenUsage,
+    setAnonymous,
     setStreamStatus,
-    token,
+    user,
   ]);
 
   return stream ?? {
