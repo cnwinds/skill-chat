@@ -58,6 +58,7 @@ export const useSessionStream = (sessionId: string | null) => {
   const applyTurnStatus = useUiStore((state) => state.applyTurnStatus);
   const applyUserMessageCommitted = useUiStore((state) => state.applyUserMessageCommitted);
   const applyTurnCompleted = useUiStore((state) => state.applyTurnCompleted);
+  const clearActiveTurn = useUiStore((state) => state.clearActiveTurn);
   const clearStreamContent = useUiStore((state) => state.clearStreamContent);
 
   useEffect(() => {
@@ -367,6 +368,7 @@ export const useSessionStream = (sessionId: string | null) => {
                 void queryClient.invalidateQueries({ queryKey: ['messages', sessionId] });
                 void queryClient.invalidateQueries({ queryKey: ['files', sessionId] });
                 void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+                clearActiveTurn(sessionId);
                 const clearSignature = getStreamClearSignature(sessionId);
                 window.setTimeout(() => {
                   const latestSignature = getStreamClearSignature(sessionId);
@@ -436,6 +438,7 @@ export const useSessionStream = (sessionId: string | null) => {
     applyTurnStarted,
     applyTurnStatus,
     applyUserMessageCommitted,
+    clearActiveTurn,
     clearStreamContent,
     pushError,
     pushThinking,

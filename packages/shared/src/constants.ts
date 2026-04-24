@@ -29,6 +29,7 @@ export const MESSAGE_KINDS = [
   'tool_call',
   'tool_progress',
   'tool_result',
+  'image',
   'file',
   'error',
 ] as const;

@@ -6,7 +6,7 @@ import type { FileRecord, FileBucket, SessionFileContext } from '@skillchat/shar
 import type { MultipartFile } from '@fastify/multipart';
 import type { AppConfig } from '../../config/env.js';
 import type { AppDatabase } from '../../db/database.js';
-import { assertPathInside, uniqueFileName } from '../../core/storage/fs-utils.js';
+import { assertPathInside, sanitizeFilename, uniqueFileName } from '../../core/storage/fs-utils.js';
 import {
   getSessionOutputsRoot,
   getSessionUploadsRoot,
@@ -128,6 +128,31 @@ export class FileService {
       displayName: args.displayName ?? path.basename(args.absolutePath),
       absolutePath: args.absolutePath,
       mimeType: mime.lookup(args.absolutePath) || 'application/octet-stream',
+      bucket: 'outputs',
+      source: 'generated',
+    });
+  }
+
+  async saveGeneratedBinary(args: {
+    userId: string;
+    sessionId: string;
+    displayName: string;
+    mimeType: string;
+    content: Buffer;
+  }): Promise<FileRecord> {
+    const outputsRoot = getSessionOutputsRoot(this.config, args.userId, args.sessionId);
+    await fs.mkdir(outputsRoot, { recursive: true });
+
+    const storedName = uniqueFileName(sanitizeFilename(args.displayName));
+    const targetPath = path.join(outputsRoot, storedName);
+    await fs.writeFile(targetPath, args.content);
+
+    return this.insertRecord({
+      userId: args.userId,
+      sessionId: args.sessionId,
+      displayName: sanitizeFilename(args.displayName),
+      absolutePath: targetPath,
+      mimeType: args.mimeType,
       bucket: 'outputs',
       source: 'generated',
     });

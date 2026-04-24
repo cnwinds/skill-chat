@@ -22,6 +22,7 @@ export type RuntimeInput = {
   createdAt: string;
   source: 'direct' | 'steer' | 'queued';
   requestedKind: TurnKind;
+  attachmentIds?: string[];
   turnConfig?: TurnConfig;
   consumedInputIds?: string[];
 };
@@ -45,6 +46,7 @@ export type TurnExecutionContext = {
 export type TurnDispatchArgs = {
   user: TurnUserContext;
   content: string;
+  attachmentIds?: string[];
   mode?: MessageDispatchMode;
   turnId?: string;
   kind?: TurnKind;
@@ -96,6 +98,7 @@ export type PersistedRuntimeInput = {
   createdAt: string;
   source: 'steer' | 'queued';
   requestedKind: TurnKind;
+  attachmentIds?: string[];
   turnConfig?: TurnConfig;
 };
 

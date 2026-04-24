@@ -2,9 +2,19 @@ import type { StoredEvent } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
 import type { SessionContextState } from './session-context-store.js';
 
+export type ResponsesInputTextPart = {
+  type: 'input_text';
+  text: string;
+};
+
+export type ResponsesInputImagePart = {
+  type: 'input_image';
+  image_url: string;
+};
+
 export type ResponsesMessageInput = {
   role: 'user' | 'assistant';
-  content: string;
+  content: string | Array<ResponsesInputTextPart | ResponsesInputImagePart>;
 };
 
 export type ResponsesModelInputItem = Record<string, unknown>;
@@ -464,7 +474,7 @@ export const buildResponsesCompactionInput = (args: {
   stickyMessages?: ResponsesMessageInput[];
 }): BuildResponsesHistoryInputResult => {
   const stickyCandidates = (args.stickyMessages ?? [])
-    .map((message) => createCandidate(message.role, message.content))
+    .map((message) => createCandidate(message.role, extractResponseContentText(message.content)))
     .filter((candidate): candidate is HistoryInputCandidate => Boolean(candidate));
   const stickyKeys = new Set(stickyCandidates.map(candidateKey));
 

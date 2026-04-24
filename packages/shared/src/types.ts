@@ -158,6 +158,18 @@ export interface ToolResultEvent extends StoredEventBase {
   meta?: Record<string, unknown>;
 }
 
+export interface ImageMessageEvent extends StoredEventBase {
+  kind: 'image';
+  file: FileRecord;
+  operation: 'generate' | 'edit';
+  provider: 'openai';
+  model: string;
+  source: 'responses_tool' | 'images_generate_api' | 'images_edit_api';
+  prompt: string;
+  revisedPrompt?: string;
+  inputFileIds?: string[];
+}
+
 export interface FileEvent extends StoredEventBase {
   kind: 'file';
   file: FileRecord;
@@ -174,6 +186,7 @@ export type StoredEvent =
   | ToolCallEvent
   | ToolProgressEvent
   | ToolResultEvent
+  | ImageMessageEvent
   | FileEvent
   | ErrorEvent;
 
@@ -232,6 +245,7 @@ export interface TurnConfig {
 
 export interface MessageDispatchRequest {
   content: string;
+  attachmentIds?: string[];
   dispatch?: MessageDispatchMode;
   turnId?: string;
   kind?: TurnKind;

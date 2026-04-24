@@ -113,6 +113,9 @@ export const createMessageSchema = z.object({
     .trim()
     .min(1, '消息内容不能为空')
     .max(20_000, '消息内容过长，请精简后再发送'),
+  attachmentIds: z.array(z.string().trim().min(1, 'attachmentId 不能为空'))
+    .max(16, '单条消息最多附带 16 个附件')
+    .optional(),
   dispatch: z.enum(['auto', 'new_turn', 'steer', 'queue_next']).optional(),
   turnId: z.string().trim().min(1, 'turnId 不能为空').optional(),
   kind: z.enum(['regular', 'review', 'compact', 'maintenance']).optional(),

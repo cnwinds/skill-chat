@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import type { AssistantMessageMeta, FileRecord, StoredEvent, TokenUsageStats } from '@skillchat/shared';
 import { cn, formatBytes } from '../lib/utils';
 import type { ToolTraceDisplayEvent } from '../lib/timeline';
+import { useFilePreviewUrl } from '../hooks/useFilePreviewUrl';
 
 type Props = {
   event:
@@ -12,6 +13,7 @@ type Props = {
     | { kind: 'pending_text'; content: string };
   assistantMeta?: AssistantMessageMeta;
   onDownload?: (file: FileRecord) => void;
+  onReuseImage?: (file: FileRecord) => void;
   downloading?: boolean;
   canExpandToolTrace?: boolean;
 };
@@ -167,6 +169,58 @@ const AssistantMetaFooter = ({ meta }: { meta?: AssistantMessageMeta }) => {
   );
 };
 
+const ImageEventCard = ({
+  event,
+  onDownload,
+  onReuseImage,
+  downloading,
+}: {
+  event: Extract<StoredEvent, { kind: 'image' }>;
+  onDownload?: (file: FileRecord) => void;
+  onReuseImage?: (file: FileRecord) => void;
+  downloading: boolean;
+}) => {
+  const { previewUrl, loading, error } = useFilePreviewUrl(event.file, event.file.mimeType?.startsWith('image/') === true);
+
+  return (
+    <article className="image-card">
+      <div className="image-card-preview-shell">
+        {previewUrl ? (
+          <img
+            className="image-card-preview"
+            src={previewUrl}
+            alt={event.revisedPrompt || event.prompt || event.file.displayName}
+            loading="lazy"
+          />
+        ) : (
+          <div className="image-card-preview image-card-preview-placeholder">
+            {loading ? '图片加载中...' : (error ? '图片预览失败' : '图片暂不可预览')}
+          </div>
+        )}
+      </div>
+      <div className="image-card-body">
+        <div className="status-label">{event.operation === 'edit' ? '图片编辑' : '图片生成'}</div>
+        <div className="file-name">{event.file.displayName}</div>
+        <div className="file-meta">
+          {event.model} · {event.file.mimeType ?? 'image/png'} · {formatBytes(event.file.size)}
+        </div>
+        <div className="image-card-prompt">
+          <strong>提示词</strong>
+          <span>{event.revisedPrompt || event.prompt}</span>
+        </div>
+        <div className="image-card-actions">
+          <button type="button" className="subtle-button" onClick={() => onDownload?.(event.file)} disabled={downloading}>
+            下载
+          </button>
+          <button type="button" className="subtle-button" onClick={() => onReuseImage?.(event.file)}>
+            继续编辑
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+};
+
 const markdownComponents: Components = {
   table: ({ node: _node, ...props }) => (
     <div className="message-table-shell">
@@ -277,7 +331,14 @@ const ThinkingBubble = ({ createdAt, content }: { createdAt: string; content: st
   );
 };
 
-export const MessageItem = ({ event, assistantMeta, onDownload, downloading = false, canExpandToolTrace = true }: Props) => {
+export const MessageItem = ({
+  event,
+  assistantMeta,
+  onDownload,
+  onReuseImage,
+  downloading = false,
+  canExpandToolTrace = true,
+}: Props) => {
   if (event.kind === 'pending_text') {
     return (
       <article className="message-row assistant">
@@ -420,6 +481,17 @@ export const MessageItem = ({ event, assistantMeta, onDownload, downloading = fa
           下载
         </button>
       </article>
+    );
+  }
+
+  if (event.kind === 'image') {
+    return (
+      <ImageEventCard
+        event={event}
+        onDownload={onDownload}
+        onReuseImage={onReuseImage}
+        downloading={downloading}
+      />
     );
   }
 

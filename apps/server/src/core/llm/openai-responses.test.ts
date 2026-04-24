@@ -167,4 +167,125 @@ describe('streamOpenAIResponsesText', () => {
     await expect(iterator.next()).rejects.toThrow(/abort/i);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('retries once without max_output_tokens when a compatible proxy rejects that parameter', async () => {
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({
+          detail: 'Unsupported parameter: max_output_tokens',
+        }),
+        {
+          status: 400,
+          headers: {
+            'content-type': 'application/json',
+          },
+        },
+      ))
+      .mockResolvedValueOnce(createAbortAwareResponsesStream({
+        items: [
+          {
+            delayMs: 0,
+            event: 'response.output_text.delta',
+            data: {
+              type: 'response.output_text.delta',
+              delta: '兼容回退成功',
+            },
+          },
+        ],
+      }));
+
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const chunks: string[] = [];
+    for await (const chunk of streamOpenAIResponsesText({
+      apiKey: 'test-token',
+      baseUrl: 'http://example.com/v1',
+      timeoutMs: 200,
+      body: {
+        model: 'gpt-5.4',
+        input: '你好',
+        max_output_tokens: 256,
+      },
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual(['兼容回退成功']);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    const firstPayload = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    const secondPayload = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body));
+    expect(firstPayload.max_output_tokens).toBe(256);
+    expect(secondPayload.max_output_tokens).toBeUndefined();
+    expect(secondPayload.stream).toBe(true);
+  });
+
+  it('remembers incompatible base urls and omits max_output_tokens on later requests', async () => {
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({
+          detail: 'Unsupported parameter: max_output_tokens',
+        }),
+        {
+          status: 400,
+          headers: {
+            'content-type': 'application/json',
+          },
+        },
+      ))
+      .mockResolvedValueOnce(createAbortAwareResponsesStream({
+        items: [
+          {
+            delayMs: 0,
+            event: 'response.output_text.delta',
+            data: {
+              type: 'response.output_text.delta',
+              delta: '第一次请求成功',
+            },
+          },
+        ],
+      }))
+      .mockResolvedValueOnce(createAbortAwareResponsesStream({
+        items: [
+          {
+            delayMs: 0,
+            event: 'response.output_text.delta',
+            data: {
+              type: 'response.output_text.delta',
+              delta: '第二次直接成功',
+            },
+          },
+        ],
+      }));
+
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const readAll = async (input: string) => {
+      const chunks: string[] = [];
+      for await (const chunk of streamOpenAIResponsesText({
+        apiKey: 'test-token',
+        baseUrl: 'http://proxy.example.com/v1',
+        timeoutMs: 200,
+        body: {
+          model: 'gpt-5.4',
+          input,
+          max_output_tokens: 256,
+        },
+      })) {
+        chunks.push(chunk);
+      }
+      return chunks.join('');
+    };
+
+    await expect(readAll('第一次')).resolves.toBe('第一次请求成功');
+    await expect(readAll('第二次')).resolves.toBe('第二次直接成功');
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+
+    const firstPayload = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    const secondPayload = JSON.parse(String(fetchSpy.mock.calls[1]?.[1]?.body));
+    const thirdPayload = JSON.parse(String(fetchSpy.mock.calls[2]?.[1]?.body));
+    expect(firstPayload.max_output_tokens).toBe(256);
+    expect(secondPayload.max_output_tokens).toBeUndefined();
+    expect(thirdPayload.max_output_tokens).toBeUndefined();
+  });
 });

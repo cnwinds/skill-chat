@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 import type {
   AssistantMessageMeta,
   FollowUpQueueMutationResponse,
+  ImageMessageEvent,
   MessageDispatchRequest,
   MessageDispatchResponse,
   MessageRole,
@@ -97,6 +98,7 @@ export class ChatService {
     return await runtime.dispatchMessage({
       user,
       content: input.content,
+      attachmentIds: input.attachmentIds,
       mode: input.dispatch,
       turnId: input.turnId,
       kind: input.kind,
@@ -310,6 +312,38 @@ export class ChatService {
             event: 'text_delta',
             data: {
               content: delta,
+            },
+          });
+        },
+        onImageGenerated: async ({ file, operation, model, source, prompt, revisedPrompt, inputFileIds }) => {
+          execution.throwIfAborted();
+          execution.updatePhase('waiting_tool_result');
+          execution.setCanSteer(false);
+          const imageEvent: ImageMessageEvent = {
+            id: createEventId(),
+            sessionId,
+            kind: 'image',
+            file,
+            operation,
+            provider: 'openai',
+            model,
+            source,
+            prompt,
+            revisedPrompt,
+            inputFileIds,
+            createdAt: now(),
+          };
+          await this.emitStored(user.id, sessionId, imageEvent);
+          this.publish(sessionId, {
+            id: createEventId(),
+            event: 'file_ready',
+            data: {
+              file: {
+                id: file.id,
+                name: file.displayName,
+                size: file.size,
+                url: file.downloadUrl,
+              },
             },
           });
         },

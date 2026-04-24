@@ -507,6 +507,7 @@ a {
 
 .status-card,
 .file-card,
+.image-card,
 .skill-card,
 .notice-card,
 .empty-state,
@@ -518,6 +519,7 @@ a {
 
 .status-card,
 .file-card,
+.image-card,
 .skill-card,
 .notice-card {
   padding: 11px 12px;
@@ -722,8 +724,58 @@ a {
   align-items: center;
 }
 
+.image-card {
+  display: grid;
+  gap: 14px;
+}
+
+.image-card-preview-shell {
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.image-card-preview {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.image-card-preview-placeholder {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  color: var(--text-soft);
+}
+
+.image-card-body {
+  display: grid;
+  gap: 8px;
+}
+
+.image-card-prompt {
+  display: grid;
+  gap: 4px;
+  line-height: 1.5;
+  color: var(--text-soft);
+}
+
+.image-card-prompt strong {
+  color: var(--text-strong);
+}
+
+.image-card-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .message-list .status-card,
-.message-list .file-card {
+.message-list .file-card,
+.message-list .image-card {
   padding: 9px 10px;
   border-radius: 14px;
 }

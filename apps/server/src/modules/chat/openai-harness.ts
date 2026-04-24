@@ -1,4 +1,4 @@
-import type { SessionFileContext, StoredEvent, TurnConfig } from '@skillchat/shared';
+import type { FileRecord, SessionFileContext, StoredEvent, TurnConfig } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
 import { isOpenAIResponsesRecord, streamOpenAIResponsesEvents } from '../../core/llm/openai-responses.js';
 import { HarnessError, toHarnessError } from '../../core/llm/harness-error.js';
@@ -6,6 +6,7 @@ import type { TokenUsage } from '../../core/llm/token-tracker.js';
 import type { AssistantToolService } from '../tools/assistant-tool-service.js';
 import type { RunnerManager } from '../../core/runner/runner-manager.js';
 import type { RegisteredSkill } from '../skills/skill-registry.js';
+import { OpenAIImageService } from './openai-image-service.js';
 import {
   buildAssistantToolCatalog,
   toResponsesFunctionTool,
@@ -22,7 +23,7 @@ import {
   resolveCompactionSourceBudgetTokens,
   type ResponsesMessageInput,
 } from './openai-harness-context.js';
-import { buildOpenAIHarnessInstructions, toResponsesHarnessInput } from './openai-harness-prompt.js';
+import { buildOpenAIHarnessInstructions } from './openai-harness-prompt.js';
 
 type JsonRecord = Record<string, unknown>;
 type ResponsesInputItem = JsonRecord;
@@ -30,6 +31,15 @@ type ResponsesInputItem = JsonRecord;
 type HarnessCallbacks = ToolRuntimeCallbacks & {
   onRoundStart?: (round: number) => Promise<void> | void;
   onTextDelta?: (content: string) => Promise<void> | void;
+  onImageGenerated?: (event: {
+    source: 'responses_tool';
+    model: string;
+    operation: 'generate' | 'edit';
+    file: FileRecord;
+    prompt: string;
+    revisedPrompt?: string;
+    inputFileIds?: string[];
+  }) => Promise<void> | void;
   onReasoningDelta?: (event: { content: string; summaryIndex?: number }) => Promise<void> | void;
   onTokenUsage?: (usage: TokenUsage) => Promise<void> | void;
   onContextCompactionStart?: (event: {
@@ -42,6 +52,7 @@ type PendingHarnessInput = {
   inputId: string;
   content: string;
   createdAt: string;
+  attachmentIds?: string[];
 };
 
 type SamplingRequestResult = {
@@ -60,10 +71,47 @@ const REPLY_STREAM_IDLE_TIMEOUT_MS = 120_000;
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const normalizeText = (value: string) => value.replace(/\n{3,}/g, '\n\n').trim();
 const isJsonRecord = (value: unknown): value is JsonRecord => typeof value === 'object' && value !== null;
-const toUserMessageItem = (content: string): ResponsesMessageInput => ({
-  role: 'user',
-  content,
-});
+const extractMessageText = (message: ResponsesMessageInput) => typeof message.content === 'string'
+  ? message.content
+  : message.content
+    .flatMap((item) => (item.type === 'input_text' ? [item.text] : []))
+    .join('\n');
+
+const readImageGenerationResult = (value: unknown): string | null => {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = readImageGenerationResult(item);
+      if (nested) {
+        return nested;
+      }
+    }
+    return null;
+  }
+
+  if (!isJsonRecord(value)) {
+    return null;
+  }
+
+  if (typeof value.b64_json === 'string' && value.b64_json.trim()) {
+    return value.b64_json.trim();
+  }
+
+  if (typeof value.image_base64 === 'string' && value.image_base64.trim()) {
+    return value.image_base64.trim();
+  }
+
+  if (typeof value.result === 'string' && value.result.trim()) {
+    return value.result.trim();
+  }
+
+  return null;
+};
+
+type ImageServiceLike = Pick<OpenAIImageService, 'buildResponsesInputImages' | 'saveResponsesImageToolResult'>;
 
 const parseJsonArguments = (raw: unknown) => {
   if (typeof raw === 'string') {
@@ -131,6 +179,12 @@ export class OpenAIHarness {
     private readonly config: AppConfig,
     private readonly assistantToolService: AssistantToolService,
     private readonly runnerManager: RunnerManager,
+    private readonly openAIImageService: ImageServiceLike = {
+      buildResponsesInputImages: async () => [],
+      saveResponsesImageToolResult: async () => {
+        throw new Error('OpenAI image service is not configured');
+      },
+    },
   ) {}
 
   private get baseUrl() {
@@ -156,6 +210,7 @@ export class OpenAIHarness {
     userId: string;
     sessionId: string;
     message: string;
+    attachmentIds?: string[];
     history: StoredEvent[];
     files: SessionFileContext[];
     availableSkills?: RegisteredSkill[];
@@ -176,19 +231,34 @@ export class OpenAIHarness {
       webSearchMode: args.turnConfig?.webSearchMode ?? this.config.WEB_SEARCH_MODE,
       enabledSkillNames: availableSkills.map((skill) => skill.name),
     });
-    const tools = toolCatalog.map(toResponsesFunctionTool);
+    const tools = [
+      ...toolCatalog.map(toResponsesFunctionTool),
+      {
+        type: 'image_generation',
+        action: 'auto',
+      },
+    ];
     const instructions = buildOpenAIHarnessInstructions({
       config: this.config,
       files: args.files,
       availableSkills,
     });
 
-    let inputItems: ResponsesInputItem[] = toResponsesHarnessInput(args.history, args.message, {
+    const historyInput = buildResponsesHistoryInput({
       config: this.config,
+      history: args.history,
+      currentMessage: args.message,
       contextState: args.contextState,
+      appendCurrentMessage: false,
       injectionStrategy: 'prepend',
-    }) as unknown as ResponsesInputItem[];
-    let currentTurnUserMessages: ResponsesMessageInput[] = [toUserMessageItem(args.message)];
+    });
+    const initialUserMessage = await this.buildUserMessageItem(args.userId, args.message, args.attachmentIds);
+    let inputItems: ResponsesInputItem[] = [
+      ...historyInput.input as unknown as ResponsesInputItem[],
+      initialUserMessage as unknown as ResponsesInputItem,
+    ];
+    let currentTurnUserMessages: ResponsesMessageInput[] = [initialUserMessage];
+    let currentTurnAttachmentIds = [...new Set(args.attachmentIds ?? [])];
     const finalTextChunks: string[] = [];
     let cumulativeTokenUsage: TokenUsage | undefined;
 
@@ -209,6 +279,10 @@ export class OpenAIHarness {
         instructions,
         inputItems,
         tools,
+        userId: args.userId,
+        sessionId: args.sessionId,
+        currentPrompt: currentTurnUserMessages.map(extractMessageText).filter(Boolean).join('\n'),
+        currentInputFileIds: currentTurnAttachmentIds,
         signal: args.signal,
         callbacks: args.callbacks,
         turnConfig: args.turnConfig,
@@ -219,15 +293,24 @@ export class OpenAIHarness {
       if (samplingResult.localToolCalls.length === 0) {
         const pendingInputs = await args.drainPendingInputs?.() ?? [];
         if (pendingInputs.length > 0) {
+          const pendingInputItems = await Promise.all(
+            pendingInputs.map((input) => this.buildUserMessageItem(args.userId, input.content, input.attachmentIds)),
+          );
           const roundText = samplingResult.textDeltas.join('');
           currentTurnUserMessages = [
             ...currentTurnUserMessages,
-            ...pendingInputs.map((input) => toUserMessageItem(input.content)),
+            ...pendingInputItems,
+          ];
+          currentTurnAttachmentIds = [
+            ...new Set([
+              ...currentTurnAttachmentIds,
+              ...pendingInputs.flatMap((input) => input.attachmentIds ?? []),
+            ]),
           ];
           inputItems = [
             ...inputItems,
             ...(roundText ? [{ role: 'assistant', content: roundText }] : []),
-            ...pendingInputs.map((input) => toUserMessageItem(input.content)),
+            ...pendingInputItems,
           ] as ResponsesInputItem[];
 
           const continuation = await this.maybeCompactContinuationInput({
@@ -282,13 +365,22 @@ export class OpenAIHarness {
 
       const pendingInputs = await args.drainPendingInputs?.() ?? [];
       if (pendingInputs.length > 0) {
+        const pendingInputItems = await Promise.all(
+          pendingInputs.map((input) => this.buildUserMessageItem(args.userId, input.content, input.attachmentIds)),
+        );
         currentTurnUserMessages = [
           ...currentTurnUserMessages,
-          ...pendingInputs.map((input) => toUserMessageItem(input.content)),
+          ...pendingInputItems,
+        ];
+        currentTurnAttachmentIds = [
+          ...new Set([
+            ...currentTurnAttachmentIds,
+            ...pendingInputs.flatMap((input) => input.attachmentIds ?? []),
+          ]),
         ];
         inputItems = [
           ...inputItems,
-          ...pendingInputs.map((input) => toUserMessageItem(input.content)),
+          ...pendingInputItems,
         ] as ResponsesInputItem[];
       }
 
@@ -348,6 +440,28 @@ export class OpenAIHarness {
     };
   }
 
+  private async buildUserMessageItem(userId: string, content: string, attachmentIds?: string[]): Promise<ResponsesMessageInput> {
+    const normalizedAttachmentIds = [...new Set(attachmentIds ?? [])];
+    if (normalizedAttachmentIds.length === 0) {
+      return {
+        role: 'user',
+        content,
+      };
+    }
+
+    const inputImages = await this.openAIImageService.buildResponsesInputImages(userId, normalizedAttachmentIds);
+    return {
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: content,
+        },
+        ...inputImages,
+      ],
+    };
+  }
+
   private throwIfAborted(signal?: AbortSignal) {
     if (!signal?.aborted) {
       return;
@@ -360,6 +474,10 @@ export class OpenAIHarness {
     instructions: string;
     inputItems: ResponsesInputItem[];
     tools: Array<Record<string, unknown>>;
+    userId: string;
+    sessionId: string;
+    currentPrompt: string;
+    currentInputFileIds: string[];
     signal?: AbortSignal;
     callbacks?: HarnessCallbacks;
     turnConfig?: TurnConfig;
@@ -412,6 +530,29 @@ export class OpenAIHarness {
             }
             if (shouldReplayCompletedItem(eventItem)) {
               completedItems.push(eventItem);
+            }
+            if (eventItem.type === 'image_generation_call') {
+              const base64Image = readImageGenerationResult(eventItem.result);
+              if (!base64Image) {
+                throw new Error('图片生成工具未返回可用图片');
+              }
+              const savedImage = await this.openAIImageService.saveResponsesImageToolResult({
+                userId: args.userId,
+                sessionId: args.sessionId,
+                prompt: args.currentPrompt,
+                base64Image,
+                revisedPrompt: typeof eventItem.revised_prompt === 'string' ? eventItem.revised_prompt : undefined,
+                inputFileIds: args.currentInputFileIds,
+              });
+              await args.callbacks?.onImageGenerated?.({
+                source: 'responses_tool',
+                model: savedImage.model,
+                operation: savedImage.operation,
+                file: savedImage.file,
+                prompt: savedImage.prompt,
+                revisedPrompt: savedImage.revisedPrompt,
+                inputFileIds: savedImage.inputFileIds,
+              });
             }
             if (eventItem.type === 'function_call') {
               const callId = typeof eventItem.call_id === 'string' && eventItem.call_id

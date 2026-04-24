@@ -10,6 +10,13 @@ const persistedInputSchema = z.object({
   createdAt: z.string(),
   source: z.enum(['steer', 'queued']),
   requestedKind: turnKindSchema,
+  attachmentIds: z.array(z.string().trim().min(1)).optional(),
+  turnConfig: z.object({
+    model: z.string().trim().min(1).optional(),
+    reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+    webSearchMode: z.enum(['disabled', 'cached', 'live']).optional(),
+  }).optional(),
 });
 
 const persistedActiveTurnSchema = z.object({

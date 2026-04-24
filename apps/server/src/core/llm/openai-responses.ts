@@ -108,43 +108,93 @@ const maybeThrowStreamError = (event: OpenAIResponsesStreamEvent) => {
 
 export const isOpenAIResponsesRecord = isRecord;
 
+const responsesCompatibilityCache = new Map<string, {
+  omitMaxOutputTokens: boolean;
+}>();
+
+const createResponsesRequestBody = (
+  baseUrl: string,
+  body: Record<string, unknown>,
+  options: {
+    omitMaxOutputTokens?: boolean;
+  } = {},
+) => {
+  const cached = responsesCompatibilityCache.get(baseUrl.replace(/\/+$/, ''));
+  if (options.omitMaxOutputTokens || cached?.omitMaxOutputTokens) {
+    const { max_output_tokens: _maxOutputTokens, ...rest } = body;
+    return {
+      ...rest,
+      stream: true,
+    };
+  }
+
+  return {
+    ...body,
+    stream: true,
+  };
+};
+
+const createResponsesRequest = async (
+  controller: AbortController,
+  options: StreamResponsesOptions,
+  requestBody: Record<string, unknown>,
+) => await runWithInactivityTimeout({
+  timeoutMs: options.timeoutMs,
+  controller,
+  task: () => fetch(`${options.baseUrl.replace(/\/+$/, '')}/responses`, {
+    method: 'POST',
+    signal: controller.signal,
+    headers: {
+      'content-type': 'application/json',
+      Authorization: `Bearer ${options.apiKey}`,
+    },
+    body: JSON.stringify(requestBody),
+  }),
+});
+
+const shouldRetryWithoutMaxOutputTokens = (
+  response: Response,
+  bodyText: string,
+  requestBody: Record<string, unknown>,
+) => (
+  response.status === 400
+  && Object.prototype.hasOwnProperty.call(requestBody, 'max_output_tokens')
+  && /unsupported parameter:\s*max_output_tokens/i.test(bodyText)
+);
+
 export async function* streamOpenAIResponsesEvents(options: StreamResponsesOptions): AsyncIterable<OpenAIResponsesStreamEvent> {
   const controller = new AbortController();
+  const normalizedBaseUrl = options.baseUrl.replace(/\/+$/, '');
   const forwardAbort = () => {
     controller.abort(options.signal?.reason);
   };
   options.signal?.addEventListener('abort', forwardAbort, { once: true });
-  const response = await runWithInactivityTimeout({
-    timeoutMs: options.timeoutMs,
-    controller,
-    task: () => fetch(`${options.baseUrl.replace(/\/+$/, '')}/responses`, {
-      method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'content-type': 'application/json',
-            Authorization: `Bearer ${options.apiKey}`,
-      },
-      body: JSON.stringify({
-        ...options.body,
-        stream: true,
-      }),
-    }),
-  });
+  let requestBody = createResponsesRequestBody(normalizedBaseUrl, options.body);
+  let response = await createResponsesRequest(controller, options, requestBody);
 
   if (!response.ok) {
-    const body = await response.text();
-    const message = `OpenAI Responses request failed: ${response.status} ${body}`.trim();
-    const retryDelayMs = toRetryDelayMs(response.headers.get('retry-after'));
-    if (response.status === 429) {
-      throw new HarnessError('usage_limit_reached', message, true, response.status, retryDelayMs);
+    let body = await response.text();
+    if (shouldRetryWithoutMaxOutputTokens(response, body, requestBody)) {
+      responsesCompatibilityCache.set(normalizedBaseUrl, { omitMaxOutputTokens: true });
+      requestBody = createResponsesRequestBody(normalizedBaseUrl, options.body, { omitMaxOutputTokens: true });
+      response = await createResponsesRequest(controller, options, requestBody);
+      body = response.ok ? '' : await response.text();
     }
-    if (response.status >= 500 || response.status === 408) {
-      throw new HarnessError('stream_disconnected', message, true, response.status, retryDelayMs, 'http');
+
+    if (!response.ok) {
+      const message = `OpenAI Responses request failed: ${response.status} ${body}`.trim();
+      const retryDelayMs = toRetryDelayMs(response.headers.get('retry-after'));
+      if (response.status === 429) {
+        throw new HarnessError('usage_limit_reached', message, true, response.status, retryDelayMs);
+      }
+      if (response.status >= 500 || response.status === 408) {
+        throw new HarnessError('stream_disconnected', message, true, response.status, retryDelayMs, 'http');
+      }
+      if (response.status === 400 && /context|token/i.test(body)) {
+        throw new HarnessError('context_window_exceeded', message, true, response.status);
+      }
+      throw new HarnessError('unknown', message, false, response.status);
     }
-    if (response.status === 400 && /context|token/i.test(body)) {
-      throw new HarnessError('context_window_exceeded', message, true, response.status);
-    }
-    throw new HarnessError('unknown', message, false, response.status);
   }
 
   if (!response.body) {

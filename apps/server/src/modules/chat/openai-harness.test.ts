@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
+import type { FileRecord } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
 import { OpenAIHarness } from './openai-harness.js';
 
@@ -330,6 +331,179 @@ describe('OpenAIHarness', () => {
     expect(reasoning).toEqual([{ content: '先整理约束，', summaryIndex: 0 }]);
     expect(usages).toEqual([{ inputTokens: 120, outputTokens: 45, totalTokens: 165 }]);
     expect(result.tokenUsage).toEqual({ inputTokens: 120, outputTokens: 45, totalTokens: 165 });
+  });
+
+  it('embeds uploaded image attachments into the current user message for Responses', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(createResponsesStreamResponse([
+      {
+        event: 'response.output_text.delta',
+        data: {
+          type: 'response.output_text.delta',
+          delta: '我会基于图片继续编辑。',
+        },
+      },
+    ]));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const buildResponsesInputImages = vi.fn().mockResolvedValue([
+      {
+        type: 'input_image' as const,
+        image_url: 'data:image/png;base64,abc123',
+      },
+    ]);
+
+    const harness = new OpenAIHarness(
+      createConfig(),
+      {
+        execute: vi.fn(),
+      } as never,
+      {} as never,
+      {
+        buildResponsesInputImages,
+        saveResponsesImageToolResult: vi.fn(),
+      } as never,
+    );
+
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '参考这张图继续改',
+      attachmentIds: ['img_1', 'img_1'],
+      history: [],
+      files: [],
+    });
+
+    expect(result.finalText).toContain('基于图片继续编辑');
+    expect(buildResponsesInputImages).toHaveBeenCalledWith('u1', ['img_1']);
+
+    const firstRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const userMessage = firstRequest.input.find((item: { role?: string }) => item.role === 'user');
+    expect(userMessage).toMatchObject({
+      role: 'user',
+      content: [
+        {
+          type: 'input_text',
+          text: '参考这张图继续改',
+        },
+        {
+          type: 'input_image',
+          image_url: 'data:image/png;base64,abc123',
+        },
+      ],
+    });
+  });
+
+  it('emits image generation callbacks when Responses returns an image_generation_call', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(createResponsesStreamResponse([
+      {
+        event: 'response.output_item.done',
+        data: {
+          type: 'response.output_item.done',
+          item: {
+            id: 'img_call_1',
+            type: 'image_generation_call',
+            result: 'base64-image-payload',
+            revised_prompt: '一张更适合做横幅的海报',
+          },
+        },
+      },
+      {
+        event: 'response.completed',
+        data: {
+          type: 'response.completed',
+          response: {
+            usage: {
+              input_tokens: 60,
+              output_tokens: 25,
+              total_tokens: 85,
+            },
+          },
+        },
+      },
+    ]));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const generatedFile: FileRecord = {
+      id: 'file_img_1',
+      userId: 'u1',
+      sessionId: 's1',
+      displayName: 'generated-banner.png',
+      relativePath: 'sessions/s1/outputs/generated-banner.png',
+      mimeType: 'image/png',
+      size: 2048,
+      bucket: 'outputs',
+      source: 'generated',
+      createdAt: '2026-04-12T00:00:00.000Z',
+      downloadUrl: '/api/files/file_img_1/download',
+    };
+    const saveResponsesImageToolResult = vi.fn().mockResolvedValue({
+      file: generatedFile,
+      prompt: '生成一张横版海报',
+      revisedPrompt: '一张更适合做横幅的海报',
+      operation: 'generate' as const,
+      source: 'responses_tool' as const,
+      model: 'gpt-image-2',
+      inputFileIds: undefined,
+    });
+
+    const harness = new OpenAIHarness(
+      createConfig(),
+      {
+        execute: vi.fn(),
+      } as never,
+      {} as never,
+      {
+        buildResponsesInputImages: vi.fn().mockResolvedValue([]),
+        saveResponsesImageToolResult,
+      } as never,
+    );
+
+    const generatedEvents: Array<{
+      source: 'responses_tool';
+      model: string;
+      operation: 'generate' | 'edit';
+      file: FileRecord;
+      prompt: string;
+      revisedPrompt?: string;
+      inputFileIds?: string[];
+    }> = [];
+
+    const result = await harness.run({
+      userId: 'u1',
+      sessionId: 's1',
+      message: '生成一张横版海报',
+      history: [],
+      files: [],
+      callbacks: {
+        onImageGenerated: (event) => {
+          generatedEvents.push(event);
+        },
+      },
+    });
+
+    expect(result.finalText).toBe('');
+    expect(result.tokenUsage).toEqual({ inputTokens: 60, outputTokens: 25, totalTokens: 85 });
+    expect(saveResponsesImageToolResult).toHaveBeenCalledWith(expect.objectContaining({
+      userId: 'u1',
+      sessionId: 's1',
+      prompt: '生成一张横版海报',
+      base64Image: 'base64-image-payload',
+      revisedPrompt: '一张更适合做横幅的海报',
+      inputFileIds: [],
+    }));
+    expect(generatedEvents).toEqual([
+      {
+        source: 'responses_tool',
+        model: 'gpt-image-2',
+        operation: 'generate',
+        file: generatedFile,
+        prompt: '生成一张横版海报',
+        revisedPrompt: '一张更适合做横幅的海报',
+        inputFileIds: undefined,
+      },
+    ]);
   });
 
   it('uses local web_search function tool inside the harness loop', async () => {

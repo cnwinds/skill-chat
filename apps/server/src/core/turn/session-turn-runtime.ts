@@ -77,6 +77,7 @@ const toPersistedInput = (input: RuntimeInput): PersistedRuntimeInput => ({
   createdAt: input.createdAt,
   source: input.source === 'steer' ? 'steer' : 'queued',
   requestedKind: input.requestedKind,
+  attachmentIds: input.attachmentIds,
   turnConfig: input.turnConfig,
 });
 
@@ -86,6 +87,7 @@ const fromPersistedInput = (input: PersistedRuntimeInput): QueuedRuntimeInput =>
   createdAt: input.createdAt,
   source: input.source,
   requestedKind: input.requestedKind,
+  attachmentIds: input.attachmentIds,
   turnConfig: input.turnConfig,
 });
 
@@ -138,7 +140,7 @@ export class SessionTurnRuntime {
     const activeTurn = this.activeTurn;
 
     if (!activeTurn) {
-      return this.startTurn(args.user, this.createInput(args.content, 'direct', requestedKind, args.turnConfig));
+      return this.startTurn(args.user, this.createInput(args.content, 'direct', requestedKind, args.turnConfig, args.attachmentIds));
     }
 
     const mode = args.mode ?? 'auto';
@@ -153,7 +155,7 @@ export class SessionTurnRuntime {
     );
 
     if (canAcceptSteer) {
-      activeTurn.pendingInputs.push(this.createInput(args.content, 'steer', requestedKind, args.turnConfig));
+      activeTurn.pendingInputs.push(this.createInput(args.content, 'steer', requestedKind, args.turnConfig, args.attachmentIds));
       await this.persistSnapshot();
       this.publishTurnStatus(activeTurn);
       return {
@@ -174,6 +176,7 @@ export class SessionTurnRuntime {
       mode === 'steer' ? 'steer' : 'queued',
       requestedKind,
       args.turnConfig,
+      args.attachmentIds,
     );
     this.queuedInputs.push(queuedInput);
     await this.persistSnapshot();
@@ -270,6 +273,7 @@ export class SessionTurnRuntime {
     source: RuntimeInput['source'],
     requestedKind: TurnKind,
     turnConfig?: RuntimeInput['turnConfig'],
+    attachmentIds?: string[],
   ): RuntimeInput {
     return {
       inputId: createInputId(),
@@ -277,6 +281,7 @@ export class SessionTurnRuntime {
       createdAt: now(),
       source,
       requestedKind,
+      attachmentIds: attachmentIds && attachmentIds.length > 0 ? [...new Set(attachmentIds)] : undefined,
       turnConfig,
     };
   }
@@ -296,6 +301,7 @@ export class SessionTurnRuntime {
       createdAt: last.createdAt,
       source: last.source,
       requestedKind: last.requestedKind,
+      attachmentIds: [...new Set(inputs.flatMap((input) => input.attachmentIds ?? []))],
       turnConfig: last.turnConfig,
       consumedInputIds: inputs.map((input) => input.inputId),
     };

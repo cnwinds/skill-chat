@@ -30,6 +30,7 @@ const firstIssueMessage = (issues: Array<{ message: string }>) => issues[0]?.mes
 
 type ComposerAttachment = {
   localId: string;
+  fileId?: string;
   displayName: string;
   mimeType: string | null;
   size: number;
@@ -86,6 +87,30 @@ const buildRuntimeThinkingEvent = (args: {
     content,
     createdAt: args.phaseStartedAt,
   };
+};
+
+const hasPersistedTurnResult = (events: StoredEvent[], startedAt: string | null) => {
+  if (!startedAt) {
+    return false;
+  }
+
+  const startedAtMs = Date.parse(startedAt);
+  if (Number.isNaN(startedAtMs)) {
+    return false;
+  }
+
+  return events.some((event) => {
+    const eventAtMs = Date.parse(event.createdAt);
+    if (Number.isNaN(eventAtMs) || eventAtMs < startedAtMs) {
+      return false;
+    }
+
+    if (event.kind === 'message') {
+      return event.role === 'assistant';
+    }
+
+    return event.kind === 'image' || event.kind === 'file' || event.kind === 'error';
+  });
 };
 
 const AuthCard = ({
@@ -830,6 +855,7 @@ const SessionWorkspace = () => {
   const setMobilePanel = useUiStore((state) => state.setMobilePanel);
   const drafts = useUiStore((state) => state.drafts);
   const setDraft = useUiStore((state) => state.setDraft);
+  const clearActiveTurn = useUiStore((state) => state.clearActiveTurn);
   const clearStreamContent = useUiStore((state) => state.clearStreamContent);
   const hydrateRuntime = useUiStore((state) => state.hydrateRuntime);
   const confirmRemovedFollowUpInput = useUiStore((state) => state.confirmRemovedFollowUpInput);
@@ -1047,17 +1073,44 @@ const SessionWorkspace = () => {
     }
   }, [activeSessionId, hydrateRuntime, runtimeQuery.data, runtimeQuery.isFetchedAfterMount]);
 
+  useEffect(() => {
+    if (
+      !activeSessionId ||
+      !runtimeQuery.data ||
+      !runtimeQuery.isFetchedAfterMount ||
+      runtimeQuery.data.activeTurn !== null ||
+      !stream.activeTurnId ||
+      !hasPersistedTurnResult(messagesQuery.data ?? [], stream.activeTurnStartedAt)
+    ) {
+      return;
+    }
+
+    clearActiveTurn(activeSessionId);
+    clearStreamContent(activeSessionId);
+  }, [
+    activeSessionId,
+    clearActiveTurn,
+    clearStreamContent,
+    messagesQuery.data,
+    runtimeQuery.data,
+    runtimeQuery.isFetchedAfterMount,
+    stream.activeTurnId,
+    stream.activeTurnStartedAt,
+  ]);
+
   const sendMessageMutation = useMutation({
-    mutationFn: (payload: { sessionId: string; content: string; activeTurnId: string | null }) => {
+    mutationFn: (payload: { sessionId: string; content: string; attachmentIds: string[]; activeTurnId: string | null }) => {
       if (payload.activeTurnId) {
         return api.sendMessage(payload.sessionId, {
           content: payload.content,
+          attachmentIds: payload.attachmentIds,
           dispatch: 'auto',
           turnId: payload.activeTurnId,
         });
       }
       return api.sendMessage(payload.sessionId, {
         content: payload.content,
+        attachmentIds: payload.attachmentIds,
         dispatch: 'new_turn',
       });
     },
@@ -1293,6 +1346,7 @@ const SessionWorkspace = () => {
           item.localId === localId
             ? {
               ...item,
+              fileId: record.id,
               displayName: record.displayName,
               mimeType: record.mimeType,
               size: record.size,
@@ -1329,16 +1383,43 @@ const SessionWorkspace = () => {
     void uploadComposerFiles(pastedImages);
   };
 
+  const handleReuseImage = (file: FileRecord) => {
+    if (!activeSessionId) {
+      return;
+    }
+
+    updateComposerAttachments(activeSessionId, (current) => {
+      if (current.some((item) => item.fileId === file.id)) {
+        return current;
+      }
+      return [
+        ...current,
+        {
+          localId: createComposerAttachmentId(),
+          fileId: file.id,
+          displayName: file.displayName,
+          mimeType: file.mimeType,
+          size: file.size,
+          status: 'uploaded',
+        },
+      ];
+    });
+  };
+
   const handleSend = () => {
     if (!activeSessionId || !draft.trim() || hasUploadingAttachments || sendMessageMutation.isPending || interruptMutation.isPending) {
       return;
     }
     const value = draft.trim();
+    const attachmentIds = composerAttachments
+      .filter((item) => item.status === 'uploaded' && typeof item.fileId === 'string')
+      .map((item) => item.fileId as string);
     setDraft(activeSessionId, '');
     setPageError(null);
     sendMessageMutation.mutate({
       sessionId: activeSessionId,
       content: value,
+      attachmentIds,
       activeTurnId: stream.activeTurnId,
     });
   };
@@ -1555,6 +1636,7 @@ const SessionWorkspace = () => {
                         key={event.id}
                         event={event}
                         onDownload={(file) => downloadMutation.mutate(file)}
+                        onReuseImage={handleReuseImage}
                         downloading={downloadMutation.isPending}
                         canExpandToolTrace={user.role === 'admin'}
                       />
@@ -1570,6 +1652,7 @@ const SessionWorkspace = () => {
                           reasoningSummary: stream.reasoningSummary || undefined,
                         }}
                         onDownload={(file) => downloadMutation.mutate(file)}
+                        onReuseImage={handleReuseImage}
                         downloading={downloadMutation.isPending}
                         canExpandToolTrace={user.role === 'admin'}
                       />
@@ -1579,6 +1662,7 @@ const SessionWorkspace = () => {
                         key={thinkingEvent.id}
                         event={thinkingEvent}
                         onDownload={(file) => downloadMutation.mutate(file)}
+                        onReuseImage={handleReuseImage}
                         downloading={downloadMutation.isPending}
                         canExpandToolTrace={user.role === 'admin'}
                       />

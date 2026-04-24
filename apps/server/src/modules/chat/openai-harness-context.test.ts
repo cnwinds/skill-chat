@@ -5,6 +5,15 @@ import {
   shouldAutoCompactHistory,
 } from './openai-harness-context.js';
 
+const getMessageText = (content: string | Array<{ type: string; text?: string }>) => (
+  typeof content === 'string'
+    ? content
+    : content
+      .map((item) => item.text ?? '')
+      .filter(Boolean)
+      .join('\n')
+);
+
 describe('openai-harness-context', () => {
   it('does not cap history to the latest 16 messages when budget allows', () => {
     const history = Array.from({ length: 20 }, (_, index) => ({
@@ -82,11 +91,11 @@ describe('openai-harness-context', () => {
       maxTokens: 2_000,
     });
 
-    expect(result.input[0]?.content).toContain('会话压缩摘要');
-    expect(result.input[0]?.content).toContain('用户之前主要比较专业就业和城市');
-    expect(result.input.some((item) => item.content.includes('旧问题'))).toBe(false);
-    expect(result.input.some((item) => item.content.includes('已搜索到最新就业数据'))).toBe(true);
-    expect(result.input.some((item) => item.content.includes('继续，把杭州也加进来'))).toBe(true);
+    expect(getMessageText(result.input[0]?.content ?? '')).toContain('会话压缩摘要');
+    expect(getMessageText(result.input[0]?.content ?? '')).toContain('用户之前主要比较专业就业和城市');
+    expect(result.input.some((item) => getMessageText(item.content).includes('旧问题'))).toBe(false);
+    expect(result.input.some((item) => getMessageText(item.content).includes('已搜索到最新就业数据'))).toBe(true);
+    expect(result.input.some((item) => getMessageText(item.content).includes('继续，把杭州也加进来'))).toBe(true);
   });
 
   it('triggers auto compact when history exceeds the configured token limit', () => {
@@ -171,8 +180,8 @@ describe('openai-harness-context', () => {
       injectionStrategy: 'before_last_user',
     });
 
-    expect(result.input[0]?.content).toContain('前文答到一半');
-    expect(result.input[1]?.content).toContain('会话压缩摘要');
-    expect(result.input[2]?.content).toContain('继续，并补充杭州数据');
+    expect(getMessageText(result.input[0]?.content ?? '')).toContain('前文答到一半');
+    expect(getMessageText(result.input[1]?.content ?? '')).toContain('会话压缩摘要');
+    expect(getMessageText(result.input[2]?.content ?? '')).toContain('继续，并补充杭州数据');
   });
 });

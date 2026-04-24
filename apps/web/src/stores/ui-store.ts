@@ -74,6 +74,7 @@ type UiState = {
   applyTurnStatus: (sessionId: string, payload: TurnLifecyclePayload) => void;
   applyUserMessageCommitted: (sessionId: string, payload: UserMessageCommittedPayload) => void;
   applyTurnCompleted: (sessionId: string, payload: TurnCompletedPayload) => void;
+  clearActiveTurn: (sessionId: string) => void;
   confirmRemovedFollowUpInput: (sessionId: string, inputId: string) => void;
   clearStreamContent: (sessionId: string) => void;
   resetStream: (sessionId: string) => void;
@@ -128,6 +129,17 @@ const mutateStream = (
 ) => ({
   ...streams,
   [sessionId]: updater(streams[sessionId] ?? emptyStream()),
+});
+
+const clearActiveTurnFields = (current: SessionStreamState): SessionStreamState => ({
+  ...current,
+  activeTurnId: null,
+  activeTurnKind: null,
+  activeTurnStatus: null,
+  activeTurnPhase: null,
+  activeTurnPhaseStartedAt: null,
+  activeTurnCanSteer: false,
+  activeTurnRound: null,
 });
 
 export const useUiStore = create<UiState>((set) => ({
@@ -285,16 +297,13 @@ export const useUiStore = create<UiState>((set) => ({
       }
 
       return {
-        ...current,
+        ...clearActiveTurnFields(current),
         activeTurnStatus: payload.status,
-        activeTurnId: null,
-        activeTurnKind: null,
-        activeTurnPhase: null,
-        activeTurnPhaseStartedAt: null,
-        activeTurnCanSteer: false,
-        activeTurnRound: null,
       };
     }),
+  })),
+  clearActiveTurn: (sessionId) => set((state) => ({
+    streams: mutateStream(state.streams, sessionId, (current) => clearActiveTurnFields(current)),
   })),
   confirmRemovedFollowUpInput: (sessionId, inputId) => set((state) => ({
     streams: mutateStream(state.streams, sessionId, (current) => ({

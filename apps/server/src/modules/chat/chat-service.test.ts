@@ -42,9 +42,9 @@ const testConfig = (): AppConfig => ({
   NODE_ENV: 'test',
   PORT: 3000,
   WEB_ORIGIN: 'http://localhost:5173',
-  DATA_ROOT: '/tmp/skillchat-data',
-  SKILLS_ROOT: '/tmp/skillchat-data/skills',
-  DB_PATH: '/tmp/skillchat-data/skillchat.sqlite',
+  DATA_ROOT: 'D:/ai_projects/qizhi/.tmp/skillchat-data',
+  SKILLS_ROOT: 'D:/ai_projects/qizhi/.tmp/skillchat-data/skills',
+  DB_PATH: 'D:/ai_projects/qizhi/.tmp/skillchat-data/skillchat.sqlite',
   CWD: '/workspace/qizhi',
   INLINE_JOBS: true,
   JWT_SECRET: 'test-secret',
@@ -113,6 +113,11 @@ const createService = (options: {
     await callbacks?.onTextDelta?.('默认回复');
     return { finalText: '默认回复', roundsUsed: 1 };
   });
+  const runtimePersistence = {
+    load: vi.fn(async () => null),
+    save: vi.fn(async () => undefined),
+    clear: vi.fn(async () => undefined),
+  };
 
   const service = new ChatService(
     {
@@ -146,6 +151,7 @@ const createService = (options: {
     } as never,
     contextStore as never,
   );
+  (service as unknown as { getRuntimePersistence: () => typeof runtimePersistence }).getRuntimePersistence = () => runtimePersistence;
 
   return {
     service,
@@ -155,6 +161,7 @@ const createService = (options: {
     harnessRun,
     compactContext,
     contextStore,
+    runtimePersistence,
   };
 };
 
@@ -281,6 +288,84 @@ describe('ChatService harness-only flow', () => {
         .map(([_, event]) => event.event)
         .filter((name) => name === 'text_delta'),
     ).toHaveLength(2);
+  });
+
+  it('persists generated images from harness callbacks and publishes file_ready', async () => {
+    const imageFile = {
+      id: 'file_img_1',
+      userId: 'u1',
+      sessionId: 's1',
+      displayName: 'generated-scene.png',
+      relativePath: 'sessions/s1/outputs/generated-scene.png',
+      mimeType: 'image/png',
+      size: 4096,
+      bucket: 'outputs',
+      source: 'generated',
+      createdAt: '2026-04-12T00:00:00.000Z',
+      downloadUrl: '/api/files/file_img_1/download',
+    };
+    const harnessRun = vi.fn(async ({ callbacks }: {
+      callbacks?: {
+        onImageGenerated?: (event: {
+          source: 'responses_tool';
+          model: string;
+          operation: 'generate' | 'edit';
+          file: Record<string, unknown>;
+          prompt: string;
+          revisedPrompt?: string;
+          inputFileIds?: string[];
+        }) => Promise<void> | void;
+      };
+    }) => {
+      await callbacks?.onImageGenerated?.({
+        source: 'responses_tool',
+        model: 'gpt-image-2',
+        operation: 'edit',
+        file: imageFile,
+        prompt: '把这张图改成黄昏海边',
+        revisedPrompt: '黄昏海边，暖色电影感',
+        inputFileIds: ['upload_img_1'],
+      });
+      return {
+        finalText: '',
+        roundsUsed: 1,
+      };
+    });
+
+    const { service, storedEvents, publish } = createService({ harnessRun });
+
+    await service.processMessage(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      '把这张图改成黄昏海边',
+    );
+
+    expect(storedEvents.map((event) => event.kind)).toEqual([
+      'message',
+      'image',
+    ]);
+    expect(storedEvents[1]).toMatchObject({
+      kind: 'image',
+      provider: 'openai',
+      model: 'gpt-image-2',
+      operation: 'edit',
+      source: 'responses_tool',
+      prompt: '把这张图改成黄昏海边',
+      revisedPrompt: '黄昏海边，暖色电影感',
+      inputFileIds: ['upload_img_1'],
+      file: imageFile,
+    });
+    expect(publish).toHaveBeenCalledWith('s1', expect.objectContaining({
+      event: 'file_ready',
+      data: {
+        file: {
+          id: 'file_img_1',
+          name: 'generated-scene.png',
+          size: 4096,
+          url: '/api/files/file_img_1/download',
+        },
+      },
+    }));
   });
 
   it('continues the same turn when harness drains a steer input between rounds', async () => {

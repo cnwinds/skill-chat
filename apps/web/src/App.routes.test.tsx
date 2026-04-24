@@ -1039,6 +1039,100 @@ describe('App routes', () => {
     });
   });
 
+  it('clears a stale running state when the runtime is idle and the final assistant reply is already persisted', async () => {
+    const finalAssistantMessage = {
+      id: 'evt_assistant_1',
+      sessionId: 's1',
+      kind: 'message' as const,
+      role: 'assistant' as const,
+      type: 'text' as const,
+      content: 'Hi! 怎么帮你？',
+      createdAt: '2026-04-12T00:00:04.200Z',
+    };
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Recovered Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({ body: [finalAssistantMessage] });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    useUiStore.setState({
+      activeSessionId: 's1',
+      mobilePanel: null,
+      drafts: {},
+      streams: {
+        s1: {
+          pendingText: finalAssistantMessage.content,
+          transientEvents: [],
+          status: 'open',
+          lastError: null,
+          reconnectAttempt: null,
+          reconnectLimit: null,
+          activeTurnId: 'turn_1',
+          activeTurnKind: 'regular',
+          activeTurnStatus: 'running',
+          activeTurnPhase: 'streaming_assistant',
+          activeTurnPhaseStartedAt: '2026-04-12T00:00:04.000Z',
+          activeTurnStartedAt: '2026-04-12T00:00:04.000Z',
+          activeTurnCanSteer: true,
+          activeTurnRound: 1,
+          reasoningSummary: '',
+          currentTurnTokenUsage: null,
+          followUpQueue: [],
+          removedFollowUpInputIds: [],
+          recovery: null,
+        },
+      },
+    });
+
+    renderApp(['/app/session/s1']);
+
+    expect(await screen.findByRole('button', { name: '中断当前 turn' })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '中断当前 turn' })).not.toBeInTheDocument();
+      expect(screen.queryByText('当前轮处理中')).not.toBeInTheDocument();
+    });
+  });
+
   it('keeps the streaming assistant footer stable after turn completion and suppresses the duplicate final reply', async () => {
     const finalAssistantMessage = {
       id: 'evt_assistant_1',
@@ -1200,6 +1294,138 @@ describe('App routes', () => {
       expect(messageRequestCount).toBe(2);
       expect(screen.getAllByText(finalAssistantMessage.content)).toHaveLength(1);
       expect(screen.getAllByText(/165 \(120\/45\) tokens/)).toHaveLength(1);
+    });
+  });
+
+  it('stops showing the current turn as running when done arrives before turn_completed', async () => {
+    const finalAssistantMessage = {
+      id: 'evt_assistant_1',
+      sessionId: 's1',
+      kind: 'message' as const,
+      role: 'assistant' as const,
+      type: 'text' as const,
+      content: 'Hi! 怎么帮你？',
+      createdAt: '2026-04-12T00:00:04.200Z',
+    };
+    const refetchMessages = createDeferred<Response>();
+    let messageRequestCount = 0;
+    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
+
+    fetchEventSourceMock.mockImplementation(async (_input, init) => {
+      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
+      await init?.onopen?.(new Response(null, { status: 200 }));
+    });
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Streaming Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        messageRequestCount += 1;
+        if (messageRequestCount === 1) {
+          return jsonResponse({ body: [] });
+        }
+        return refetchMessages.promise;
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/sessions/s1/messages' && method === 'POST') {
+        return jsonResponse({
+          body: {
+            accepted: true,
+            dispatch: 'turn_started',
+            messageId: 'input_start_1',
+            runId: 'turn_1',
+            turnId: 'turn_1',
+            inputId: 'input_start_1',
+            runtime: {
+              sessionId: 's1',
+              activeTurn: {
+                turnId: 'turn_1',
+                kind: 'regular',
+                status: 'running',
+                phase: 'sampling',
+                phaseStartedAt: '2026-04-12T00:00:00.000Z',
+                canSteer: true,
+                startedAt: '2026-04-12T00:00:00.000Z',
+                round: 1,
+              },
+              followUpQueue: [],
+              recovery: null,
+            },
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    const textarea = await screen.findByLabelText('聊天输入框');
+    fireEvent.change(textarea, {
+      target: { value: 'hi' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    expect(await screen.findByRole('button', { name: '中断当前 turn' })).toBeInTheDocument();
+
+    await act(async () => {
+      handleStreamMessage?.({
+        id: 'evt_delta_1',
+        event: 'text_delta',
+        data: JSON.stringify({
+          content: finalAssistantMessage.content,
+        }),
+      });
+      handleStreamMessage?.({
+        id: 'evt_done_1',
+        event: 'done',
+        data: JSON.stringify({}),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: '中断当前 turn' })).not.toBeInTheDocument();
+      expect(screen.queryByText('当前轮处理中')).not.toBeInTheDocument();
+    });
+
+    refetchMessages.resolve(jsonResponse({ body: [finalAssistantMessage] }));
+
+    await waitFor(() => {
+      expect(messageRequestCount).toBe(2);
+      expect(screen.getByText(finalAssistantMessage.content)).toBeInTheDocument();
     });
   });
 
@@ -1416,6 +1642,241 @@ describe('App routes', () => {
     });
     expect(await screen.findByText('clipboard-shot.png')).toBeInTheDocument();
     expect(screen.getByText('图片附件 · 7 B')).toBeInTheDocument();
+  });
+
+  it('sends uploaded attachment ids with the next message', async () => {
+    let messagePayload: Record<string, unknown> | null = null;
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Attachment Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/files/s1/upload' && method === 'POST') {
+        return jsonResponse({
+          body: {
+            id: 'file_clipboard_1',
+            userId: 'u_member',
+            sessionId: 's1',
+            displayName: 'clipboard-shot.png',
+            relativePath: 'sessions/s1/uploads/clipboard-shot.png',
+            mimeType: 'image/png',
+            size: 7,
+            bucket: 'uploads',
+            source: 'upload',
+            createdAt: '2026-04-12T00:00:00.000Z',
+          },
+        });
+      }
+      if (url === '/api/sessions/s1/messages' && method === 'POST') {
+        messagePayload = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        return jsonResponse({
+          body: {
+            accepted: true,
+            dispatch: 'turn_started',
+            messageId: 'input_start_1',
+            runId: 'turn_1',
+            turnId: 'turn_1',
+            inputId: 'input_start_1',
+            runtime: {
+              sessionId: 's1',
+              activeTurn: {
+                turnId: 'turn_1',
+                kind: 'regular',
+                status: 'running',
+                phase: 'sampling',
+                phaseStartedAt: '2026-04-12T00:00:00.000Z',
+                canSteer: true,
+                startedAt: '2026-04-12T00:00:00.000Z',
+                round: 1,
+              },
+              followUpQueue: [],
+              recovery: null,
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    const textarea = await screen.findByLabelText('聊天输入框');
+    const image = new File(['pngdata'], 'clipboard-shot.png', { type: 'image/png' });
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        items: [
+          {
+            kind: 'file',
+            type: 'image/png',
+            getAsFile: () => image,
+          },
+        ],
+      },
+    });
+
+    expect(await screen.findByText('图片附件 · 7 B')).toBeInTheDocument();
+
+    fireEvent.change(textarea, {
+      target: { value: '参考这张图继续修改' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(messagePayload).toEqual({
+        content: '参考这张图继续修改',
+        attachmentIds: ['file_clipboard_1'],
+        dispatch: 'new_turn',
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('图片附件 · 7 B')).not.toBeInTheDocument();
+    });
+  });
+
+  it('loads image message previews through the blob download path and lets the user reuse the image', async () => {
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const createObjectURL = vi.fn(() => 'blob:generated-image-preview');
+    const revokeObjectURL = vi.fn();
+
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      writable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      writable: true,
+      value: revokeObjectURL,
+    });
+
+    try {
+      let previewFetchCount = 0;
+
+      installFetchMock((url, init) => {
+        const method = init?.method ?? 'GET';
+
+        if (url === '/api/me/settings') {
+          return jsonResponse({ body: { themeMode: 'dark' } });
+        }
+        if (url === '/api/sessions') {
+          return jsonResponse({
+            body: [
+              {
+                id: 's1',
+                title: 'Image Session',
+                createdAt: '2026-04-12T00:00:00.000Z',
+                updatedAt: '2026-04-12T00:00:00.000Z',
+                lastMessageAt: null,
+                activeSkills: [],
+              },
+            ],
+          });
+        }
+        if (url === '/api/sessions/s1/messages?limit=200') {
+          return jsonResponse({
+            body: [
+              {
+                id: 'evt_img_1',
+                sessionId: 's1',
+                kind: 'image',
+                file: {
+                  id: 'file_img_1',
+                  userId: 'u_member',
+                  sessionId: 's1',
+                  displayName: 'generated-banner.png',
+                  relativePath: 'sessions/s1/outputs/generated-banner.png',
+                  mimeType: 'image/png',
+                  size: 2048,
+                  bucket: 'outputs',
+                  source: 'generated',
+                  createdAt: '2026-04-12T00:00:00.000Z',
+                },
+                operation: 'generate',
+                provider: 'openai',
+                model: 'gpt-image-2',
+                source: 'responses_tool',
+                prompt: '生成一张横版横幅',
+                revisedPrompt: '横版横幅，暖色夕阳风格',
+                createdAt: '2026-04-12T00:00:01.000Z',
+              },
+            ],
+          });
+        }
+        if (url === '/api/files?sessionId=s1') {
+          return jsonResponse({ body: [] });
+        }
+        if (url === '/api/skills') {
+          return jsonResponse({ body: [] });
+        }
+        if (url === '/api/files/file_img_1/download' && method === 'GET') {
+          previewFetchCount += 1;
+          return new Response(new Blob(['pngdata'], { type: 'image/png' }), {
+            status: 200,
+            headers: {
+              'Content-Type': 'image/png',
+            },
+          });
+        }
+
+        throw new Error(`Unhandled fetch: ${method} ${url}`);
+      });
+
+      useAuthStore.setState({ user: memberUser, ready: true });
+      renderApp(['/app/session/s1']);
+
+      expect(await screen.findByText('图片生成')).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: '继续编辑' })).toBeInTheDocument();
+
+      await waitFor(() => {
+        expect(previewFetchCount).toBe(1);
+      });
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+      fireEvent.click(screen.getByRole('button', { name: '继续编辑' }));
+
+      expect(await screen.findByText('图片附件 · 2.0 KB')).toBeInTheDocument();
+      expect(screen.getAllByText('generated-banner.png').length).toBeGreaterThan(1);
+    } finally {
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        writable: true,
+        value: originalCreateObjectURL,
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        writable: true,
+        value: originalRevokeObjectURL,
+      });
+    }
   });
 
   it('renders skill starter badges in the empty state and writes the clicked prompt into the composer', async () => {
@@ -1760,7 +2221,12 @@ describe('App routes', () => {
       }
       if (url === '/api/sessions/s1/messages' && method === 'POST') {
         queueCount += 1;
-        expect(init?.body).toBe(JSON.stringify({ content: '补充：先修后端', dispatch: 'auto', turnId: 'turn_1' }));
+        expect(init?.body).toBe(JSON.stringify({
+          content: '补充：先修后端',
+          attachmentIds: [],
+          dispatch: 'auto',
+          turnId: 'turn_1',
+        }));
         return jsonResponse({
           body: {
             accepted: true,
@@ -1999,6 +2465,7 @@ describe('App routes', () => {
         sendCount += 1;
         expect(init?.body).toBe(JSON.stringify({
           content: '继续第二轮',
+          attachmentIds: [],
           dispatch: 'auto',
           turnId: 'turn_1',
         }));

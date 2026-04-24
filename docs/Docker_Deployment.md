@@ -28,15 +28,13 @@ cp .env.docker.example .env.docker
 NODE_ENV=production
 PORT=3000
 WEB_PORT=7070
-WEB_ORIGIN=http://localhost:7070
 JWT_SECRET=请替换成长度足够的随机字符串
-OPENAI_API_KEY=
 ```
 
 说明：
 
-- `WEB_ORIGIN` 要改成你的实际访问地址，例如 `https://chat.example.com`。
-- `OPENAI_API_KEY` 是必填项；当前版本只保留 OpenAI harness 单流程，不再提供 Anthropic / rule-based 回退链路。
+- `WEB_ORIGIN`、`OPENAI_API_KEY`、`OPENAI_BASE_URL`、模型名和 token 配额等运行配置，改为在系统设置页里维护，不再放在 `.env.docker`。
+- 首次部署完成后，先登录管理员后台，在系统设置页补齐 OpenAI 相关配置；否则聊天会直接报“OpenAI API key is not configured”。
 - `WEB_PORT` 不是应用变量，而是 `docker compose` 的端口映射变量。现在统一写在 `.env.docker` 里，不再依赖临时 `export`。
 
 ## 1.1 国内网络镜像源加速

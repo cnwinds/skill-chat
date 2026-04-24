@@ -66,6 +66,22 @@ const requestJson = async <T>(input: string, init: RequestInit = {}) => {
   return parseResponse<T>(response);
 };
 
+const fetchFileBlob = async (fileId: string) => {
+  const response = await fetch(`/api/files/${fileId}/download`, {
+    credentials: 'include',
+    headers: createHeaders({}, true),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      useAuthStore.getState().setAnonymous();
+    }
+    throw new ApiError('下载失败', response.status);
+  }
+
+  return await response.blob();
+};
+
 export const api = {
   getSystemStatus: () => requestJson<SystemStatus>('/api/system/status'),
 
@@ -214,17 +230,10 @@ export const api = {
       method: 'DELETE',
     }),
 
+  fetchFileBlob,
+
   downloadFile: async (file: FileRecord) => {
-    const response = await fetch(`/api/files/${file.id}/download`, {
-      credentials: 'include',
-      headers: createHeaders({}, true),
-    });
-
-    if (!response.ok) {
-      throw new ApiError('下载失败', response.status);
-    }
-
-    const blob = await response.blob();
+    const blob = await fetchFileBlob(file.id);
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;

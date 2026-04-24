@@ -69,7 +69,7 @@ describe('SystemSettingsService', () => {
     return { config, db };
   };
 
-  it('syncs environment-managed settings into the database during development startup', async () => {
+  it('keeps persisted settings as the source of truth in development', async () => {
     const { config, db } = await createDb({
       NODE_ENV: 'development',
       WEB_ORIGIN: 'http://localhost:5173',
@@ -97,14 +97,14 @@ describe('SystemSettingsService', () => {
 
     const settings = service.getSettings();
     expect(settings.registrationRequiresInviteCode).toBe(false);
-    expect(settings.enableAssistantTools).toBe(true);
-    expect(settings.webOrigin).toBe('http://localhost:5173');
-    expect(settings.modelConfig.openaiBaseUrl).toBe('http://env-host/v1');
-    expect(settings.modelConfig.openaiApiKey).toBe('env-api-key');
-    expect(settings.modelConfig.openaiModel).toBe('gpt-5.4');
-    expect(settings.modelConfig.openaiReasoningEffort).toBe('medium');
-    expect(settings.modelConfig.llmMaxOutputTokens).toBe(10240);
-    expect(settings.modelConfig.toolMaxOutputTokens).toBe(4096);
+    expect(settings.enableAssistantTools).toBe(false);
+    expect(settings.webOrigin).toBe('http://localhost:3001');
+    expect(settings.modelConfig.openaiBaseUrl).toBe('http://stale-host/v1');
+    expect(settings.modelConfig.openaiApiKey).toBe('stale-api-key');
+    expect(settings.modelConfig.openaiModel).toBe('gpt-5.3');
+    expect(settings.modelConfig.openaiReasoningEffort).toBe('low');
+    expect(settings.modelConfig.llmMaxOutputTokens).toBe(2048);
+    expect(settings.modelConfig.toolMaxOutputTokens).toBe(1024);
 
     const rows = new Map(
       (
@@ -113,17 +113,23 @@ describe('SystemSettingsService', () => {
     );
 
     expect(rows.get('registration_requires_invite_code')).toBe('false');
-    expect(rows.get('enable_assistant_tools')).toBe('true');
-    expect(rows.get('web_origin')).toBe('http://localhost:5173');
-    expect(rows.get('openai_base_url')).toBe('http://env-host/v1');
-    expect(rows.get('openai_api_key')).toBe('env-api-key');
-    expect(rows.get('openai_model')).toBe('gpt-5.4');
-    expect(rows.get('openai_reasoning_effort')).toBe('medium');
-    expect(rows.get('llm_max_output_tokens')).toBe('10240');
-    expect(rows.get('tool_max_output_tokens')).toBe('4096');
+    expect(rows.get('enable_assistant_tools')).toBe('false');
+    expect(rows.get('web_origin')).toBe('http://localhost:3001');
+    expect(rows.get('openai_base_url')).toBe('http://stale-host/v1');
+    expect(rows.get('openai_api_key')).toBe('stale-api-key');
+    expect(rows.get('openai_model')).toBe('gpt-5.3');
+    expect(rows.get('openai_reasoning_effort')).toBe('low');
+    expect(rows.get('llm_max_output_tokens')).toBe('2048');
+    expect(rows.get('tool_max_output_tokens')).toBe('1024');
 
-    expect(config.OPENAI_MODEL).toBe('gpt-5.4');
-    expect(config.WEB_ORIGIN).toBe('http://localhost:5173');
+    expect(config.ENABLE_ASSISTANT_TOOLS).toBe(false);
+    expect(config.WEB_ORIGIN).toBe('http://localhost:3001');
+    expect(config.OPENAI_BASE_URL).toBe('http://stale-host/v1');
+    expect(config.OPENAI_API_KEY).toBe('stale-api-key');
+    expect(config.OPENAI_MODEL).toBe('gpt-5.3');
+    expect(config.OPENAI_REASONING_EFFORT).toBe('low');
+    expect(config.LLM_MAX_OUTPUT_TOKENS).toBe(2048);
+    expect(config.TOOL_MAX_OUTPUT_TOKENS).toBe(1024);
   });
 
   it('keeps persisted settings as the source of truth in production', async () => {
@@ -153,5 +159,32 @@ describe('SystemSettingsService', () => {
     expect(config.WEB_ORIGIN).toBe('https://app.example.com');
     expect(config.OPENAI_MODEL).toBe('gpt-5.3');
     expect(config.OPENAI_REASONING_EFFORT).toBe('low');
+  });
+
+  it('persists default runtime settings when the database is empty', async () => {
+    const { config, db } = await createDb({
+      NODE_ENV: 'development',
+      WEB_ORIGIN: 'http://localhost:5173',
+      OPENAI_BASE_URL: 'http://env-host/v1',
+      OPENAI_API_KEY: 'env-api-key',
+      OPENAI_MODEL: 'gpt-5.4',
+      OPENAI_REASONING_EFFORT: 'medium',
+      LLM_MAX_OUTPUT_TOKENS: 10240,
+      TOOL_MAX_OUTPUT_TOKENS: 4096,
+      ENABLE_ASSISTANT_TOOLS: true,
+    });
+
+    const service = new SystemSettingsService(db, config);
+    service.initialize();
+
+    const settings = service.getSettings();
+    expect(settings.enableAssistantTools).toBe(true);
+    expect(settings.webOrigin).toBe('http://localhost:5173');
+    expect(settings.modelConfig.openaiBaseUrl).toBe('http://env-host/v1');
+    expect(settings.modelConfig.openaiApiKey).toBe('env-api-key');
+    expect(settings.modelConfig.openaiModel).toBe('gpt-5.4');
+    expect(settings.modelConfig.openaiReasoningEffort).toBe('medium');
+    expect(settings.modelConfig.llmMaxOutputTokens).toBe(10240);
+    expect(settings.modelConfig.toolMaxOutputTokens).toBe(4096);
   });
 });
