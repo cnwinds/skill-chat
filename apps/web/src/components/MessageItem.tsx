@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { AssistantMessageMeta, FileRecord, StoredEvent, TokenUsageStats } from '@skillchat/shared';
-import { cn, formatBytes } from '../lib/utils';
-import type { ToolTraceDisplayEvent } from '../lib/timeline';
-import { useFilePreviewUrl } from '../hooks/useFilePreviewUrl';
+import { AlertCircle, Check, Copy, Download, ImagePlus, Loader2 } from 'lucide-react';
+import type {
+  AssistantMessageMeta,
+  FileRecord,
+  StoredEvent,
+  TokenUsageStats,
+} from '@skillchat/shared';
+import { cn } from '@/lib/cn';
+import { formatBytes } from '@/lib/utils';
+import type { ToolTraceDisplayEvent } from '@/lib/timeline';
+import { useFilePreviewUrl } from '@/hooks/useFilePreviewUrl';
 
 type Props = {
   event:
@@ -24,12 +31,10 @@ const formatSkillPathLabel = (path: string) => {
   if (skillMatch) {
     return `${skillMatch[1]} / SKILL.md`;
   }
-
   const referenceMatch = normalizedPath.match(/^skills\/([^/]+)\/references\/(.+)$/i);
   if (referenceMatch) {
     return `${referenceMatch[1]} / references/${referenceMatch[2]}`;
   }
-
   return normalizedPath;
 };
 
@@ -37,7 +42,6 @@ const formatToolName = (tool: string, args?: Record<string, unknown>) => {
   if (tool !== 'read_workspace_path_slice') {
     return tool;
   }
-
   const path = typeof args?.path === 'string' ? args.path : '';
   if (/\/SKILL\.md$/i.test(path)) {
     return '读取 Skill';
@@ -52,12 +56,10 @@ const formatToolMessage = (tool: string, message: string, args?: Record<string, 
   if (tool !== 'read_workspace_path_slice') {
     return message;
   }
-
   const path = typeof args?.path === 'string' ? args.path : '';
   if (!path) {
     return message;
   }
-
   const label = formatSkillPathLabel(path);
   if (/\/SKILL\.md$/i.test(path)) {
     return `已读取 Skill 定义：${label}`;
@@ -75,11 +77,9 @@ const formatToolArguments = (tool: string, args?: Record<string, unknown>) => {
   if (!args) {
     return '';
   }
-
   if (tool !== 'read_workspace_path_slice') {
     return JSON.stringify(args, null, 2);
   }
-
   const formattedArgs = { ...args };
   if (typeof formattedArgs.path === 'string') {
     formattedArgs.path = formatSkillPathLabel(formattedArgs.path);
@@ -94,6 +94,13 @@ const toolStatusLabel: Record<ToolTraceDisplayEvent['status'], string> = {
   failed: '失败',
 };
 
+const toolStatusToneClass: Record<ToolTraceDisplayEvent['status'], string> = {
+  queued: 'bg-foreground-muted/15 text-foreground-muted',
+  running: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+  success: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+  failed: 'bg-danger/15 text-danger',
+};
+
 const getElapsedSeconds = (createdAt: string) => {
   const created = new Date(createdAt).getTime();
   if (Number.isNaN(created)) {
@@ -106,17 +113,13 @@ const formatElapsedDuration = (elapsedSeconds: number) => {
   if (elapsedSeconds < 60) {
     return `${elapsedSeconds}秒`;
   }
-
   const minutes = Math.floor(elapsedSeconds / 60);
   const seconds = elapsedSeconds % 60;
   return `${minutes}分钟${seconds}秒`;
 };
 
-const getThinkingBubbleLabel = (content: string) => (
-  /^重连中\d+\/\d+$/.test(content)
-    ? content
-    : '思考中'
-);
+const getThinkingBubbleLabel = (content: string) =>
+  /^重连中\d+\/\d+$/.test(content) ? content : '思考中';
 
 const formatTokenUsage = (tokenUsage?: TokenUsageStats) => {
   if (!tokenUsage) {
@@ -129,15 +132,12 @@ const formatDurationMs = (durationMs?: number) => {
   if (!durationMs || durationMs <= 0) {
     return '';
   }
-
   if (durationMs < 1_000) {
     return `${durationMs}ms`;
   }
-
   if (durationMs < 60_000) {
     return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
   }
-
   const totalSeconds = Math.round(durationMs / 1_000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -155,16 +155,14 @@ const AssistantMetaFooter = ({ meta }: { meta?: AssistantMessageMeta }) => {
   }
 
   return (
-    <div className="assistant-meta">
+    <div className="mt-2 flex flex-col gap-1 text-2xs text-foreground-muted">
       {meta?.reasoningSummary ? (
-        <div className="assistant-meta-reasoning">
-          <strong>推理摘要</strong>
-          <span>{meta.reasoningSummary}</span>
+        <div className="flex flex-col gap-0.5 rounded-md border border-border bg-surface px-2.5 py-2">
+          <strong className="text-xs font-semibold text-foreground">推理摘要</strong>
+          <span className="leading-5">{meta.reasoningSummary}</span>
         </div>
       ) : null}
-      {metrics.length > 0 ? (
-        <div className="assistant-meta-metrics">{metrics.join(' · ')}</div>
-      ) : null}
+      {metrics.length > 0 ? <div>{metrics.join(' · ')}</div> : null}
     </div>
   );
 };
@@ -180,39 +178,55 @@ const ImageEventCard = ({
   onReuseImage?: (file: FileRecord) => void;
   downloading: boolean;
 }) => {
-  const { previewUrl, loading, error } = useFilePreviewUrl(event.file, event.file.mimeType?.startsWith('image/') === true);
+  const { previewUrl, loading, error } = useFilePreviewUrl(
+    event.file,
+    event.file.mimeType?.startsWith('image/') === true,
+  );
 
   return (
-    <article className="image-card">
-      <div className="image-card-preview-shell">
+    <article className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-row">
+      <div className="flex w-full max-w-[260px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-surface-hover">
         {previewUrl ? (
           <img
-            className="image-card-preview"
+            className="h-full w-full object-contain"
             src={previewUrl}
             alt={event.revisedPrompt || event.prompt || event.file.displayName}
             loading="lazy"
           />
         ) : (
-          <div className="image-card-preview image-card-preview-placeholder">
-            {loading ? '图片加载中...' : (error ? '图片预览失败' : '图片暂不可预览')}
+          <div className="flex h-32 w-full items-center justify-center text-2xs text-foreground-muted">
+            {loading ? '图片加载中...' : error ? '图片预览失败' : '图片暂不可预览'}
           </div>
         )}
       </div>
-      <div className="image-card-body">
-        <div className="status-label">{event.operation === 'edit' ? '图片编辑' : '图片生成'}</div>
-        <div className="file-name">{event.file.displayName}</div>
-        <div className="file-meta">
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        <div className="text-2xs uppercase tracking-wide text-foreground-muted">
+          {event.operation === 'edit' ? '图片编辑' : '图片生成'}
+        </div>
+        <div className="truncate text-sm font-medium">{event.file.displayName}</div>
+        <div className="text-2xs text-foreground-muted">
           {event.model} · {event.file.mimeType ?? 'image/png'} · {formatBytes(event.file.size)}
         </div>
-        <div className="image-card-prompt">
-          <strong>提示词</strong>
-          <span>{event.revisedPrompt || event.prompt}</span>
+        <div className="rounded-md border border-border bg-surface-hover px-2 py-1.5 text-xs">
+          <strong className="mr-1 text-foreground-muted">提示词</strong>
+          <span className="text-foreground">{event.revisedPrompt || event.prompt}</span>
         </div>
-        <div className="image-card-actions">
-          <button type="button" className="subtle-button" onClick={() => onDownload?.(event.file)} disabled={downloading}>
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          <button
+            type="button"
+            onClick={() => onDownload?.(event.file)}
+            disabled={downloading}
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground hover:bg-surface-hover disabled:opacity-50"
+          >
+            <Download className="h-3 w-3" />
             下载
           </button>
-          <button type="button" className="subtle-button" onClick={() => onReuseImage?.(event.file)}>
+          <button
+            type="button"
+            onClick={() => onReuseImage?.(event.file)}
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground hover:bg-surface-hover"
+          >
+            <ImagePlus className="h-3 w-3" />
             继续编辑
           </button>
         </div>
@@ -223,19 +237,19 @@ const ImageEventCard = ({
 
 const markdownComponents: Components = {
   table: ({ node: _node, ...props }) => (
-    <div className="message-table-shell">
-      <table className="message-markdown-table" {...props} />
+    <div className="overflow-x-auto rounded-md border border-border">
+      <table className="w-full text-sm" {...props} />
     </div>
   ),
 };
 
-const CopyableMessageBubble = ({
-  bubbleClassName,
+const CopyableMessageBlock = ({
+  variant,
   content,
   markdown,
   assistantMeta,
 }: {
-  bubbleClassName: string;
+  variant: 'assistant' | 'user' | 'pending';
   content: string;
   markdown: string;
   assistantMeta?: AssistantMessageMeta;
@@ -246,14 +260,8 @@ const CopyableMessageBubble = ({
     if (copyState === 'idle') {
       return;
     }
-
-    const timer = window.setTimeout(() => {
-      setCopyState('idle');
-    }, 1600);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
+    const timer = window.setTimeout(() => setCopyState('idle'), 1600);
+    return () => window.clearTimeout(timer);
   }, [copyState]);
 
   const handleCopy = async () => {
@@ -268,35 +276,49 @@ const CopyableMessageBubble = ({
     }
   };
 
-  const buttonLabel = copyState === 'copied'
-    ? '已复制'
-    : copyState === 'failed'
-      ? '复制失败'
-      : '复制';
+  const buttonLabel = copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制';
+  const isUser = variant === 'user';
 
   return (
-    <div className="message-content-shell">
-      <button
-        type="button"
-        className="message-copy-button"
-        onClick={() => {
-          void handleCopy();
-        }}
-        aria-label="复制消息内容"
-        title="复制消息内容"
+    <div className={cn('group/msg relative flex w-full', isUser && 'justify-end')}>
+      <div
+        className={cn(
+          'flex max-w-full flex-col',
+          isUser ? 'items-end' : 'items-stretch',
+          isUser ? 'max-w-[80%]' : 'w-full',
+        )}
       >
-        {buttonLabel}
-      </button>
-      <div className="message-bubble-stack">
-        <div className={bubbleClassName}>
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={markdownComponents}
-          >
+        <div
+          className={cn(
+            isUser
+              ? 'rounded-2xl bg-surface-hover px-4 py-2.5 text-foreground'
+              : 'prose prose-sm text-foreground',
+          )}
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
             {markdown}
           </ReactMarkdown>
         </div>
-        <AssistantMetaFooter meta={assistantMeta} />
+        {!isUser ? <AssistantMetaFooter meta={assistantMeta} /> : null}
+        <button
+          type="button"
+          onClick={() => {
+            void handleCopy();
+          }}
+          aria-label="复制消息内容"
+          title="复制消息内容"
+          className={cn(
+            'mt-1 inline-flex h-6 items-center gap-1 self-start rounded-md px-1.5 text-2xs text-foreground-muted opacity-0 transition-opacity hover:bg-surface-hover hover:text-foreground group-hover/msg:opacity-100 focus-visible:opacity-100',
+            isUser && 'self-end',
+          )}
+        >
+          {copyState === 'copied' ? (
+            <Check className="h-3 w-3" />
+          ) : (
+            <Copy className="h-3 w-3" />
+          )}
+          {buttonLabel}
+        </button>
       </div>
     </div>
   );
@@ -312,21 +334,99 @@ const ThinkingBubble = ({ createdAt, content }: { createdAt: string; content: st
     const timer = window.setInterval(() => {
       setElapsedSeconds(getElapsedSeconds(createdAt));
     }, 1000);
-
-    return () => {
-      window.clearInterval(timer);
-    };
+    return () => window.clearInterval(timer);
   }, [createdAt]);
 
   return (
-    <article className="message-row assistant">
+    <div className="flex">
       <div
-        className="message-bubble assistant thinking-inline"
         title={content}
         aria-label={`${label}，已持续 ${elapsedLabel}`}
+        className="inline-flex items-center gap-1.5 rounded-full bg-surface-hover px-3 py-1 text-xs text-foreground-muted"
       >
+        <Loader2 className="h-3 w-3 animate-spin" />
         {`${label}(${elapsedLabel})`}
       </div>
+    </div>
+  );
+};
+
+const ToolTraceCardView = ({
+  event,
+  canExpandToolTrace,
+}: {
+  event: ToolTraceDisplayEvent;
+  canExpandToolTrace: boolean;
+}) => {
+  const displayTool = formatToolName(event.tool, event.arguments);
+  const displayMessage = formatToolMessage(event.tool, event.message, event.arguments);
+  const displayArguments = formatToolArguments(event.tool, event.arguments);
+  const hasDetails = Boolean(
+    (event.arguments && Object.keys(event.arguments).length > 0) ||
+      event.resultContent ||
+      (typeof event.percent === 'number' && event.status === 'running'),
+  );
+
+  const summary = (
+    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex items-center gap-2">
+        <strong className="truncate text-sm font-medium">{displayTool}</strong>
+        <span
+          className={cn(
+            'rounded-full px-2 py-0.5 text-2xs',
+            toolStatusToneClass[event.status],
+          )}
+        >
+          {toolStatusLabel[event.status]}
+        </span>
+      </div>
+      <div className="truncate text-2xs text-foreground-muted">{displayMessage}</div>
+    </div>
+  );
+
+  if (!canExpandToolTrace || !hasDetails) {
+    return (
+      <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface px-3 py-2">
+        {summary}
+      </article>
+    );
+  }
+
+  return (
+    <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface">
+      <details className="group/trace">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 hover:bg-surface-hover">
+          {summary}
+          <span className="text-2xs text-foreground-muted group-open/trace:hidden">展开</span>
+          <span className="hidden text-2xs text-foreground-muted group-open/trace:inline">收起</span>
+        </summary>
+        <div className="flex flex-col gap-2 border-t border-border px-3 py-2 text-xs">
+          {event.arguments && Object.keys(event.arguments).length > 0 ? (
+            <div className="flex flex-col gap-1">
+              <div className="text-2xs uppercase tracking-wide text-foreground-muted">参数</div>
+              <pre className="overflow-x-auto rounded-md bg-surface-hover px-2 py-1.5 text-2xs text-foreground">
+                {displayArguments}
+              </pre>
+            </div>
+          ) : null}
+          {event.resultContent ? (
+            <div className="flex flex-col gap-1">
+              <div className="text-2xs uppercase tracking-wide text-foreground-muted">返回结果</div>
+              <pre className="max-h-72 overflow-auto rounded-md bg-surface-hover px-2 py-1.5 text-2xs text-foreground whitespace-pre-wrap">
+                {event.resultContent}
+              </pre>
+            </div>
+          ) : null}
+          {typeof event.percent === 'number' && event.status === 'running' ? (
+            <div className="h-1.5 overflow-hidden rounded-full bg-surface-hover">
+              <div
+                className="h-full bg-accent transition-all"
+                style={{ width: `${Math.max(0, Math.min(100, event.percent))}%` }}
+              />
+            </div>
+          ) : null}
+        </div>
+      </details>
     </article>
   );
 };
@@ -341,9 +441,9 @@ export const MessageItem = ({
 }: Props) => {
   if (event.kind === 'pending_text') {
     return (
-      <article className="message-row assistant">
-        <CopyableMessageBubble
-          bubbleClassName="message-bubble assistant pending"
+      <article className="flex w-full">
+        <CopyableMessageBlock
+          variant="pending"
           content={event.content}
           markdown={event.content}
           assistantMeta={assistantMeta}
@@ -354,9 +454,9 @@ export const MessageItem = ({
 
   if (event.kind === 'message') {
     return (
-      <article className={cn('message-row', event.role === 'user' ? 'user' : 'assistant')}>
-        <CopyableMessageBubble
-          bubbleClassName={cn('message-bubble', event.role === 'user' ? 'user' : 'assistant')}
+      <article className={cn('flex w-full', event.role === 'user' && 'justify-end')}>
+        <CopyableMessageBlock
+          variant={event.role === 'user' ? 'user' : 'assistant'}
           content={event.content}
           markdown={event.content}
           assistantMeta={event.role === 'assistant' ? event.meta : undefined}
@@ -370,88 +470,33 @@ export const MessageItem = ({
   }
 
   if (event.kind === 'tool_trace') {
-    const displayTool = formatToolName(event.tool, event.arguments);
-    const displayMessage = formatToolMessage(event.tool, event.message, event.arguments);
-    const displayArguments = formatToolArguments(event.tool, event.arguments);
-    const hasDetails = Boolean(
-      (event.arguments && Object.keys(event.arguments).length > 0) ||
-      event.resultContent ||
-      (typeof event.percent === 'number' && event.status === 'running'),
-    );
-
-    const summaryContent = (
-      <div className="tool-trace-summary">
-        <div className="tool-trace-main">
-          <strong>{displayTool}</strong>
-          <span className={cn('tool-trace-badge', `is-${event.status}`)}>{toolStatusLabel[event.status]}</span>
-        </div>
-        <div className="tool-trace-message">{displayMessage}</div>
-      </div>
-    );
-
-    if (!canExpandToolTrace || !hasDetails) {
-      return (
-        <article className={cn('tool-trace-card', 'is-static', `is-${event.status}`)}>
-          <div className="tool-trace-card-static">
-            {summaryContent}
-          </div>
-        </article>
-      );
-    }
-
-    return (
-      <article className={cn('tool-trace-card', `is-${event.status}`)}>
-        <details>
-          <summary className="tool-trace-summary">
-            <div className="tool-trace-main">
-              <strong>{displayTool}</strong>
-              <span className={cn('tool-trace-badge', `is-${event.status}`)}>{toolStatusLabel[event.status]}</span>
-            </div>
-            <div className="tool-trace-message">{displayMessage}</div>
-          </summary>
-          <div className="tool-trace-body">
-            {event.arguments && Object.keys(event.arguments).length > 0 ? (
-              <div className="tool-trace-section">
-                <div className="tool-trace-section-title">参数</div>
-                <pre className="status-pre compact">{displayArguments}</pre>
-              </div>
-            ) : null}
-            {event.resultContent ? (
-              <div className="tool-trace-section">
-                <div className="tool-trace-section-title">返回结果</div>
-                <pre className="status-pre compact tool-result-pre">{event.resultContent}</pre>
-              </div>
-            ) : null}
-            {typeof event.percent === 'number' && event.status === 'running' ? (
-              <div className="progress-bar compact">
-                <div className="progress-fill" style={{ width: `${Math.max(0, Math.min(100, event.percent))}%` }} />
-              </div>
-            ) : null}
-          </div>
-        </details>
-      </article>
-    );
+    return <ToolTraceCardView event={event} canExpandToolTrace={canExpandToolTrace} />;
   }
 
   if (event.kind === 'tool_call') {
     return (
-      <article className="status-card">
-        <div className="status-label">工具调用</div>
-        <strong>{event.skill}</strong>
-        <pre className="status-pre">{JSON.stringify(event.arguments, null, 2)}</pre>
+      <article className="rounded-md border border-border bg-surface p-3 text-xs">
+        <div className="text-2xs uppercase tracking-wide text-foreground-muted">工具调用</div>
+        <strong className="block mt-0.5 text-sm">{event.skill}</strong>
+        <pre className="mt-2 overflow-x-auto rounded-md bg-surface-hover px-2 py-1.5 text-2xs">
+          {JSON.stringify(event.arguments, null, 2)}
+        </pre>
       </article>
     );
   }
 
   if (event.kind === 'tool_progress') {
     return (
-      <article className="status-card accent">
-        <div className="status-label">工具进度</div>
-        <strong>{event.skill}</strong>
-        <div>{event.message}</div>
+      <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface p-3 text-xs">
+        <div className="text-2xs uppercase tracking-wide text-foreground-muted">工具进度</div>
+        <strong className="block mt-0.5 text-sm">{event.skill}</strong>
+        <div className="mt-0.5 text-foreground">{event.message}</div>
         {typeof event.percent === 'number' ? (
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${Math.max(0, Math.min(100, event.percent))}%` }} />
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-hover">
+            <div
+              className="h-full bg-accent transition-all"
+              style={{ width: `${Math.max(0, Math.min(100, event.percent))}%` }}
+            />
           </div>
         ) : null}
       </article>
@@ -460,24 +505,30 @@ export const MessageItem = ({
 
   if (event.kind === 'tool_result') {
     return (
-      <article className="status-card success">
-        <div className="status-label">工具结果</div>
-        <strong>{event.skill}</strong>
-        <div>{event.message}</div>
+      <article className="rounded-md border border-border bg-surface p-3 text-xs">
+        <div className="text-2xs uppercase tracking-wide text-foreground-muted">工具结果</div>
+        <strong className="block mt-0.5 text-sm">{event.skill}</strong>
+        <div className="mt-0.5 text-foreground">{event.message}</div>
       </article>
     );
   }
 
   if (event.kind === 'file') {
     return (
-      <article className="file-card">
-        <div>
-          <div className="file-name">{event.file.displayName}</div>
-          <div className="file-meta">
+      <article className="flex items-start justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="truncate text-sm font-medium">{event.file.displayName}</div>
+          <div className="text-2xs text-foreground-muted">
             {event.file.mimeType ?? 'application/octet-stream'} · {formatBytes(event.file.size)}
           </div>
         </div>
-        <button type="button" className="subtle-button" onClick={() => onDownload?.(event.file)} disabled={downloading}>
+        <button
+          type="button"
+          onClick={() => onDownload?.(event.file)}
+          disabled={downloading}
+          className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground hover:bg-surface-hover disabled:opacity-50"
+        >
+          <Download className="h-3 w-3" />
           下载
         </button>
       </article>
@@ -496,9 +547,12 @@ export const MessageItem = ({
   }
 
   return (
-    <article className="status-card danger">
-      <div className="status-label">错误</div>
-      <div>{event.message}</div>
+    <article className="flex items-start gap-2 rounded-md border border-danger/40 bg-danger/5 p-3 text-sm text-danger">
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="flex flex-col gap-0.5">
+        <div className="text-2xs uppercase tracking-wide">错误</div>
+        <div>{event.message}</div>
+      </div>
     </article>
   );
 };

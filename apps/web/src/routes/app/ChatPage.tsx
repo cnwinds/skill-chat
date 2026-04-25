@@ -18,6 +18,7 @@ import {
   useComposerAttachments,
 } from '@/hooks/useComposerAttachments';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
+import { useAutoScrollToBottom } from '@/hooks/useAutoScrollToBottom';
 import { formatBytes } from '@/lib/utils';
 import { buildRenderableTimeline, type TimelineItem } from '@/lib/timeline';
 import { ChatHeader } from '@/components/layout/ChatHeader';
@@ -136,7 +137,6 @@ export const ChatPage = () => {
   const hydrateRuntime = useUiStore((state) => state.hydrateRuntime);
   const confirmRemovedFollowUpInput = useUiStore((state) => state.confirmRemovedFollowUpInput);
 
-  const messageListRef = useRef<HTMLDivElement | null>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -391,13 +391,13 @@ export const ChatPage = () => {
     return true;
   }, [stream.pendingText, timeline]);
 
-  useEffect(() => {
-    const target = messageListRef.current;
-    if (!target) {
-      return;
-    }
-    target.scrollTop = target.scrollHeight;
-  }, [timeline, thinkingEvent, stream.pendingText, stream.followUpQueue, activeSessionId]);
+  const messageListRef = useAutoScrollToBottom<HTMLDivElement>([
+    timeline,
+    thinkingEvent,
+    stream.pendingText,
+    stream.followUpQueue,
+    activeSessionId,
+  ]);
 
   const draft = hasActiveSession ? drafts[activeSessionId!] ?? '' : '';
   const isTurnRunning =
