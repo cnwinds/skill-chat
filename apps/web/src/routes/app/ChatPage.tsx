@@ -1,4 +1,4 @@
-import type { ChangeEvent, ClipboardEvent as ReactClipboardEvent } from 'react';
+import type { ClipboardEvent as ReactClipboardEvent } from 'react';
 import { useEffect, useMemo, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
@@ -19,9 +19,10 @@ import {
 } from '@/hooks/useComposerAttachments';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 import { useAutoScrollToBottom } from '@/hooks/useAutoScrollToBottom';
-import { formatBytes } from '@/lib/utils';
 import { buildRenderableTimeline, type TimelineItem } from '@/lib/timeline';
 import { ChatHeader } from '@/components/layout/ChatHeader';
+import { Composer } from '@/components/chat/Composer';
+import { FollowUpQueue } from '@/components/chat/FollowUpQueue';
 import { useAppShellOutlet } from './AppShellContext';
 
 const normalizeAttachmentFile = (file: File, index: number) => {
@@ -138,7 +139,6 @@ export const ChatPage = () => {
   const confirmRemovedFollowUpInput = useUiStore((state) => state.confirmRemovedFollowUpInput);
 
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const stream = useSessionStream(activeSessionId);
   const keyboardInset = useKeyboardInset();
@@ -452,12 +452,6 @@ export const ChatPage = () => {
     }
   };
 
-  const handleComposerFileSelection = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
-    event.currentTarget.value = '';
-    void uploadComposerFiles(files);
-  };
-
   const handleComposerPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
     const pastedImagesFromItems = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
@@ -660,162 +654,43 @@ export const ChatPage = () => {
             </div>
           </section>
 
-          <footer
-            className="composer border-t border-border bg-background px-4 pt-3"
+          <div
+            className="border-t border-border bg-background px-4 pt-3"
             style={{
-              paddingBottom: `calc(14px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
+              paddingBottom: `calc(0px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
             }}
           >
-            <div className="mx-auto flex max-w-3xl flex-col gap-2">
-              {stream.followUpQueue.length > 0 ? (
-                <div className="runtime-preview-stack">
-                  <div className="rounded-md border border-border bg-surface px-3 py-2">
-                    <div className="text-2xs uppercase tracking-wide text-foreground-muted">
-                      待处理队列（按顺序处理）
-                    </div>
-                    <ol className="mt-1 flex flex-col gap-1 text-sm">
-                      {stream.followUpQueue.map((input, index) => (
-                        <li
-                          key={`follow-up-input-${input.inputId}`}
-                          className="flex items-start gap-2"
-                        >
-                          <span className="text-2xs text-foreground-muted">{index + 1}</span>{' '}
-                          <span className="flex-1">{input.content}</span>
-                          <button
-                            type="button"
-                            onClick={() => removeFollowUpInputMutation.mutate(input.inputId)}
-                            disabled={removeFollowUpInputMutation.isPending}
-                            aria-label={`取消待处理项：${input.content}`}
-                            title="取消这条待处理输入"
-                            className="rounded p-1 text-foreground-muted hover:bg-surface-hover"
-                          >
-                            ×
-                          </button>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="composer-shell rounded-2xl border border-border bg-surface px-3 py-2">
-                {composerAttachments.length > 0 ? (
-                  <div className="mb-2 flex flex-wrap gap-1.5" aria-live="polite">
-                    {composerAttachments.map((attachment) => (
-                      <div
-                        key={attachment.localId}
-                        className="flex items-center gap-1.5 rounded-md border border-border bg-surface-hover px-2 py-1 text-2xs"
-                      >
-                        <span className="max-w-[10rem] truncate font-medium text-foreground">
-                          {attachment.displayName}
-                        </span>
-                        <span className="text-foreground-muted">
-                          {attachment.status === 'uploading'
-                            ? '上传中...'
-                            : `${attachment.mimeType?.startsWith('image/') ? '图片附件' : '已附加'} · ${formatBytes(attachment.size)}`}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                <label className="sr-only" htmlFor="chat-composer-input">
-                  聊天输入框
-                </label>
-                <textarea
-                  id="chat-composer-input"
-                  ref={composerTextareaRef}
-                  value={draft}
-                  onChange={(event) => activeSessionId && setDraft(activeSessionId, event.target.value)}
-                  onPaste={handleComposerPaste}
-                  placeholder={isTurnRunning ? '继续补充信息，系统会按顺序处理' : '给 SkillChat 发送消息'}
-                  rows={3}
-                  className="block w-full resize-none border-0 bg-transparent text-base text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-0"
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey && window.innerWidth >= 900) {
-                      event.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                />
-                <div className="mt-1 flex items-center justify-between">
-                  <div className="text-2xs text-foreground-muted">
-                    {hasUploadingAttachments ? <span>附件上传中...</span> : null}
-                    {!hasUploadingAttachments && isTurnRunning ? <span>当前轮处理中</span> : null}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {isTurnRunning ? (
-                      <button
-                        type="button"
-                        aria-label={interruptMutation.isPending ? '中断中...' : '中断当前 turn'}
-                        title={interruptMutation.isPending ? '中断中...' : '中断当前 turn'}
-                        onClick={() => interruptMutation.mutate()}
-                        disabled={interruptMutation.isPending}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-foreground-muted hover:bg-surface-hover hover:text-foreground"
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
-                          <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
-                        </svg>
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      aria-label={hasUploadingAttachments ? '附件上传中' : '上传附件'}
-                      title={hasUploadingAttachments ? '附件上传中' : '上传附件'}
-                      onClick={() => uploadInputRef.current?.click()}
-                      disabled={!activeSessionId || hasUploadingAttachments}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground-muted hover:bg-surface-hover hover:text-foreground"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
-                        <path
-                          d="M15.5 6.5 8.4 13.6a3 3 0 1 0 4.2 4.2l7.1-7.1a5 5 0 1 0-7.1-7.1L5.8 10.4"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="1.8"
-                        />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSend}
-                      aria-label={
-                        sendMessageMutation.isPending ? '提交中...' : isTurnRunning ? '补充信息' : '发送'
-                      }
-                      title={
-                        sendMessageMutation.isPending ? '提交中...' : isTurnRunning ? '补充信息' : '发送'
-                      }
-                      disabled={
-                        !draft.trim() ||
-                        hasUploadingAttachments ||
-                        sendMessageMutation.isPending ||
-                        interruptMutation.isPending
-                      }
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-accent text-accent-foreground transition-opacity hover:brightness-110 disabled:opacity-50"
-                    >
-                      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
-                        <path
-                          d="M12 5v14M12 5l-5.5 5.5M12 5l5.5 5.5"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-                <input
-                  ref={uploadInputRef}
-                  type="file"
-                  hidden
-                  multiple
-                  onChange={handleComposerFileSelection}
-                />
-              </div>
+            <div className="mx-auto max-w-3xl">
+              <FollowUpQueue
+                queue={stream.followUpQueue}
+                onCancel={(inputId) => removeFollowUpInputMutation.mutate(inputId)}
+                cancelDisabled={removeFollowUpInputMutation.isPending}
+              />
             </div>
-          </footer>
+          </div>
+          <Composer
+            ref={composerTextareaRef}
+            value={draft}
+            onValueChange={(value) => activeSessionId && setDraft(activeSessionId, value)}
+            onSend={handleSend}
+            onPaste={handleComposerPaste}
+            attachments={composerAttachments}
+            onRemoveAttachment={(localId) => {
+              if (!activeSessionId) return;
+              updateAttachments(activeSessionId, (current) =>
+                current.filter((item) => item.localId !== localId),
+              );
+            }}
+            onSelectFiles={(files) => void uploadComposerFiles(files)}
+            isTurnRunning={isTurnRunning}
+            onInterrupt={() => interruptMutation.mutate()}
+            interruptPending={interruptMutation.isPending}
+            sendPending={sendMessageMutation.isPending}
+            disabled={!activeSessionId}
+            hasUploadingAttachments={hasUploadingAttachments}
+            placeholder={isTurnRunning ? '继续补充信息，系统会按顺序处理' : '给 SkillChat 发送消息'}
+            bottomInsetPx={keyboardInset}
+          />
         </>
       ) : (
         <section className="message-stage flex-1 overflow-hidden">
