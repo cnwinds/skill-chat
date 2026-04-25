@@ -5,6 +5,7 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import { bootstrapAdminSchema } from '@skillchat/shared';
 import { ApiError, api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
+import { Button } from '@/components/ui/button';
 import { AuthCard } from './AuthCard';
 
 const firstIssueMessage = (issues: Array<{ message: string }>) =>
@@ -64,9 +65,9 @@ export const BootstrapAdminPage = () => {
         mutation.mutate();
       }}
       footer={
-        <button type="button" className="text-button" onClick={() => navigate('/login')}>
+        <Button variant="link" type="button" size="sm" onClick={() => navigate('/login')}>
           返回登录
-        </button>
+        </Button>
       }
     />
   );

@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { registerRequestSchema } from '@skillchat/shared';
 import { ApiError, api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
+import { Button } from '@/components/ui/button';
 import { AuthCard } from './AuthCard';
 
 const firstIssueMessage = (issues: Array<{ message: string }>) =>
@@ -74,13 +75,18 @@ export const RegisterPage = () => {
       }}
       footer={
         <>
-          <button type="button" className="text-button" onClick={() => navigate('/login')}>
+          <Button variant="link" type="button" size="sm" onClick={() => navigate('/login')}>
             已有账号？去登录
-          </button>
+          </Button>
           {systemStatusQuery.data && !systemStatusQuery.data.initialized ? (
-            <button type="button" className="text-button" onClick={() => navigate('/bootstrap-admin')}>
+            <Button
+              variant="link"
+              type="button"
+              size="sm"
+              onClick={() => navigate('/bootstrap-admin')}
+            >
               首次启动？创建管理员
-            </button>
+            </Button>
           ) : null}
         </>
       }
