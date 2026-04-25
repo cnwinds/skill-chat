@@ -4,11 +4,6 @@ import typography from '@tailwindcss/typography';
 const config: Config = {
   darkMode: ['class', '[data-theme="dark"]'],
   content: ['./index.html', './src/**/*.{ts,tsx}'],
-  corePlugins: {
-    // Preflight resets many browser defaults; the legacy index.css below
-    // still ships its own resets. Re-enabled in Phase 6 after cleanup.
-    preflight: false,
-  },
   theme: {
     container: {
       center: true,
@@ -16,20 +11,20 @@ const config: Config = {
     },
     extend: {
       colors: {
-        background: 'var(--skc-background)',
-        surface: 'var(--skc-surface)',
-        'surface-hover': 'var(--skc-surface-hover)',
-        border: 'var(--skc-border)',
-        'border-strong': 'var(--skc-border-strong)',
-        foreground: 'var(--skc-text)',
-        'foreground-muted': 'var(--skc-text-muted)',
+        background: 'var(--background)',
+        surface: 'var(--surface)',
+        'surface-hover': 'var(--surface-hover)',
+        border: 'var(--border)',
+        'border-strong': 'var(--border-strong)',
+        foreground: 'var(--text)',
+        'foreground-muted': 'var(--text-muted)',
         accent: {
-          DEFAULT: 'var(--skc-accent)',
-          foreground: 'var(--skc-accent-fg)',
+          DEFAULT: 'var(--accent)',
+          foreground: 'var(--accent-fg)',
         },
         danger: {
-          DEFAULT: 'var(--skc-danger)',
-          foreground: 'var(--skc-danger-fg)',
+          DEFAULT: 'var(--danger)',
+          foreground: 'var(--danger-fg)',
         },
       },
       borderRadius: {
@@ -87,33 +82,33 @@ const config: Config = {
       typography: () => ({
         DEFAULT: {
           css: {
-            '--tw-prose-body': 'var(--skc-text)',
-            '--tw-prose-headings': 'var(--skc-text)',
-            '--tw-prose-lead': 'var(--skc-text)',
-            '--tw-prose-links': 'var(--skc-accent)',
-            '--tw-prose-bold': 'var(--skc-text)',
-            '--tw-prose-counters': 'var(--skc-text-muted)',
-            '--tw-prose-bullets': 'var(--skc-text-muted)',
-            '--tw-prose-hr': 'var(--skc-border)',
-            '--tw-prose-quotes': 'var(--skc-text-muted)',
-            '--tw-prose-quote-borders': 'var(--skc-border-strong)',
-            '--tw-prose-captions': 'var(--skc-text-muted)',
-            '--tw-prose-code': 'var(--skc-text)',
-            '--tw-prose-pre-code': 'var(--skc-text)',
-            '--tw-prose-pre-bg': 'var(--skc-surface-hover)',
-            '--tw-prose-th-borders': 'var(--skc-border)',
-            '--tw-prose-td-borders': 'var(--skc-border)',
+            '--tw-prose-body': 'var(--text)',
+            '--tw-prose-headings': 'var(--text)',
+            '--tw-prose-lead': 'var(--text)',
+            '--tw-prose-links': 'var(--accent)',
+            '--tw-prose-bold': 'var(--text)',
+            '--tw-prose-counters': 'var(--text-muted)',
+            '--tw-prose-bullets': 'var(--text-muted)',
+            '--tw-prose-hr': 'var(--border)',
+            '--tw-prose-quotes': 'var(--text-muted)',
+            '--tw-prose-quote-borders': 'var(--border-strong)',
+            '--tw-prose-captions': 'var(--text-muted)',
+            '--tw-prose-code': 'var(--text)',
+            '--tw-prose-pre-code': 'var(--text)',
+            '--tw-prose-pre-bg': 'var(--surface-hover)',
+            '--tw-prose-th-borders': 'var(--border)',
+            '--tw-prose-td-borders': 'var(--border)',
             maxWidth: 'none',
             code: {
               fontWeight: '500',
-              backgroundColor: 'var(--skc-surface-hover)',
+              backgroundColor: 'var(--surface-hover)',
               padding: '0.15em 0.35em',
               borderRadius: '4px',
             },
             'code::before': { content: '""' },
             'code::after': { content: '""' },
             pre: {
-              border: '1px solid var(--skc-border)',
+              border: '1px solid var(--border)',
             },
           },
         },
