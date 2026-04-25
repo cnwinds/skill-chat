@@ -2075,7 +2075,7 @@ describe('App routes', () => {
       });
     });
     expect(await screen.findByRole('heading', { name: '高校咨询' })).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole('button', { name: 'Skill' })[1]);
+    fireEvent.click(screen.getByRole('button', { name: 'Skill' }));
     expect(await screen.findByText('当前会话 Skill 作用域')).toBeInTheDocument();
     expect(screen.getByText('当前会话只允许使用这些 skills：zhangxuefeng-perspective。未启用的 skill 不会进入上下文，也不可调用。')).toBeInTheDocument();
   });

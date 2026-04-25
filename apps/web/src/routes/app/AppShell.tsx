@@ -5,110 +5,29 @@ import {
   createSessionSchema,
   type FileRecord,
   type SessionSummary,
-  type SkillMetadata,
 } from '@skillchat/shared';
 import { ApiError, api } from '@/lib/api';
-import { SkillCard } from '@/components/SkillCard';
 import { useAuthStore } from '@/stores/auth-store';
 import { useUiStore } from '@/stores/ui-store';
 import { applyThemeMode, usePreferencesStore } from '@/stores/preferences-store';
-import { cn, formatBytes, groupBy, isWechatBrowser } from '@/lib/utils';
+import { groupBy, isWechatBrowser } from '@/lib/utils';
 import { composerAttachmentsActions } from '@/hooks/useComposerAttachments';
+import { useIsDesktop } from '@/hooks/useMediaQuery';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { Toaster, toast } from '@/components/ui/toaster';
+import { Sidebar } from '@/components/sidebar/Sidebar';
+import { NewSessionDialog } from '@/components/sidebar/NewSessionDialog';
+import { InspectorPanel } from '@/components/inspector/InspectorPanel';
+import { cn } from '@/lib/cn';
 import type { AppShellOutletValue } from './AppShellContext';
 
 const firstIssueMessage = (issues: Array<{ message: string }>) => issues[0]?.message ?? '输入不合法';
 
-interface CreateSessionDialogProps {
-  open: boolean;
-  title: string;
-  selectedSkills: string[];
-  skills: SkillMetadata[];
-  loading: boolean;
-  onTitleChange: (value: string) => void;
-  onToggleSkill: (skillName: string) => void;
-  onClose: () => void;
-  onSubmit: () => void;
-}
-
-const CreateSessionDialog = ({
-  open,
-  title,
-  selectedSkills,
-  skills,
-  loading,
-  onTitleChange,
-  onToggleSkill,
-  onClose,
-  onSubmit,
-}: CreateSessionDialogProps) => {
-  if (!open) {
-    return null;
+const notifyError = (message: string | null) => {
+  if (!message) {
+    return;
   }
-
-  return (
-    <div className="dialog-overlay" role="presentation" onClick={onClose}>
-      <div
-        className="dialog-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="create-session-title"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="dialog-header">
-          <div>
-            <div className="eyebrow">Session Scope</div>
-            <h2 id="create-session-title">新建会话</h2>
-            <p>项目里可以安装很多 skill，但只有你现在选中的这些，才会进入本会话上下文并允许调用。</p>
-          </div>
-          <button type="button" className="subtle-button" onClick={onClose}>
-            关闭
-          </button>
-        </div>
-
-        <div className="dialog-body">
-          <label className="field-group">
-            <span>会话标题</span>
-            <input
-              value={title}
-              onChange={(event) => onTitleChange(event.target.value)}
-              placeholder="可选，不填则自动使用“新会话”"
-            />
-          </label>
-
-          <div className="settings-stack">
-            <div>
-              <strong>为当前会话选择可用 Skills</strong>
-              <div className="panel-caption">未选择的 skill 不会进入模型上下文，也不允许读取或执行。</div>
-            </div>
-            <div className="skill-picker-grid">
-              {skills.map((skill) => (
-                <SkillCard
-                  key={skill.name}
-                  skill={skill}
-                  selected={selectedSkills.includes(skill.name)}
-                  onToggle={() => onToggleSkill(skill.name)}
-                />
-              ))}
-              {skills.length === 0 ? (
-                <div className="inline-empty">项目中还没有可选的 skill。</div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        <div className="dialog-footer">
-          <div className="panel-caption">
-            {selectedSkills.length > 0
-              ? `本次会话已选择：${selectedSkills.join(' · ')}`
-              : '本次会话未启用任何 skill，将按普通对话和通用工具运行。'}
-          </div>
-          <button type="button" className="primary-button" disabled={loading} onClick={onSubmit}>
-            {loading ? '创建中...' : '创建会话'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  toast({ title: '出错了', description: message, variant: 'destructive' });
 };
 
 export const AppShell = () => {
@@ -118,16 +37,16 @@ export const AppShell = () => {
   const { sessionId } = useParams();
   const activeSessionId = sessionId ?? null;
   const isSettingsView = location.pathname === '/app/settings';
+  const isDesktop = useIsDesktop();
 
   const user = useAuthStore((state) => state.user);
   const setAnonymous = useAuthStore((state) => state.setAnonymous);
   const setActiveSessionId = useUiStore((state) => state.setActiveSessionId);
-  const mobilePanel = useUiStore((state) => state.mobilePanel);
-  const setMobilePanel = useUiStore((state) => state.setMobilePanel);
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
 
-  const [pageError, setPageError] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [visibleSessionCount, setVisibleSessionCount] = useState(5);
   const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
   const [newSessionTitle, setNewSessionTitle] = useState('');
@@ -138,12 +57,17 @@ export const AppShell = () => {
     setActiveSessionId(activeSessionId);
   }, [activeSessionId, setActiveSessionId]);
 
-  // Drop any composer attachments left over from a previous shell mount
-  // (e.g., logout/login cycles, or test renders) so per-session state
-  // doesn't leak across users or runs.
   useEffect(() => {
     composerAttachmentsActions.clearAll();
   }, []);
+
+  // Close sheets when transitioning to desktop so they don't linger.
+  useEffect(() => {
+    if (isDesktop) {
+      setSidebarOpen(false);
+      setInspectorOpen(false);
+    }
+  }, [isDesktop]);
 
   const sessionsQuery = useQuery({
     queryKey: ['sessions'],
@@ -183,7 +107,7 @@ export const AppShell = () => {
       setThemeMode(payload.themeMode);
       queryClient.setQueryData(['my-settings'], payload);
     },
-    onError: (error) => setPageError(error instanceof ApiError ? error.message : '更新个人设置失败'),
+    onError: (error) => notifyError(error instanceof ApiError ? error.message : '更新个人设置失败'),
   });
 
   const logoutMutation = useMutation({
@@ -214,7 +138,7 @@ export const AppShell = () => {
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       navigate(`/app/session/${session.id}`, { replace: true });
     },
-    onError: (error) => setPageError(error instanceof ApiError ? error.message : '创建会话失败'),
+    onError: (error) => notifyError(error instanceof ApiError ? error.message : '创建会话失败'),
   });
 
   const updateSessionMutation = useMutation({
@@ -226,7 +150,7 @@ export const AppShell = () => {
         current?.map((item) => (item.id === session.id ? session : item)),
       );
     },
-    onError: (error) => setPageError(error instanceof ApiError ? error.message : '更新会话失败'),
+    onError: (error) => notifyError(error instanceof ApiError ? error.message : '更新会话失败'),
   });
 
   const shareMutation = useMutation({
@@ -234,12 +158,12 @@ export const AppShell = () => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files', activeSessionId] });
     },
-    onError: (error) => setPageError(error instanceof ApiError ? error.message : '共享失败'),
+    onError: (error) => notifyError(error instanceof ApiError ? error.message : '共享失败'),
   });
 
   const downloadMutation = useMutation({
     mutationFn: (file: FileRecord) => api.downloadFile(file),
-    onError: (error) => setPageError(error instanceof ApiError ? error.message : '下载失败'),
+    onError: (error) => notifyError(error instanceof ApiError ? error.message : '下载失败'),
   });
 
   useEffect(() => {
@@ -276,11 +200,8 @@ export const AppShell = () => {
     [activeSessionId, sessionsQuery.data],
   );
   const hasActiveSession = Boolean(activeSessionId && activeSession);
-  const visibleSessions = useMemo(
-    () => (sessionsQuery.data ?? []).slice(0, visibleSessionCount),
-    [sessionsQuery.data, visibleSessionCount],
-  );
-  const hiddenSessionCount = Math.max(0, (sessionsQuery.data?.length ?? 0) - visibleSessionCount);
+  const sessions = sessionsQuery.data ?? [];
+  const hiddenSessionCount = Math.max(0, sessions.length - visibleSessionCount);
   const installedSkills = skillsQuery.data ?? [];
   const groupedFiles = useMemo(
     () => groupBy(filesQuery.data ?? [], (file) => file.bucket),
@@ -292,7 +213,6 @@ export const AppShell = () => {
   const openCreateSessionDialog = () => {
     setNewSessionTitle('');
     setNewSessionSkills([]);
-    setPageError(null);
     setIsCreateSessionOpen(true);
   };
 
@@ -302,10 +222,9 @@ export const AppShell = () => {
       activeSkills: newSessionSkills,
     });
     if (!validation.success) {
-      setPageError(firstIssueMessage(validation.error.issues));
+      notifyError(firstIssueMessage(validation.error.issues));
       return;
     }
-    setPageError(null);
     createSessionMutation.mutate(validation.data);
   };
 
@@ -324,6 +243,26 @@ export const AppShell = () => {
     composerAttachmentsActions.addFromFileRecord(activeSessionId, file);
   };
 
+  const handleSelectSession = (id: string) => {
+    navigate(`/app/session/${id}`);
+    setSidebarOpen(false);
+  };
+
+  const handleSelectSettings = () => {
+    navigate('/app/settings');
+    setSidebarOpen(false);
+  };
+
+  const handleToggleSkill = (skillName: string) => {
+    if (!activeSessionId) {
+      return;
+    }
+    const nextSkills = activeSkills.includes(skillName)
+      ? activeSkills.filter((item) => item !== skillName)
+      : [...activeSkills, skillName];
+    updateSessionMutation.mutate({ sessionId: activeSessionId, activeSkills: nextSkills });
+  };
+
   if (!user) {
     return <Navigate to="/login" replace />;
   }
@@ -332,217 +271,107 @@ export const AppShell = () => {
   }
 
   const outletValue: AppShellOutletValue = {
-    pageError,
-    setPageError,
+    setPageError: notifyError,
     openCreateSessionDialog,
+    openSidebarSheet: () => setSidebarOpen(true),
+    openInspectorSheet: (tab) => {
+      setInspectorTab(tab);
+      setInspectorOpen(true);
+    },
     themeMode,
     onToggleTheme: () =>
       updateMySettingsMutation.mutate({ themeMode: themeMode === 'dark' ? 'light' : 'dark' }),
     onLogout: () => logoutMutation.mutate(),
     logoutPending: logoutMutation.isPending,
-    setMobilePanel,
-    mobilePanel,
-    setInspectorTab,
   };
 
-  return (
-    <div className="shell">
-      <aside
-        className={cn('side-panel sessions-panel', mobilePanel === 'sessions' && 'mobile-open')}
-      >
-        <div className="panel-header">
-          <div>
-            <div className="eyebrow">Sessions</div>
-            <h2>会话</h2>
-          </div>
-          <button type="button" className="subtle-button" onClick={openCreateSessionDialog}>
-            新建
-          </button>
-        </div>
+  const showInspector = !isSettingsView;
 
-        <div className="session-list">
-          {user.role === 'admin' ? (
-            <button
-              type="button"
-              className={cn('session-item settings-entry', isSettingsView && 'active')}
-              onClick={() => {
-                navigate('/app/settings');
-                setMobilePanel(null);
-              }}
-            >
-              <strong>设置</strong>
-              <span>系统配置 / 用户 / 邀请码</span>
-            </button>
-          ) : null}
-          {visibleSessions.map((session: SessionSummary) => (
-            <button
-              key={session.id}
-              type="button"
-              className={cn('session-item', session.id === activeSessionId && 'active')}
-              onClick={() => {
-                navigate(`/app/session/${session.id}`);
-                setMobilePanel(null);
-              }}
-            >
-              <strong>{session.title}</strong>
-              {session.activeSkills.length > 0 ? (
-                <div className="session-active-skills">{session.activeSkills.join(' · ')}</div>
-              ) : null}
-              <span>{new Date(session.updatedAt).toLocaleString()}</span>
-            </button>
-          ))}
-          {hiddenSessionCount > 0 ? (
-            <button
-              type="button"
-              className="session-more-button"
-              onClick={() => setVisibleSessionCount((current) => current + 5)}
-            >
-              更多会话（还有 {hiddenSessionCount} 条）
-            </button>
-          ) : null}
-        </div>
+  const sidebarNode = (
+    <Sidebar
+      sessions={sessions}
+      visibleSessionCount={visibleSessionCount}
+      hiddenSessionCount={hiddenSessionCount}
+      activeSessionId={activeSessionId}
+      isSettingsView={isSettingsView}
+      showSettingsEntry={user.role === 'admin'}
+      onSelectSession={handleSelectSession}
+      onSelectSettings={handleSelectSettings}
+      onCreateSession={openCreateSessionDialog}
+      onLoadMoreSessions={() => setVisibleSessionCount((current) => current + 5)}
+    />
+  );
+
+  const inspectorNode = showInspector ? (
+    <InspectorPanel
+      inspectorTab={inspectorTab}
+      onTabChange={setInspectorTab}
+      hasActiveSession={hasActiveSession}
+      isWechat={isWechat}
+      groupedFiles={groupedFiles}
+      installedSkills={installedSkills}
+      activeSkills={activeSkills}
+      onDownloadFile={(file) => downloadMutation.mutate(file)}
+      onShareFile={(fileId) => shareMutation.mutate(fileId)}
+      onReuseImage={handleReuseImage}
+      onToggleSkill={handleToggleSkill}
+      toggleDisabled={updateSessionMutation.isPending}
+      sharePending={shareMutation.isPending}
+    />
+  ) : null;
+
+  return (
+    <div
+      className={cn(
+        'flex h-dvh w-full bg-background text-foreground',
+      )}
+    >
+      {/* Desktop sidebar (persistent on lg+) */}
+      <aside className="hidden h-full w-[260px] shrink-0 border-r border-border lg:block">
+        {sidebarNode}
       </aside>
 
-      <Outlet context={outletValue} />
+      {/* Center column */}
+      <div className="flex h-full min-w-0 flex-1 flex-col">
+        <Outlet context={outletValue} />
+      </div>
 
-      {!isSettingsView ? (
-        <aside
-          className={cn(
-            'side-panel inspector-panel',
-            mobilePanel && mobilePanel !== 'sessions' && 'mobile-open',
-          )}
-        >
-          <div className="panel-header">
-            <div className="tabs">
-              <button
-                type="button"
-                className={cn('tab-button', inspectorTab === 'files' && 'active')}
-                onClick={() => setInspectorTab('files')}
-              >
-                文件
-              </button>
-              <button
-                type="button"
-                className={cn('tab-button', inspectorTab === 'skills' && 'active')}
-                onClick={() => setInspectorTab('skills')}
-              >
-                Skill
-              </button>
-            </div>
-          </div>
-
-          {inspectorTab === 'files' ? (
-            <div className="panel-section">
-              {isWechat ? (
-                <div className="notice-card">
-                  微信内若下载受限，请点击文件后在系统浏览器中打开或使用桌面端下载。
-                </div>
-              ) : null}
-              {!hasActiveSession ? (
-                <div className="inline-empty">先进入一个会话，当前会话的文件才会显示在这里。</div>
-              ) : null}
-              {(['uploads', 'outputs', 'shared'] as const).map((bucket) => (
-                <section key={bucket} className="file-group">
-                  <h3>{bucket}</h3>
-                  {(groupedFiles[bucket] ?? []).length === 0 ? (
-                    <div className="inline-empty">暂无文件</div>
-                  ) : (
-                    (groupedFiles[bucket] ?? []).map((file) => (
-                      <article key={file.id} className="file-card">
-                        <div>
-                          <div className="file-name">{file.displayName}</div>
-                          <div className="file-meta">
-                            {file.mimeType ?? 'application/octet-stream'} · {formatBytes(file.size)}
-                          </div>
-                        </div>
-                        <div className="file-actions">
-                          <button
-                            type="button"
-                            className="subtle-button"
-                            onClick={() => downloadMutation.mutate(file)}
-                          >
-                            下载
-                          </button>
-                          {bucket !== 'shared' ? (
-                            <button
-                              type="button"
-                              className="subtle-button"
-                              onClick={() => shareMutation.mutate(file.id)}
-                              disabled={shareMutation.isPending}
-                            >
-                              共享
-                            </button>
-                          ) : null}
-                          {file.mimeType?.startsWith('image/') && hasActiveSession ? (
-                            <button
-                              type="button"
-                              className="subtle-button"
-                              onClick={() => handleReuseImage(file)}
-                            >
-                              重用
-                            </button>
-                          ) : null}
-                        </div>
-                      </article>
-                    ))
-                  )}
-                </section>
-              ))}
-            </div>
-          ) : (
-            <div className="panel-section">
-              <div className="status-card muted">
-                <strong>{hasActiveSession ? '当前会话 Skill 作用域' : '已安装 Skills'}</strong>
-                <div className="file-meta">
-                  {hasActiveSession
-                    ? activeSkills.length > 0
-                      ? `当前会话只允许使用这些 skills：${activeSkills.join(' · ')}。未启用的 skill 不会进入上下文，也不可调用。`
-                      : '当前会话未启用任何 skill。未启用的 skill 不会进入上下文，也不可调用。'
-                    : '项目中可以安装很多 skill，但只有加入当前会话的 skill 才会被读取、参考或执行。'}
-                </div>
-              </div>
-              <div className="skill-library-grid">
-                {installedSkills.map((skill: SkillMetadata) => (
-                  <SkillCard
-                    key={skill.name}
-                    skill={skill}
-                    selected={activeSkills.includes(skill.name)}
-                    disabled={updateSessionMutation.isPending}
-                    onToggle={
-                      hasActiveSession
-                        ? () => {
-                            const nextSkills = activeSkills.includes(skill.name)
-                              ? activeSkills.filter((item) => item !== skill.name)
-                              : [...activeSkills, skill.name];
-                            updateSessionMutation.mutate({
-                              sessionId: activeSessionId!,
-                              activeSkills: nextSkills,
-                            });
-                          }
-                        : undefined
-                    }
-                  />
-                ))}
-              </div>
-              {installedSkills.length === 0 ? (
-                <div className="inline-empty">项目中还没有安装 skill。</div>
-              ) : null}
-            </div>
-          )}
+      {/* Desktop inspector (persistent on lg+, hidden in settings) */}
+      {showInspector ? (
+        <aside className="hidden h-full w-[320px] shrink-0 border-l border-border lg:block">
+          {inspectorNode}
         </aside>
       ) : null}
 
-      <CreateSessionDialog
+      {/* Mobile sidebar drawer */}
+      <Sheet open={sidebarOpen && !isDesktop} onOpenChange={setSidebarOpen}>
+        <SheetContent side="left" className="p-0 lg:hidden">
+          {sidebarNode}
+        </SheetContent>
+      </Sheet>
+
+      {/* Mobile inspector drawer */}
+      {showInspector ? (
+        <Sheet open={inspectorOpen && !isDesktop} onOpenChange={setInspectorOpen}>
+          <SheetContent side="right" className="p-0 lg:hidden">
+            {inspectorNode}
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
+      <NewSessionDialog
         open={isCreateSessionOpen}
         title={newSessionTitle}
         selectedSkills={newSessionSkills}
         skills={installedSkills}
         loading={createSessionMutation.isPending}
+        onOpenChange={setIsCreateSessionOpen}
         onTitleChange={setNewSessionTitle}
         onToggleSkill={toggleNewSessionSkill}
-        onClose={() => setIsCreateSessionOpen(false)}
         onSubmit={handleCreateSession}
       />
+
+      <Toaster />
     </div>
   );
 };

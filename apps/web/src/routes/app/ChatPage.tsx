@@ -18,8 +18,9 @@ import {
   useComposerAttachments,
 } from '@/hooks/useComposerAttachments';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
-import { cn, formatBytes } from '@/lib/utils';
+import { formatBytes } from '@/lib/utils';
 import { buildRenderableTimeline, type TimelineItem } from '@/lib/timeline';
+import { ChatHeader } from '@/components/layout/ChatHeader';
 import { useAppShellOutlet } from './AppShellContext';
 
 const normalizeAttachmentFile = (file: File, index: number) => {
@@ -96,12 +97,20 @@ interface EmptyStateProps {
 }
 
 const EmptyState = ({ title, detail, action }: EmptyStateProps) => (
-  <div className="empty-state">
-    <h3>{title}</h3>
-    <p>{detail}</p>
+  <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+    <h3 className="text-lg font-medium">{title}</h3>
+    <p className="max-w-md text-sm text-foreground-muted">{detail}</p>
     {action}
   </div>
 );
+
+const STREAM_STATUS_TO_TONE: Record<string, 'idle' | 'running' | 'reconnecting' | 'error'> = {
+  idle: 'idle',
+  connecting: 'reconnecting',
+  open: 'running',
+  reconnecting: 'reconnecting',
+  error: 'error',
+};
 
 export const ChatPage = () => {
   const queryClient = useQueryClient();
@@ -110,16 +119,14 @@ export const ChatPage = () => {
   const user = useAuthStore((state) => state.user)!;
 
   const {
-    pageError,
     setPageError,
     openCreateSessionDialog,
+    openSidebarSheet,
+    openInspectorSheet,
     themeMode,
     onToggleTheme,
     onLogout,
     logoutPending,
-    mobilePanel,
-    setMobilePanel,
-    setInspectorTab,
   } = useAppShellOutlet();
 
   const drafts = useUiStore((state) => state.drafts);
@@ -168,6 +175,7 @@ export const ChatPage = () => {
     enabled: Boolean(activeSessionId && activeSession),
     refetchOnMount: 'always',
   });
+
   const installedSkills = skillsQuery.data ?? [];
   const activeSkills = activeSession?.activeSkills ?? [];
   const activeSkillEntries = useMemo(
@@ -515,329 +523,316 @@ export const ChatPage = () => {
     focusComposer();
   };
 
-  return (
-    <main className="workspace">
-      <header className="workspace-header">
-        <div>
-          <div className="eyebrow">SkillChat</div>
-          <h1>{activeSession?.title ?? '选择或创建会话'}</h1>
-          <p>
-            当前用户：{user.username}
-            {hasActiveSession ? (
-              <>
-                {' '}
-                · 连接状态：
-                <span className={cn('stream-pill', `is-${stream.status}`)}>{stream.status}</span>
-                {isTurnRunning ? (
-                  <>
-                    {' '}
-                    · 当前 turn：
-                    <span className="stream-pill is-open">
-                      {stream.activeTurnKind ?? 'regular'} / {stream.activeTurnPhase ?? 'running'}
-                      {stream.activeTurnRound ? ` / round ${stream.activeTurnRound}` : ''}
-                    </span>
-                  </>
-                ) : null}
-              </>
-            ) : (
-              <> · 暂未进入会话，请先创建会话并选择本会话允许使用的 skills。</>
-            )}
-          </p>
-          {hasActiveSession && activeSkills.length > 0 ? (
-            <div className="skill-badge-list">
-              {activeSkills.map((skillName) => (
-                <span key={skillName} className="skill-badge active">
-                  {skillName}
-                </span>
-              ))}
-            </div>
+  const turnDescription = isTurnRunning
+    ? `${stream.activeTurnKind ?? 'regular'} / ${stream.activeTurnPhase ?? 'running'}${stream.activeTurnRound ? ` / round ${stream.activeTurnRound}` : ''}`
+    : null;
+  const headerSubtitle = (
+    <>
+      当前用户：{user.username}
+      {hasActiveSession ? (
+        <>
+          {' '}· 连接状态：<span>{stream.status}</span>
+          {turnDescription ? (
+            <>
+              {' '}· 当前 turn：<span>{turnDescription}</span>
+            </>
           ) : null}
-        </div>
+        </>
+      ) : (
+        <> · 暂未进入会话，请先创建会话并选择本会话允许使用的 skills。</>
+      )}
+    </>
+  );
+  const statusLabel = hasActiveSession
+    ? isTurnRunning
+      ? `回应中 · ${stream.activeTurnPhase ?? 'running'}`
+      : stream.status === 'reconnecting' && stream.reconnectAttempt && stream.reconnectLimit
+        ? `重连 ${stream.reconnectAttempt}/${stream.reconnectLimit}`
+        : stream.status === 'open'
+          ? '已连接'
+          : stream.status === 'error'
+            ? '连接错误'
+            : stream.status === 'idle'
+              ? undefined
+              : stream.status
+    : undefined;
+  const statusTone = STREAM_STATUS_TO_TONE[stream.status] ?? 'idle';
 
-        <div className="header-actions">
-          <button
-            type="button"
-            className="subtle-button mobile-only"
-            onClick={() => setMobilePanel(mobilePanel === 'sessions' ? null : 'sessions')}
-          >
-            会话
-          </button>
-          <button
-            type="button"
-            className="subtle-button mobile-only"
-            onClick={() => {
-              setInspectorTab('files');
-              setMobilePanel(mobilePanel === 'files' ? null : 'files');
-            }}
-          >
-            文件
-          </button>
-          <button
-            type="button"
-            className="subtle-button mobile-only"
-            onClick={() => {
-              setInspectorTab('skills');
-              setMobilePanel(mobilePanel === 'skills' ? null : 'skills');
-            }}
-          >
-            Skill
-          </button>
-          <button type="button" className="subtle-button" onClick={onToggleTheme}>
-            {themeMode === 'dark' ? '浅色' : '深色'}
-          </button>
-          <button type="button" className="subtle-button" onClick={onLogout} disabled={logoutPending}>
-            退出
-          </button>
-        </div>
-      </header>
-
-      {pageError ? <div className="error-banner floating">{pageError}</div> : null}
+  return (
+    <main className="flex h-full min-h-0 flex-1 flex-col">
+      <ChatHeader
+        title={activeSession?.title ?? '选择或创建会话'}
+        subtitle={headerSubtitle}
+        statusLabel={statusLabel}
+        statusTone={isTurnRunning ? 'running' : statusTone}
+        themeMode={themeMode}
+        onToggleTheme={onToggleTheme}
+        onLogout={onLogout}
+        logoutPending={logoutPending}
+        onOpenSidebar={openSidebarSheet}
+        onOpenInspector={() => openInspectorSheet('files')}
+      />
 
       {hasActiveSession ? (
         <>
-          <section className="message-stage">
-            <div className="message-list" ref={messageListRef}>
-              {stream.recovery ? (
-                <div className="notice-card">
-                  已从重启中恢复：之前的 {stream.recovery.previousTurnKind} turn （
-                  {stream.recovery.previousTurnId}）已中断，未提交输入已恢复到待处理队列。
-                </div>
-              ) : null}
-              {timeline.length === 0 &&
-              !stream.pendingText &&
-              !thinkingEvent &&
-              stream.followUpQueue.length === 0 ? (
-                <EmptyState
-                  title="开始一个任务"
-                  detail={
-                    emptyStateStarterPrompts.length > 0
-                      ? '你可以先点一个预设开场白，内容会直接进入聊天框，随后继续修改或发送。'
-                      : '可以直接聊天或上传文件；如果要启用特定 skill，先在右侧面板把它加入当前会话。'
-                  }
-                  action={
-                    emptyStateStarterPrompts.length > 0 ? (
-                      <div className="empty-state-actions">
-                        {emptyStateStarterCaption ? (
-                          <div className="empty-state-caption">{emptyStateStarterCaption}</div>
-                        ) : null}
-                        <div className="empty-state-suggestions">
-                          {emptyStateStarterPrompts.map((prompt) => (
-                            <button
-                              key={prompt}
-                              type="button"
-                              className="empty-state-suggestion"
-                              onClick={() => handleEmptyStatePromptClick(prompt)}
-                            >
-                              {prompt}
-                            </button>
-                          ))}
+          <section className="message-stage flex-1 overflow-hidden">
+            <div ref={messageListRef} className="message-list h-full overflow-y-auto">
+              <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
+                {stream.recovery ? (
+                  <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs text-foreground-muted">
+                    已从重启中恢复：之前的 {stream.recovery.previousTurnKind} turn （
+                    {stream.recovery.previousTurnId}）已中断，未提交输入已恢复到待处理队列。
+                  </div>
+                ) : null}
+                {timeline.length === 0 &&
+                !stream.pendingText &&
+                !thinkingEvent &&
+                stream.followUpQueue.length === 0 ? (
+                  <EmptyState
+                    title="开始一个任务"
+                    detail={
+                      emptyStateStarterPrompts.length > 0
+                        ? '你可以先点一个预设开场白，内容会直接进入聊天框，随后继续修改或发送。'
+                        : '可以直接聊天或上传文件；如果要启用特定 skill，先在右侧面板把它加入当前会话。'
+                    }
+                    action={
+                      emptyStateStarterPrompts.length > 0 ? (
+                        <div className="flex flex-col items-center gap-2">
+                          {emptyStateStarterCaption ? (
+                            <div className="text-2xs text-foreground-muted">
+                              {emptyStateStarterCaption}
+                            </div>
+                          ) : null}
+                          <div className="flex flex-wrap justify-center gap-2">
+                            {emptyStateStarterPrompts.map((prompt) => (
+                              <button
+                                key={prompt}
+                                type="button"
+                                onClick={() => handleEmptyStatePromptClick(prompt)}
+                                className="rounded-full border border-border bg-surface px-3 py-1 text-xs text-foreground transition-colors hover:bg-surface-hover"
+                              >
+                                {prompt}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    ) : undefined
-                  }
-                />
-              ) : null}
-              {timeline.map((event) => (
-                <MessageItem
-                  key={event.id}
-                  event={event}
-                  onDownload={(file) => downloadMutation.mutate(file)}
-                  onReuseImage={handleReuseImage}
-                  downloading={downloadMutation.isPending}
-                  canExpandToolTrace={user.role === 'admin'}
-                />
-              ))}
-              {shouldRenderPendingText ? (
-                <MessageItem
-                  event={{ kind: 'pending_text', content: stream.pendingText }}
-                  assistantMeta={{
-                    durationMs: stream.activeTurnStartedAt
-                      ? Math.max(0, Date.now() - new Date(stream.activeTurnStartedAt).getTime())
-                      : undefined,
-                    tokenUsage: stream.currentTurnTokenUsage ?? undefined,
-                    reasoningSummary: stream.reasoningSummary || undefined,
-                  }}
-                  onDownload={(file) => downloadMutation.mutate(file)}
-                  onReuseImage={handleReuseImage}
-                  downloading={downloadMutation.isPending}
-                  canExpandToolTrace={user.role === 'admin'}
-                />
-              ) : null}
-              {thinkingEvent ? (
-                <MessageItem
-                  key={thinkingEvent.id}
-                  event={thinkingEvent}
-                  onDownload={(file) => downloadMutation.mutate(file)}
-                  onReuseImage={handleReuseImage}
-                  downloading={downloadMutation.isPending}
-                  canExpandToolTrace={user.role === 'admin'}
-                />
-              ) : null}
+                      ) : undefined
+                    }
+                  />
+                ) : null}
+                {timeline.map((event) => (
+                  <MessageItem
+                    key={event.id}
+                    event={event}
+                    onDownload={(file) => downloadMutation.mutate(file)}
+                    onReuseImage={handleReuseImage}
+                    downloading={downloadMutation.isPending}
+                    canExpandToolTrace={user.role === 'admin'}
+                  />
+                ))}
+                {shouldRenderPendingText ? (
+                  <MessageItem
+                    event={{ kind: 'pending_text', content: stream.pendingText }}
+                    assistantMeta={{
+                      durationMs: stream.activeTurnStartedAt
+                        ? Math.max(0, Date.now() - new Date(stream.activeTurnStartedAt).getTime())
+                        : undefined,
+                      tokenUsage: stream.currentTurnTokenUsage ?? undefined,
+                      reasoningSummary: stream.reasoningSummary || undefined,
+                    }}
+                    onDownload={(file) => downloadMutation.mutate(file)}
+                    onReuseImage={handleReuseImage}
+                    downloading={downloadMutation.isPending}
+                    canExpandToolTrace={user.role === 'admin'}
+                  />
+                ) : null}
+                {thinkingEvent ? (
+                  <MessageItem
+                    key={thinkingEvent.id}
+                    event={thinkingEvent}
+                    onDownload={(file) => downloadMutation.mutate(file)}
+                    onReuseImage={handleReuseImage}
+                    downloading={downloadMutation.isPending}
+                    canExpandToolTrace={user.role === 'admin'}
+                  />
+                ) : null}
+              </div>
             </div>
           </section>
 
           <footer
-            className="composer"
+            className="composer border-t border-border bg-background px-4 pt-3"
             style={{
               paddingBottom: `calc(14px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
             }}
           >
-            {stream.followUpQueue.length > 0 ? (
-              <div className="runtime-preview-stack">
-                <div className="runtime-preview-card is-queued">
-                  <div className="status-label">待处理队列（按顺序处理）</div>
-                  <ol className="runtime-preview-list">
-                    {stream.followUpQueue.map((input, index) => (
-                      <li key={`follow-up-input-${input.inputId}`} className="runtime-preview-list-item">
-                        <div className="runtime-preview-list-row">
-                          <span className="runtime-preview-index">{index + 1}</span>{' '}
-                          <span className="runtime-preview-list-content">{input.content}</span>
+            <div className="mx-auto flex max-w-3xl flex-col gap-2">
+              {stream.followUpQueue.length > 0 ? (
+                <div className="runtime-preview-stack">
+                  <div className="rounded-md border border-border bg-surface px-3 py-2">
+                    <div className="text-2xs uppercase tracking-wide text-foreground-muted">
+                      待处理队列（按顺序处理）
+                    </div>
+                    <ol className="mt-1 flex flex-col gap-1 text-sm">
+                      {stream.followUpQueue.map((input, index) => (
+                        <li
+                          key={`follow-up-input-${input.inputId}`}
+                          className="flex items-start gap-2"
+                        >
+                          <span className="text-2xs text-foreground-muted">{index + 1}</span>{' '}
+                          <span className="flex-1">{input.content}</span>
                           <button
                             type="button"
-                            className="runtime-preview-remove"
                             onClick={() => removeFollowUpInputMutation.mutate(input.inputId)}
                             disabled={removeFollowUpInputMutation.isPending}
                             aria-label={`取消待处理项：${input.content}`}
                             title="取消这条待处理输入"
+                            className="rounded p-1 text-foreground-muted hover:bg-surface-hover"
                           >
                             ×
                           </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              </div>
-            ) : null}
-
-            <div className="composer-shell">
-              {composerAttachments.length > 0 ? (
-                <div className="composer-attachments" aria-live="polite">
-                  {composerAttachments.map((attachment) => (
-                    <div
-                      key={attachment.localId}
-                      className={`composer-attachment-chip is-${attachment.status}`}
-                    >
-                      <div className="composer-attachment-name">{attachment.displayName}</div>
-                      <div className="composer-attachment-meta">
-                        {attachment.status === 'uploading'
-                          ? '上传中...'
-                          : `${attachment.mimeType?.startsWith('image/') ? '图片附件' : '已附加'} · ${formatBytes(attachment.size)}`}
-                      </div>
-                    </div>
-                  ))}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
                 </div>
               ) : null}
-              <label className="sr-only" htmlFor="chat-composer-input">
-                聊天输入框
-              </label>
-              <textarea
-                id="chat-composer-input"
-                className="composer-textarea"
-                ref={composerTextareaRef}
-                value={draft}
-                onChange={(event) => activeSessionId && setDraft(activeSessionId, event.target.value)}
-                onPaste={handleComposerPaste}
-                placeholder={isTurnRunning ? '继续补充信息，系统会按顺序处理' : '给 SkillChat 发送消息'}
-                rows={3}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && window.innerWidth >= 900) {
-                    event.preventDefault();
-                    handleSend();
-                  }
-                }}
-              />
-              <div className="composer-footer">
-                <div className="composer-status">
-                  {hasUploadingAttachments ? <span>附件上传中...</span> : null}
-                  {!hasUploadingAttachments && isTurnRunning ? <span>当前轮处理中</span> : null}
-                </div>
-                <div className="composer-actions">
-                  {isTurnRunning ? (
+
+              <div className="composer-shell rounded-2xl border border-border bg-surface px-3 py-2">
+                {composerAttachments.length > 0 ? (
+                  <div className="mb-2 flex flex-wrap gap-1.5" aria-live="polite">
+                    {composerAttachments.map((attachment) => (
+                      <div
+                        key={attachment.localId}
+                        className="flex items-center gap-1.5 rounded-md border border-border bg-surface-hover px-2 py-1 text-2xs"
+                      >
+                        <span className="max-w-[10rem] truncate font-medium text-foreground">
+                          {attachment.displayName}
+                        </span>
+                        <span className="text-foreground-muted">
+                          {attachment.status === 'uploading'
+                            ? '上传中...'
+                            : `${attachment.mimeType?.startsWith('image/') ? '图片附件' : '已附加'} · ${formatBytes(attachment.size)}`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <label className="sr-only" htmlFor="chat-composer-input">
+                  聊天输入框
+                </label>
+                <textarea
+                  id="chat-composer-input"
+                  ref={composerTextareaRef}
+                  value={draft}
+                  onChange={(event) => activeSessionId && setDraft(activeSessionId, event.target.value)}
+                  onPaste={handleComposerPaste}
+                  placeholder={isTurnRunning ? '继续补充信息，系统会按顺序处理' : '给 SkillChat 发送消息'}
+                  rows={3}
+                  className="block w-full resize-none border-0 bg-transparent text-base text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-0"
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey && window.innerWidth >= 900) {
+                      event.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                />
+                <div className="mt-1 flex items-center justify-between">
+                  <div className="text-2xs text-foreground-muted">
+                    {hasUploadingAttachments ? <span>附件上传中...</span> : null}
+                    {!hasUploadingAttachments && isTurnRunning ? <span>当前轮处理中</span> : null}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {isTurnRunning ? (
+                      <button
+                        type="button"
+                        aria-label={interruptMutation.isPending ? '中断中...' : '中断当前 turn'}
+                        title={interruptMutation.isPending ? '中断中...' : '中断当前 turn'}
+                        onClick={() => interruptMutation.mutate()}
+                        disabled={interruptMutation.isPending}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-foreground-muted hover:bg-surface-hover hover:text-foreground"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
+                          <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+                        </svg>
+                      </button>
+                    ) : null}
                     <button
                       type="button"
-                      className="composer-icon-button is-warning"
-                      aria-label={interruptMutation.isPending ? '中断中...' : '中断当前 turn'}
-                      title={interruptMutation.isPending ? '中断中...' : '中断当前 turn'}
-                      onClick={() => interruptMutation.mutate()}
-                      disabled={interruptMutation.isPending}
+                      aria-label={hasUploadingAttachments ? '附件上传中' : '上传附件'}
+                      title={hasUploadingAttachments ? '附件上传中' : '上传附件'}
+                      onClick={() => uploadInputRef.current?.click()}
+                      disabled={!activeSessionId || hasUploadingAttachments}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md text-foreground-muted hover:bg-surface-hover hover:text-foreground"
                     >
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" />
+                      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
+                        <path
+                          d="M15.5 6.5 8.4 13.6a3 3 0 1 0 4.2 4.2l7.1-7.1a5 5 0 1 0-7.1-7.1L5.8 10.4"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="1.8"
+                        />
                       </svg>
                     </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="composer-icon-button"
-                    aria-label={hasUploadingAttachments ? '附件上传中' : '上传附件'}
-                    title={hasUploadingAttachments ? '附件上传中' : '上传附件'}
-                    onClick={() => uploadInputRef.current?.click()}
-                    disabled={!activeSessionId || hasUploadingAttachments}
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path
-                        d="M15.5 6.5 8.4 13.6a3 3 0 1 0 4.2 4.2l7.1-7.1a5 5 0 1 0-7.1-7.1L5.8 10.4"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="1.8"
-                      />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="composer-send-button"
-                    onClick={handleSend}
-                    aria-label={
-                      sendMessageMutation.isPending ? '提交中...' : isTurnRunning ? '补充信息' : '发送'
-                    }
-                    title={
-                      sendMessageMutation.isPending ? '提交中...' : isTurnRunning ? '补充信息' : '发送'
-                    }
-                    disabled={
-                      !draft.trim() ||
-                      hasUploadingAttachments ||
-                      sendMessageMutation.isPending ||
-                      interruptMutation.isPending
-                    }
-                  >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path
-                        d="M12 5v14M12 5l-5.5 5.5M12 5l5.5 5.5"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth="2"
-                      />
-                    </svg>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={handleSend}
+                      aria-label={
+                        sendMessageMutation.isPending ? '提交中...' : isTurnRunning ? '补充信息' : '发送'
+                      }
+                      title={
+                        sendMessageMutation.isPending ? '提交中...' : isTurnRunning ? '补充信息' : '发送'
+                      }
+                      disabled={
+                        !draft.trim() ||
+                        hasUploadingAttachments ||
+                        sendMessageMutation.isPending ||
+                        interruptMutation.isPending
+                      }
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-accent text-accent-foreground transition-opacity hover:brightness-110 disabled:opacity-50"
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4">
+                        <path
+                          d="M12 5v14M12 5l-5.5 5.5M12 5l5.5 5.5"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="2"
+                        />
+                      </svg>
+                    </button>
+                  </div>
                 </div>
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  hidden
+                  multiple
+                  onChange={handleComposerFileSelection}
+                />
               </div>
-              <input
-                ref={uploadInputRef}
-                type="file"
-                hidden
-                multiple
-                onChange={handleComposerFileSelection}
-              />
             </div>
           </footer>
         </>
       ) : (
-        <section className="message-stage">
-          <div className="message-list">
+        <section className="message-stage flex-1 overflow-hidden">
+          <div className="message-list flex h-full items-center justify-center">
             <EmptyState
               title="还没有会话"
               detail="先创建一个会话，并明确选择这个会话允许使用哪些 skill。未选择的 skill 不会进入上下文，也不可调用。"
               action={
-                <div className="empty-state-actions">
-                  <button type="button" className="primary-button" onClick={openCreateSessionDialog}>
+                <div className="flex flex-col items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={openCreateSessionDialog}
+                    className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground hover:brightness-110"
+                  >
                     新建会话
                   </button>
-                  <div className="empty-state-caption">
+                  <div className="text-2xs text-foreground-muted">
                     会话创建后，你仍然可以在右侧面板调整当前会话启用的 skill 范围。
                   </div>
                 </div>
