@@ -1,5 +1,4 @@
-export const cn = (...values: Array<string | false | null | undefined>) =>
-  values.filter(Boolean).join(' ');
+export { cn } from './cn';
 
 export const formatBytes = (size: number) => {
   if (size < 1024) {

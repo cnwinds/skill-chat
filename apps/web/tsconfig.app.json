@@ -20,7 +20,14 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@skillchat/shared": ["../../packages/shared/src/index.ts"],
+      "@skillchat/shared/*": ["../../packages/shared/src/*"]
+    }
   },
   "include": ["src"]
 }
