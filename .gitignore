@@ -22,3 +22,6 @@ apps/web/test-results
 docker/.env
 docker/data/*
 !docker/data/.gitkeep
+
+# Local automation / scratch
+*.ahk
