@@ -22,9 +22,6 @@ const ImageAttachmentThumb = ({ file }: ImageAttachmentThumbProps) => {
     imagePreviewActions.open({
       id: file.id,
       file,
-      // Reuse the already-resolved object URL so the lightbox can show
-      // the full image instantly without an extra network round-trip.
-      src: previewUrl ?? undefined,
       label: file.displayName,
       mimeType: file.mimeType,
     });

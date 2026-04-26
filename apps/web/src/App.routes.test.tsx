@@ -220,7 +220,7 @@ describe('App routes', () => {
 
     renderApp(['/app/session/s1']);
 
-    expect(await screen.findByText(/当前用户：member/, { selector: 'p' })).toBeInTheDocument();
+    expect(await screen.findByText(/Turn：- · Round：- · 总消耗 token：0/, { selector: 'p' })).toBeInTheDocument();
   });
 
   it('shows the admin settings entry only for admins', async () => {
@@ -1076,7 +1076,7 @@ describe('App routes', () => {
     renderApp(['/app/session/s1']);
 
     expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
-    expect(screen.getByText('regular / sampling / round 2')).toBeInTheDocument();
+    expect(screen.getByText(/Turn：1（1） · Round：2 · 总消耗 token：0 · sampling/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '打开会话：Session 2' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'Session 2' })).toBeInTheDocument();
@@ -1084,7 +1084,7 @@ describe('App routes', () => {
     fireEvent.click(screen.getByRole('button', { name: /^打开会话：Session 1/ }));
 
     expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
-    expect(screen.getByText('regular / sampling / round 2')).toBeInTheDocument();
+    expect(screen.getByText(/Turn：1（1） · Round：2 · 总消耗 token：0 · sampling/)).toBeInTheDocument();
   });
 
   it('shows reconnect progress in the thinking bubble while the stream reconnects and restores thinking after reconnect', async () => {
@@ -2010,7 +2010,7 @@ describe('App routes', () => {
     });
   });
 
-  it('loads image message previews through the blob download path and lets the user reuse the image', async () => {
+  it('loads image message previews through the thumbnail path and lets the user reuse the image', async () => {
     const originalCreateObjectURL = URL.createObjectURL;
     const originalRevokeObjectURL = URL.revokeObjectURL;
     const createObjectURL = vi.fn(() => 'blob:generated-image-preview');
@@ -2086,7 +2086,7 @@ describe('App routes', () => {
         if (url === '/api/skills') {
           return jsonResponse({ body: [] });
         }
-        if (url === '/api/files/file_img_1/download' && method === 'GET') {
+        if (url === '/api/files/file_img_1/thumbnail' && method === 'GET') {
           previewFetchCount += 1;
           return new Response(new Blob(['pngdata'], { type: 'image/png' }), {
             status: 200,

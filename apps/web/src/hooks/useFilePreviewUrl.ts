@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import type { FileRecord } from '@skillchat/shared';
 import { api } from '../lib/api';
 
-export const useFilePreviewUrl = (file: FileRecord | null, enabled = true) => {
+export const useFilePreviewUrl = (
+  file: FileRecord | null,
+  enabled = true,
+  variant: 'thumbnail' | 'original' = 'thumbnail',
+) => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +25,11 @@ export const useFilePreviewUrl = (file: FileRecord | null, enabled = true) => {
     setLoading(true);
     setError(null);
 
-    void api.fetchFileBlob(file.id)
+    const loadBlob = variant === 'original'
+      ? api.fetchFileBlob(file.id)
+      : api.fetchFilePreviewBlob(file);
+
+    void loadBlob
       .then((blob) => {
         if (disposed) {
           return;
@@ -47,7 +55,7 @@ export const useFilePreviewUrl = (file: FileRecord | null, enabled = true) => {
         URL.revokeObjectURL(revokedUrl);
       }
     };
-  }, [enabled, file]);
+  }, [enabled, file, variant]);
 
   return {
     previewUrl,

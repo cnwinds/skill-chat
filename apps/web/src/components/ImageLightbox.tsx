@@ -17,6 +17,7 @@ const useResolvedPreviewUrl = (target: ReturnType<typeof useImagePreview>) => {
   const { previewUrl, loading, error } = useFilePreviewUrl(
     target?.src ? null : file,
     Boolean(target) && !target?.src && isImage,
+    'original',
   );
 
   if (target?.src) {

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import mime from 'mime-types';
 import { nanoid } from 'nanoid';
+import sharp from 'sharp';
 import type { FileRecord, FileBucket, SessionFileContext } from '@skillchat/shared';
 import type { MultipartFile } from '@fastify/multipart';
 import type { AppConfig } from '../../config/env.js';
@@ -40,7 +41,25 @@ const toFileRecord = (row: FileRow): FileRecord => ({
   source: row.source,
   createdAt: row.created_at,
   downloadUrl: `/api/files/${row.id}/download`,
+  ...(row.mime_type?.startsWith('image/')
+    ? { thumbnailUrl: `/api/files/${row.id}/thumbnail` }
+    : {}),
 });
+
+const isImage = (file: Pick<FileRecord, 'mimeType'>) =>
+  Boolean(file.mimeType?.startsWith('image/'));
+
+const isResizableImage = (file: Pick<FileRecord, 'mimeType'>) =>
+  isImage(file) && file.mimeType !== 'image/svg+xml';
+
+const fileExists = async (filePath: string) => {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 export class FileService {
   constructor(
@@ -214,6 +233,30 @@ export class FileService {
     };
   }
 
+  async resolveThumbnailPath(userId: string, fileId: string) {
+    const file = this.getById(userId, fileId);
+    const absolutePath = resolveUserPath(this.config, userId, file.relativePath);
+
+    if (!isImage(file)) {
+      throw new Error('文件不是可预览图片');
+    }
+
+    if (!isResizableImage(file) || file.size <= this.config.IMAGE_THUMBNAIL_THRESHOLD_BYTES) {
+      return {
+        file,
+        absolutePath,
+        mimeType: file.mimeType ?? 'application/octet-stream',
+      };
+    }
+
+    const thumbnailPath = await this.ensureThumbnail(file, absolutePath);
+    return {
+      file,
+      absolutePath: thumbnailPath ?? absolutePath,
+      mimeType: thumbnailPath ? 'image/webp' : (file.mimeType ?? 'application/octet-stream'),
+    };
+  }
+
   private async insertRecord(args: {
     userId: string;
     sessionId: string | null;
@@ -250,7 +293,7 @@ export class FileService {
         now,
       );
 
-    return {
+    const record: FileRecord = {
       id,
       userId: args.userId,
       sessionId: args.sessionId,
@@ -262,6 +305,62 @@ export class FileService {
       source: args.source,
       createdAt: now,
       downloadUrl: `/api/files/${id}/download`,
+      ...(args.mimeType.startsWith('image/')
+        ? { thumbnailUrl: `/api/files/${id}/thumbnail` }
+        : {}),
     };
+
+    await this.createThumbnailBestEffort(record, args.absolutePath);
+
+    return record;
+  }
+
+  private getThumbnailPath(file: FileRecord, absolutePath: string) {
+    const thumbnailName = `${file.id}-${this.config.IMAGE_THUMBNAIL_MAX_WIDTH}x${this.config.IMAGE_THUMBNAIL_MAX_HEIGHT}.webp`;
+    return path.join(path.dirname(absolutePath), '.thumbnails', thumbnailName);
+  }
+
+  private async createThumbnailBestEffort(file: FileRecord, absolutePath: string) {
+    if (!isResizableImage(file) || file.size <= this.config.IMAGE_THUMBNAIL_THRESHOLD_BYTES) {
+      return;
+    }
+
+    try {
+      await this.ensureThumbnail(file, absolutePath);
+    } catch {
+      // Thumbnail generation is an optimization. The original file remains
+      // authoritative and preview endpoints fall back to it if conversion fails.
+    }
+  }
+
+  private async ensureThumbnail(file: FileRecord, absolutePath: string) {
+    const userRoot = getUserRoot(this.config, file.userId);
+    assertPathInside(userRoot, absolutePath);
+
+    const thumbnailPath = this.getThumbnailPath(file, absolutePath);
+    assertPathInside(userRoot, thumbnailPath);
+
+    if (await fileExists(thumbnailPath)) {
+      return thumbnailPath;
+    }
+
+    await fs.mkdir(path.dirname(thumbnailPath), { recursive: true });
+
+    try {
+      await sharp(absolutePath, { animated: false })
+        .rotate()
+        .resize({
+          width: this.config.IMAGE_THUMBNAIL_MAX_WIDTH,
+          height: this.config.IMAGE_THUMBNAIL_MAX_HEIGHT,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .webp({ quality: this.config.IMAGE_THUMBNAIL_QUALITY })
+        .toFile(thumbnailPath);
+      return thumbnailPath;
+    } catch {
+      await fs.rm(thumbnailPath, { force: true });
+      return null;
+    }
   }
 }

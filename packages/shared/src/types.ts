@@ -92,6 +92,7 @@ export interface FileRecord {
   source: FileSource;
   createdAt: string;
   downloadUrl?: string;
+  thumbnailUrl?: string;
 }
 
 export interface StoredEventBase {
@@ -234,6 +235,13 @@ export interface SessionRuntimeSnapshot {
   activeTurn: ActiveTurnRuntime | null;
   followUpQueue: RuntimeInputPreview[];
   recovery: SessionRuntimeRecovery | null;
+  tokenUsage?: {
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalTokens: number;
+    turnCount: number;
+    lastUpdatedAt: string;
+  } | null;
 }
 
 export interface TurnConfig {

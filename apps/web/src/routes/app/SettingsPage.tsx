@@ -15,8 +15,6 @@ export const SettingsPage = () => {
     setPageError,
     themeMode,
     onToggleTheme,
-    onLogout,
-    logoutPending,
     openSidebarSheet,
   } = useAppShellOutlet();
 
@@ -37,8 +35,6 @@ export const SettingsPage = () => {
         subtitle={`当前用户：${user.username}`}
         themeMode={themeMode}
         onToggleTheme={onToggleTheme}
-        onLogout={onLogout}
-        logoutPending={logoutPending}
         onOpenSidebar={openSidebarSheet}
         onOpenInspector={() => undefined}
         showInspectorToggle={false}

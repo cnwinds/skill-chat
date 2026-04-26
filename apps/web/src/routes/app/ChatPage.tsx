@@ -124,12 +124,28 @@ const EmptyState = ({ title, detail, action }: EmptyStateProps) => (
   </div>
 );
 
-const STREAM_STATUS_TO_TONE: Record<string, 'idle' | 'running' | 'reconnecting' | 'error'> = {
-  idle: 'idle',
-  connecting: 'reconnecting',
-  open: 'running',
-  reconnecting: 'reconnecting',
-  error: 'error',
+const formatCompactCount = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0';
+  }
+
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(2).replace(/\.?0+$/, '')}M`;
+  }
+
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(1).replace(/\.?0+$/, '')}K`;
+  }
+
+  return String(value);
+};
+
+const getShortTurnId = (turnId: string | null | undefined) => {
+  if (!turnId) {
+    return null;
+  }
+  const normalized = turnId.replace(/^turn[_-]?/i, '');
+  return normalized.length > 8 ? normalized.slice(0, 8) : normalized;
 };
 
 export const ChatPage = () => {
@@ -145,8 +161,6 @@ export const ChatPage = () => {
     openInspectorSheet,
     themeMode,
     onToggleTheme,
-    onLogout,
-    logoutPending,
   } = useAppShellOutlet();
 
   const drafts = useUiStore((state) => state.drafts);
@@ -678,52 +692,52 @@ export const ChatPage = () => {
     focusComposer();
   };
 
-  const turnDescription = isTurnRunning
-    ? `${stream.activeTurnKind ?? 'regular'} / ${stream.activeTurnPhase ?? 'running'}${stream.activeTurnRound ? ` / round ${stream.activeTurnRound}` : ''}`
-    : null;
-  const headerSubtitle = (
-    <>
-      当前用户：{user.username}
-      {hasActiveSession ? (
-        <>
-          {' '}· 连接状态：<span>{stream.status}</span>
-          {turnDescription ? (
-            <>
-              {' '}· 当前 turn：<span>{turnDescription}</span>
-            </>
-          ) : null}
-        </>
-      ) : (
-        <> · 暂未进入会话，请先创建会话并选择本会话允许使用的 skills。</>
-      )}
-    </>
+  const sessionTurnCount = useMemo(() => {
+    const turnIds = new Set<string>();
+    for (const item of timeline) {
+      if (item.kind === 'message' && item.role === 'assistant' && item.meta?.turnId) {
+        turnIds.add(item.meta.turnId);
+      }
+    }
+    if (stream.activeTurnId) {
+      turnIds.add(stream.activeTurnId);
+    }
+    return Math.max(runtimeQuery.data?.tokenUsage?.turnCount ?? 0, turnIds.size);
+  }, [runtimeQuery.data?.tokenUsage?.turnCount, stream.activeTurnId, timeline]);
+  const activeTurnShortId = getShortTurnId(stream.activeTurnId ?? runtimeQuery.data?.activeTurn?.turnId);
+  const activeRound = stream.activeTurnRound ?? runtimeQuery.data?.activeTurn?.round ?? 0;
+  const persistedTokenTotal = runtimeQuery.data?.tokenUsage?.totalTokens;
+  const streamedTokenTotal = stream.currentTurnTokenUsage?.cumulativeTotalTokens ?? stream.currentTurnTokenUsage?.totalTokens;
+  const messageTokenTotal = useMemo(
+    () =>
+      timeline.reduce((total, item) => {
+        if (item.kind !== 'message' || item.role !== 'assistant') {
+          return total;
+        }
+        return total + (item.meta?.tokenUsage?.totalTokens ?? 0);
+      }, 0),
+    [timeline],
   );
-  const statusLabel = hasActiveSession
-    ? isTurnRunning
-      ? `回应中 · ${stream.activeTurnPhase ?? 'running'}`
-      : stream.status === 'reconnecting' && stream.reconnectAttempt && stream.reconnectLimit
-        ? `重连 ${stream.reconnectAttempt}/${stream.reconnectLimit}`
-        : stream.status === 'open'
-          ? '已连接'
-          : stream.status === 'error'
-            ? '连接错误'
-            : stream.status === 'idle'
-              ? undefined
-              : stream.status
-    : undefined;
-  const statusTone = STREAM_STATUS_TO_TONE[stream.status] ?? 'idle';
+  const totalTokens = streamedTokenTotal ?? persistedTokenTotal ?? messageTokenTotal;
+  const headerSubtitle = hasActiveSession ? (
+    <>
+      Turn：{sessionTurnCount || '-'}
+      {activeTurnShortId ? <>（{activeTurnShortId}）</> : null}
+      {' '}· Round：{activeRound || '-'}
+      {' '}· 总消耗 token：{formatCompactCount(totalTokens)}
+      {isTurnRunning && stream.activeTurnPhase ? <> · {stream.activeTurnPhase}</> : null}
+    </>
+  ) : (
+    <>暂未进入会话，请先创建会话并选择本会话允许使用的 skills。</>
+  );
 
   return (
     <main className="relative flex h-full min-h-0 flex-1 flex-col">
       <ChatHeader
         title={activeSession?.title ?? '选择或创建会话'}
         subtitle={headerSubtitle}
-        statusLabel={statusLabel}
-        statusTone={isTurnRunning ? 'running' : statusTone}
         themeMode={themeMode}
         onToggleTheme={onToggleTheme}
-        onLogout={onLogout}
-        logoutPending={logoutPending}
         onOpenSidebar={openSidebarSheet}
         onOpenInspector={() => openInspectorSheet('files')}
       />

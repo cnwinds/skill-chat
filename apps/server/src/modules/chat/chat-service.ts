@@ -133,15 +133,30 @@ export class ChatService {
   async getRuntime(userId: string, sessionId: string): Promise<SessionRuntimeSnapshot> {
     this.sessionService.requireOwned(userId, sessionId);
     const runtime = await this.turnRegistry.get(userId, sessionId);
+    const contextState = await this.sessionContextStore.load(userId, sessionId);
+    const tokenUsage = contextState.tokenUsage
+      ? {
+          totalInputTokens: contextState.tokenUsage.totalInputTokens,
+          totalOutputTokens: contextState.tokenUsage.totalOutputTokens,
+          totalTokens: contextState.tokenUsage.totalInputTokens + contextState.tokenUsage.totalOutputTokens,
+          turnCount: contextState.tokenUsage.turnCount,
+          lastUpdatedAt: contextState.tokenUsage.lastUpdatedAt,
+        }
+      : null;
+
     if (!runtime) {
       return {
         sessionId,
         activeTurn: null,
         followUpQueue: [],
         recovery: null,
+        tokenUsage,
       };
     }
-    return runtime.getSnapshot();
+    return {
+      ...runtime.getSnapshot(),
+      tokenUsage,
+    };
   }
 
   private async commitUserInput(

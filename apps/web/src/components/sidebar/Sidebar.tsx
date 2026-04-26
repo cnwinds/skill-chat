@@ -128,6 +128,7 @@ export const Sidebar = ({
                   type="button"
                   aria-label={`打开会话：${session.title}${isRunning ? '，回应中' : ''}`}
                   onClick={() => onSelectSession(session.id)}
+                  onDoubleClick={() => setRenameTarget(session)}
                   data-active={isActive ? 'true' : undefined}
                   className={cn(
                     'session-item flex w-full flex-col gap-0.5 rounded-md px-3 py-2 pr-9 text-left text-sm transition-colors',
@@ -159,9 +160,11 @@ export const Sidebar = ({
                     <button
                       type="button"
                       aria-label={`打开会话操作：${session.title}`}
+                      title="会话操作"
                       className={cn(
                         'absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground-muted transition hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
                         'opacity-100 lg:opacity-0 lg:group-hover/session:opacity-100 lg:focus-visible:opacity-100',
+                        isActive && 'lg:opacity-100',
                       )}
                     >
                       <MoreHorizontal className="h-4 w-4" />

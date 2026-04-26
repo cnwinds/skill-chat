@@ -673,6 +673,19 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     }
   });
 
+  app.get('/api/files/:fileId/thumbnail', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      const params = z.object({ fileId: z.string().min(1) }).parse(request.params);
+      const { absolutePath, mimeType } = await fileService.resolveThumbnailPath(request.user.sub, params.fileId);
+      reply.header('Content-Type', mimeType);
+      reply.header('Content-Disposition', 'inline');
+      reply.header('Cache-Control', 'private, max-age=31536000, immutable');
+      return reply.send(fs.createReadStream(absolutePath));
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '图片预览失败') });
+    }
+  });
+
   app.post('/api/files/:fileId/share', { preHandler: app.authenticate }, async (request, reply) => {
     try {
       const params = z.object({ fileId: z.string().min(1) }).parse(request.params);

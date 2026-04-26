@@ -82,6 +82,22 @@ const fetchFileBlob = async (fileId: string) => {
   return await response.blob();
 };
 
+const fetchFilePreviewBlob = async (file: FileRecord) => {
+  const response = await fetch(file.thumbnailUrl ?? `/api/files/${file.id}/thumbnail`, {
+    credentials: 'include',
+    headers: createHeaders({}, true),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      useAuthStore.getState().setAnonymous();
+    }
+    throw new ApiError('图片预览失败', response.status);
+  }
+
+  return await response.blob();
+};
+
 export const api = {
   getSystemStatus: () => requestJson<SystemStatus>('/api/system/status'),
 
@@ -236,6 +252,7 @@ export const api = {
     }),
 
   fetchFileBlob,
+  fetchFilePreviewBlob,
 
   downloadFile: async (file: FileRecord) => {
     const blob = await fetchFileBlob(file.id);

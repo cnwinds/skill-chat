@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
+import sharp from 'sharp';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
@@ -260,6 +261,9 @@ describe('SkillChat server', () => {
         WEB_ORIGIN: 'http://localhost:5173',
         ENABLE_ASSISTANT_TOOLS: false,
         OPENAI_API_KEY: 'test-token',
+        IMAGE_THUMBNAIL_THRESHOLD_BYTES: 1,
+        IMAGE_THUMBNAIL_MAX_WIDTH: 32,
+        IMAGE_THUMBNAIL_MAX_HEIGHT: 32,
       },
     });
   });
@@ -425,6 +429,7 @@ describe('SkillChat server', () => {
       activeTurn: null,
       followUpQueue: [],
       recovery: null,
+      tokenUsage: null,
     });
 
     const steerResponse = await app.inject({
@@ -976,6 +981,61 @@ describe('SkillChat server', () => {
     expect(toolCall.meta).toBeUndefined();
     expect(toolResult.content).toBeUndefined();
     expect(toolResult.meta).toBeUndefined();
+  });
+
+  it('serves image thumbnails separately from original downloads', async () => {
+    const auth = await registerAndLogin(app, 'thumb_user');
+    const session = await createSession(app, auth.cookie, '缩略图测试');
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const image = await sharp({
+      create: {
+        width: 120,
+        height: 80,
+        channels: 3,
+        background: '#4f8cff',
+      },
+    }).png().toBuffer();
+    const imageBody = image.buffer.slice(
+      image.byteOffset,
+      image.byteOffset + image.byteLength,
+    ) as ArrayBuffer;
+    const form = new FormData();
+    form.append('file', new Blob([imageBody], { type: 'image/png' }), 'large-preview.png');
+
+    const uploadResponse = await fetch(`${address}/api/files/${session.id}/upload`, {
+      method: 'POST',
+      headers: {
+        Cookie: auth.cookie,
+      },
+      body: form,
+    });
+
+    expect(uploadResponse.status).toBe(200);
+    const file = await uploadResponse.json() as { id: string; thumbnailUrl?: string; downloadUrl?: string };
+    expect(file.thumbnailUrl).toBe(`/api/files/${file.id}/thumbnail`);
+    expect(file.downloadUrl).toBe(`/api/files/${file.id}/download`);
+
+    const thumbnailResponse = await fetch(`${address}/api/files/${file.id}/thumbnail`, {
+      headers: {
+        Cookie: auth.cookie,
+      },
+    });
+
+    expect(thumbnailResponse.status).toBe(200);
+    expect(thumbnailResponse.headers.get('content-type')).toContain('image/webp');
+    expect(thumbnailResponse.headers.get('content-disposition')).toBe('inline');
+    expect((await thumbnailResponse.arrayBuffer()).byteLength).toBeGreaterThan(0);
+
+    const downloadResponse = await fetch(`${address}/api/files/${file.id}/download`, {
+      headers: {
+        Cookie: auth.cookie,
+      },
+    });
+
+    expect(downloadResponse.status).toBe(200);
+    expect(downloadResponse.headers.get('content-type')).toContain('image/png');
+    expect(downloadResponse.headers.get('content-disposition')).toContain('attachment');
+    await downloadResponse.arrayBuffer();
   });
 
   it('generates a PDF file and supports sharing and downloading it', async () => {

@@ -26,6 +26,10 @@ const envSchema = z.object({
   STREAM_BACKOFF_MULTIPLIER: z.coerce.number().positive().default(2),
   ENABLE_TOKEN_TRACKING: z.coerce.boolean().default(true),
   ENABLE_REASONING_EVENTS: z.coerce.boolean().default(false),
+  IMAGE_THUMBNAIL_THRESHOLD_BYTES: z.coerce.number().int().nonnegative().default(256 * 1024),
+  IMAGE_THUMBNAIL_MAX_WIDTH: z.coerce.number().int().positive().default(640),
+  IMAGE_THUMBNAIL_MAX_HEIGHT: z.coerce.number().int().positive().default(640),
+  IMAGE_THUMBNAIL_QUALITY: z.coerce.number().int().min(1).max(100).default(78),
   MAX_CONCURRENT_RUNS: z.coerce.number().int().positive().default(5),
   RUN_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
 });

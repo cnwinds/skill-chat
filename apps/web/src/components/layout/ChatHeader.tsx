@@ -1,41 +1,24 @@
-import { LogOut, PanelLeftOpen, PanelRightOpen } from 'lucide-react';
+import { PanelLeftOpen, PanelRightOpen } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { cn } from '@/lib/cn';
 import { ThemeToggle } from './ThemeToggle';
 
 export interface ChatHeaderProps {
   title: string;
   subtitle?: ReactNode;
-  statusLabel?: string;
-  statusTone?: 'idle' | 'running' | 'reconnecting' | 'error';
   themeMode: 'light' | 'dark';
   onToggleTheme: () => void;
-  onLogout: () => void;
-  logoutPending?: boolean;
   onOpenSidebar: () => void;
   onOpenInspector: () => void;
   showInspectorToggle?: boolean;
   rightExtras?: ReactNode;
 }
 
-const toneClass: Record<NonNullable<ChatHeaderProps['statusTone']>, string> = {
-  idle: 'bg-foreground-muted/40',
-  running: 'bg-emerald-500',
-  reconnecting: 'bg-amber-500 animate-pulse-dot',
-  error: 'bg-danger',
-};
-
 export const ChatHeader = ({
   title,
   subtitle,
-  statusLabel,
-  statusTone = 'idle',
   themeMode,
   onToggleTheme,
-  onLogout,
-  logoutPending = false,
   onOpenSidebar,
   onOpenInspector,
   showInspectorToggle = true,
@@ -60,37 +43,9 @@ export const ChatHeader = ({
     </div>
 
     <div className="flex items-center gap-1">
-      {statusLabel ? (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs text-foreground-muted"
-                aria-label={statusLabel}
-              >
-                <span className={cn('h-1.5 w-1.5 rounded-full', toneClass[statusTone])} />
-                <span className="hidden sm:inline">{statusLabel}</span>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{statusLabel}</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      ) : null}
-
       {rightExtras}
 
       <ThemeToggle themeMode={themeMode} onToggle={onToggleTheme} />
-
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onLogout}
-        disabled={logoutPending}
-        aria-label="退出"
-        title="退出"
-      >
-        <LogOut className="h-4 w-4" />
-      </Button>
 
       {showInspectorToggle ? (
         <Button

@@ -213,7 +213,6 @@ const ImageEventCard = ({
     imagePreviewActions.open({
       id: event.file.id,
       file: event.file,
-      src: previewUrl ?? undefined,
       label: event.file.displayName,
       caption: event.revisedPrompt || event.prompt,
       mimeType: event.file.mimeType,
