@@ -127,11 +127,31 @@ const formatElapsedDuration = (elapsedSeconds: number) => {
 const getThinkingBubbleLabel = (content: string) =>
   /^重连中\d+\/\d+$/.test(content) ? content : '思考中';
 
+const formatCompactTokenCount = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return '0';
+  }
+
+  const absValue = Math.abs(value);
+  const formatScaled = (scaled: number, unit: 'K' | 'M') =>
+    `${scaled.toFixed(2).replace(/\.?0+$/, '')}${unit}`;
+
+  if (absValue >= 1_000_000) {
+    return formatScaled(value / 1_000_000, 'M');
+  }
+
+  if (absValue >= 1_000) {
+    return formatScaled(value / 1_000, 'K');
+  }
+
+  return String(value);
+};
+
 const formatTokenUsage = (tokenUsage?: TokenUsageStats) => {
   if (!tokenUsage) {
     return '';
   }
-  return `${tokenUsage.totalTokens} (${tokenUsage.inputTokens}/${tokenUsage.outputTokens}) tokens`;
+  return `${formatCompactTokenCount(tokenUsage.totalTokens)} (${formatCompactTokenCount(tokenUsage.inputTokens)}/${formatCompactTokenCount(tokenUsage.outputTokens)}) tokens`;
 };
 
 const formatDurationMs = (durationMs?: number) => {
