@@ -104,8 +104,22 @@ export const useSessionStream = (sessionId: string | null) => {
                 }
                 throw new Error(`Stream open failed: ${response.status}`);
               }
+              const wasReconnect = reconnectAttempt > 0;
               reconnectAttempt = 0;
               setStreamStatus(sessionId, 'open');
+              if (wasReconnect) {
+                // The server StreamHub does not buffer events for offline
+                // subscribers, so anything emitted while we were
+                // disconnected (text_delta, file_ready, turn_completed,
+                // done, ...) is lost permanently. Pull authoritative state
+                // back from REST so the reconciliation effect in ChatPage
+                // can clear stuck thinking/timer when the turn already
+                // finished server-side.
+                void queryClient.invalidateQueries({ queryKey: ['runtime', sessionId] });
+                void queryClient.invalidateQueries({ queryKey: ['messages', sessionId] });
+                void queryClient.invalidateQueries({ queryKey: ['files', sessionId] });
+                void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+              }
             },
             onmessage(event) {
               if (!event.event) {
