@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test *)",
+      "Bash(npm install *)",
+      "Bash(npm --workspace @skillchat/web run typecheck)",
+      "Bash(npm run *)",
+      "Bash(*)"
+    ]
+  }
+}
