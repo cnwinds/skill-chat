@@ -18,6 +18,7 @@ import { Toaster, toast } from '@/components/ui/toaster';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { NewSessionDialog } from '@/components/sidebar/NewSessionDialog';
 import { InspectorPanel } from '@/components/inspector/InspectorPanel';
+import { ImageLightbox } from '@/components/ImageLightbox';
 import { cn } from '@/lib/cn';
 import type { AppShellOutletValue } from './AppShellContext';
 
@@ -372,6 +373,7 @@ export const AppShell = () => {
       />
 
       <Toaster />
+      <ImageLightbox />
     </div>
   );
 };

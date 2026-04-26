@@ -120,6 +120,7 @@ export interface TextMessageEvent extends StoredEventBase {
   type: 'text';
   content: string;
   meta?: AssistantMessageMeta;
+  attachments?: FileRecord[];
 }
 
 export interface ThinkingEvent extends StoredEventBase {
@@ -291,6 +292,7 @@ export interface UserMessageCommittedPayload {
   content: string;
   createdAt: string;
   consumedInputIds?: string[];
+  attachments?: FileRecord[];
 }
 
 export interface ReasoningDeltaPayload {

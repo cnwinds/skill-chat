@@ -12,6 +12,8 @@ import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/utils';
 import type { ToolTraceDisplayEvent } from '@/lib/timeline';
 import { useFilePreviewUrl } from '@/hooks/useFilePreviewUrl';
+import { imagePreviewActions } from '@/hooks/useImagePreview';
+import { MessageAttachments } from '@/components/chat/MessageAttachments';
 
 type Props = {
   event:
@@ -183,16 +185,36 @@ const ImageEventCard = ({
     event.file.mimeType?.startsWith('image/') === true,
   );
 
+  const openLightbox = () => {
+    imagePreviewActions.open({
+      id: event.file.id,
+      file: event.file,
+      src: previewUrl ?? undefined,
+      label: event.file.displayName,
+      caption: event.revisedPrompt || event.prompt,
+      mimeType: event.file.mimeType,
+    });
+  };
+
   return (
     <article className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-row">
       <div className="flex w-full max-w-[260px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-surface-hover">
         {previewUrl ? (
-          <img
-            className="h-full w-full object-contain"
-            src={previewUrl}
-            alt={event.revisedPrompt || event.prompt || event.file.displayName}
-            loading="lazy"
-          />
+          <button
+            type="button"
+            onClick={openLightbox}
+            className="block h-full w-full cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            aria-label={`预览图片：${event.file.displayName}`}
+            title="点击查看大图"
+          >
+            <img
+              className="h-full w-full object-contain"
+              src={previewUrl}
+              alt={event.revisedPrompt || event.prompt || event.file.displayName}
+              loading="lazy"
+              draggable={false}
+            />
+          </button>
         ) : (
           <div className="flex h-32 w-full items-center justify-center text-2xs text-foreground-muted">
             {loading ? '图片加载中...' : error ? '图片预览失败' : '图片暂不可预览'}
@@ -248,11 +270,15 @@ const CopyableMessageBlock = ({
   content,
   markdown,
   assistantMeta,
+  attachments,
+  onDownloadAttachment,
 }: {
   variant: 'assistant' | 'user' | 'pending';
   content: string;
   markdown: string;
   assistantMeta?: AssistantMessageMeta;
+  attachments?: FileRecord[];
+  onDownloadAttachment?: (file: FileRecord) => void;
 }) => {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
@@ -299,6 +325,13 @@ const CopyableMessageBlock = ({
             {markdown}
           </ReactMarkdown>
         </div>
+        {attachments && attachments.length > 0 ? (
+          <MessageAttachments
+            attachments={attachments}
+            align={isUser ? 'end' : 'start'}
+            onDownload={onDownloadAttachment}
+          />
+        ) : null}
         {!isUser ? <AssistantMetaFooter meta={assistantMeta} /> : null}
         <button
           type="button"
@@ -460,6 +493,8 @@ export const MessageItem = ({
           content={event.content}
           markdown={event.content}
           assistantMeta={event.role === 'assistant' ? event.meta : undefined}
+          attachments={event.attachments}
+          onDownloadAttachment={onDownload}
         />
       </article>
     );

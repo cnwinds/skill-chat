@@ -5,6 +5,7 @@ import { useParams } from 'react-router-dom';
 import type {
   FileRecord,
   StoredEvent,
+  TextMessageEvent,
   ThinkingEvent,
 } from '@skillchat/shared';
 import { ApiError, api } from '@/lib/api';
@@ -256,17 +257,57 @@ export const ChatPage = () => {
         const previous =
           queryClient.getQueryData<StoredEvent[]>(['messages', payload.sessionId]) ?? [];
         if (shouldOptimisticallyAppend) {
+          // Resolve FileRecords for the attachment IDs. Prefer the cached
+          // files list (which has full metadata); fall back to composer
+          // attachment data so the user sees their attachments instantly
+          // even before the files cache is hydrated.
+          const cachedFiles =
+            queryClient.getQueryData<FileRecord[]>(['files', payload.sessionId]) ?? [];
+          const cachedById = new Map(cachedFiles.map((file) => [file.id, file]));
+          const optimisticAttachments = payload.attachmentIds
+            .map<FileRecord | null>((fileId) => {
+              const cached = cachedById.get(fileId);
+              if (cached) {
+                return cached;
+              }
+              const composerEntry = composerAttachments.find(
+                (item) => item.fileId === fileId,
+              );
+              if (!composerEntry) {
+                return null;
+              }
+              return {
+                id: fileId,
+                userId: user.id,
+                sessionId: payload.sessionId,
+                displayName: composerEntry.displayName,
+                relativePath: '',
+                mimeType: composerEntry.mimeType,
+                size: composerEntry.size,
+                bucket: 'uploads',
+                source: 'upload',
+                createdAt: new Date().toISOString(),
+                downloadUrl: `/api/files/${fileId}/download`,
+              } satisfies FileRecord;
+            })
+            .filter((item): item is FileRecord => item !== null);
+
+          const optimisticMessage: TextMessageEvent = {
+            id: `optimistic-${Date.now()}`,
+            sessionId: payload.sessionId,
+            kind: 'message',
+            role: 'user',
+            type: 'text',
+            content: payload.content,
+            createdAt: new Date().toISOString(),
+            ...(optimisticAttachments.length > 0
+              ? { attachments: optimisticAttachments }
+              : {}),
+          };
+
           queryClient.setQueryData<StoredEvent[]>(['messages', payload.sessionId], [
             ...previous,
-            {
-              id: `optimistic-${Date.now()}`,
-              sessionId: payload.sessionId,
-              kind: 'message',
-              role: 'user',
-              type: 'text',
-              content: payload.content,
-              createdAt: new Date().toISOString(),
-            },
+            optimisticMessage,
           ]);
         }
         return { previous, shouldOptimisticallyAppend };

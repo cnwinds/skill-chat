@@ -153,6 +153,7 @@ export class ChatService {
   ) {
     const session = this.sessionService.requireOwned(userId, sessionId);
     await this.sessionService.renameFromMessage(userId, sessionId, session.title, input.content);
+    const attachments = this.resolveAttachmentRecords(userId, input.attachmentIds);
     const userMessage: TextMessageEvent = {
       id: createEventId(),
       sessionId,
@@ -161,9 +162,26 @@ export class ChatService {
       type: 'text',
       content: input.content,
       createdAt: input.createdAt,
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
     await this.messageStore.appendEvent(userId, sessionId, userMessage);
     await this.sessionService.touch(userId, sessionId);
+  }
+
+  private resolveAttachmentRecords(userId: string, attachmentIds?: string[]) {
+    if (!attachmentIds || attachmentIds.length === 0) {
+      return [] as ReturnType<FileService['getById']>[];
+    }
+    const uniqueIds = [...new Set(attachmentIds)];
+    const records: ReturnType<FileService['getById']>[] = [];
+    for (const fileId of uniqueIds) {
+      try {
+        records.push(this.fileService.getById(userId, fileId));
+      } catch {
+        // Skip missing/inaccessible attachments instead of failing the whole turn.
+      }
+    }
+    return records;
   }
 
   private async executeTurn(sessionId: string, execution: TurnExecutionContext) {
@@ -223,6 +241,7 @@ export class ChatService {
       userId: user.id,
       sessionId,
       message: input.content,
+      attachmentIds: input.attachmentIds,
       history,
       files,
       availableSkills,

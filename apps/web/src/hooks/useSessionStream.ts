@@ -304,6 +304,11 @@ export const useSessionStream = (sessionId: string | null) => {
                     item.content === content
                   ));
                   if (optimisticIndex >= 0) {
+                    const optimistic = current[optimisticIndex];
+                    const optimisticAttachments =
+                      optimistic && optimistic.kind === 'message' && optimistic.role === 'user'
+                        ? optimistic.attachments
+                        : undefined;
                     const next = [...current];
                     next[optimisticIndex] = {
                       id: `committed-${inputId}`,
@@ -313,6 +318,12 @@ export const useSessionStream = (sessionId: string | null) => {
                       type: 'text',
                       content,
                       createdAt,
+                      // Preserve the attachments locally so the UI doesn't
+                      // flicker until the messages query refetch lands with
+                      // the server-side persisted snapshot.
+                      ...(optimisticAttachments && optimisticAttachments.length > 0
+                        ? { attachments: optimisticAttachments }
+                        : {}),
                     };
                     return next;
                   }

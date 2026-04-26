@@ -1,9 +1,10 @@
-import { Download, FileImage, ImagePlus, Share2 } from 'lucide-react';
+import { Download, Eye, FileImage, ImagePlus, Share2 } from 'lucide-react';
 import type { FileBucket, FileRecord, SkillMetadata } from '@skillchat/shared';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatBytes } from '@/lib/utils';
+import { imagePreviewActions } from '@/hooks/useImagePreview';
 import { SkillCard } from './SkillCard';
 
 export interface InspectorPanelProps {
@@ -112,6 +113,24 @@ export const InspectorPanel = ({
                         </div>
                       </div>
                       <div className="flex shrink-0 gap-0.5">
+                        {file.mimeType?.startsWith('image/') ? (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() =>
+                              imagePreviewActions.open({
+                                id: file.id,
+                                file,
+                                label: file.displayName,
+                                mimeType: file.mimeType,
+                              })
+                            }
+                            aria-label="预览"
+                            title="预览大图"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                          </Button>
+                        ) : null}
                         <Button
                           variant="ghost"
                           size="icon-sm"
