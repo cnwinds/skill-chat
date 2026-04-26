@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import type {
+  AssistantMessageCommittedPayload,
   AssistantMessageMeta,
   FollowUpQueueMutationResponse,
   ImageMessageEvent,
@@ -43,8 +44,13 @@ type UserContext = {
 const createEventId = () => `evt_${nanoid()}`;
 const now = () => new Date().toISOString();
 
+type ActiveAssistantSegment = {
+  flush: (meta?: AssistantMessageMeta) => Promise<void>;
+};
+
 export class ChatService {
   private readonly turnRegistry: SessionTurnRegistry;
+  private readonly activeAssistantSegments = new Map<string, ActiveAssistantSegment>();
 
   constructor(
     private readonly messageStore: MessageStore,
@@ -162,10 +168,14 @@ export class ChatService {
   private async commitUserInput(
     userId: string,
     sessionId: string,
-    _turnId: string,
+    turnId: string,
     _kind: TurnKind,
     input: RuntimeInput,
   ) {
+    if (input.source !== 'direct') {
+      await this.flushAssistantSegment(userId, sessionId, turnId);
+    }
+
     const session = this.sessionService.requireOwned(userId, sessionId);
     await this.sessionService.renameFromMessage(userId, sessionId, session.title, input.content);
     const attachments = this.resolveAttachmentRecords(userId, input.attachmentIds);
@@ -245,197 +255,221 @@ export class ChatService {
     const availableSkills = this.resolveSessionSkills(session.activeSkills ?? []);
     const samplingStartedAt = Date.now();
     let latestReasoningSummary = '';
+    let lastFlushedReasoningSummary = '';
+    let assistantSegmentText = '';
+    const assistantSegmentKey = this.getAssistantSegmentKey(user.id, sessionId, execution.turnId);
+    const assistantSegment: ActiveAssistantSegment = {
+      flush: async (meta) => {
+        const content = assistantSegmentText;
+        assistantSegmentText = '';
+        if (!content.trim()) {
+          return;
+        }
 
-    execution.setRound(startingRound);
-    execution.updatePhase('sampling');
-    execution.setCanSteer(execution.kind === 'regular');
-    this.publishThinking(sessionId, startingRound === 1 ? '正在分析需求' : '继续处理追加引导');
+        const messageMeta: AssistantMessageMeta = {
+          turnId: execution.turnId,
+          durationMs: Math.max(0, Date.now() - samplingStartedAt),
+          ...meta,
+        };
+        const reasoningSummary = latestReasoningSummary.trim();
+        if (reasoningSummary && reasoningSummary !== lastFlushedReasoningSummary && !messageMeta.reasoningSummary) {
+          messageMeta.reasoningSummary = reasoningSummary;
+          lastFlushedReasoningSummary = reasoningSummary;
+        }
 
-    let finalText = '';
-    const result = await this.openAIHarness.run({
-      userId: user.id,
-      sessionId,
-      message: input.content,
-      attachmentIds: input.attachmentIds,
-      history,
-      files,
-      availableSkills,
-      contextState,
-      signal: execution.signal,
-      drainPendingInputs: async () => execution.drainPendingInputs(),
-      startingRound,
-      turnConfig: input.turnConfig,
-      callbacks: {
-        onRoundStart: (round) => {
-          execution.throwIfAborted();
-          execution.setRound(round);
-          execution.updatePhase('sampling');
-          execution.setCanSteer(execution.kind === 'regular');
-        },
-        onToolCall: async ({ callId, tool, arguments: toolArguments, hidden, meta }) => {
-          execution.throwIfAborted();
-          execution.updatePhase('tool_call');
-          execution.setCanSteer(false);
-          const toolCallEvent: ToolCallEvent = {
-            id: createEventId(),
-            sessionId,
-            kind: 'tool_call',
-            callId,
-            skill: tool,
-            arguments: toolArguments,
-            hidden,
-            meta,
-            createdAt: now(),
-          };
-          await this.emitStored(user.id, sessionId, toolCallEvent);
-        },
-        onToolProgress: async ({ callId, tool, message, percent, status, hidden, meta }) => {
-          execution.throwIfAborted();
-          execution.updatePhase('waiting_tool_result');
-          execution.setCanSteer(false);
-          await this.emitToolProgress(user.id, sessionId, callId, tool, message, percent, status, hidden, meta);
-        },
-        onToolResult: async ({ callId, tool, summary, content: resultContent, hidden, meta }) => {
-          execution.throwIfAborted();
-          execution.updatePhase('waiting_tool_result');
-          execution.setCanSteer(false);
-          await this.emitStored(user.id, sessionId, {
-            id: createEventId(),
-            sessionId,
-            kind: 'tool_result',
-            callId,
-            skill: tool,
-            message: summary,
-            content: resultContent,
-            hidden,
-            meta,
-            createdAt: now(),
-          });
-        },
-        onArtifact: async (file) => {
-          execution.throwIfAborted();
-          execution.updatePhase('waiting_tool_result');
-          execution.setCanSteer(false);
-          await this.emitStored(user.id, sessionId, {
-            id: createEventId(),
-            sessionId,
-            kind: 'file',
-            file,
-            createdAt: now(),
-          });
-          this.publish(sessionId, {
-            id: createEventId(),
-            event: 'file_ready',
-            data: {
-              file: {
-                id: file.id,
-                name: file.displayName,
-                size: file.size,
-                url: file.downloadUrl,
-              },
-            },
-          });
-        },
-        onTextDelta: async (delta) => {
-          execution.throwIfAborted();
-          execution.updatePhase('streaming_assistant');
-          execution.setCanSteer(execution.kind === 'regular');
-          finalText += delta;
-          this.publish(sessionId, {
-            id: createEventId(),
-            event: 'text_delta',
-            data: {
-              content: delta,
-            },
-          });
-        },
-        onImageGenerated: async ({ file, operation, model, source, prompt, revisedPrompt, inputFileIds }) => {
-          execution.throwIfAborted();
-          execution.updatePhase('waiting_tool_result');
-          execution.setCanSteer(false);
-          const imageEvent: ImageMessageEvent = {
-            id: createEventId(),
-            sessionId,
-            kind: 'image',
-            file,
-            operation,
-            provider: 'openai',
-            model,
-            source,
-            prompt,
-            revisedPrompt,
-            inputFileIds,
-            createdAt: now(),
-          };
-          await this.emitStored(user.id, sessionId, imageEvent);
-          this.publish(sessionId, {
-            id: createEventId(),
-            event: 'file_ready',
-            data: {
-              file: {
-                id: file.id,
-                name: file.displayName,
-                size: file.size,
-                url: file.downloadUrl,
-              },
-            },
-          });
-        },
-        onReasoningDelta: async ({ content, summaryIndex }) => {
-          execution.throwIfAborted();
-          latestReasoningSummary += content;
-          this.publish(sessionId, {
-            id: createEventId(),
-            event: 'reasoning_delta',
-            data: {
-              content,
-              summaryIndex,
-            },
-          });
-        },
-        onTokenUsage: async (usage) => {
-          execution.throwIfAborted();
-          const state = await this.sessionContextStore.load(user.id, sessionId);
-          const cumulative = accumulateSessionTokenUsage(state.tokenUsage ?? null, usage, now());
-          await this.sessionContextStore.save(user.id, sessionId, {
-            ...state,
-            tokenUsage: cumulative,
-          });
-          this.publish(sessionId, {
-            id: createEventId(),
-            event: 'token_count',
-            data: {
-              ...usage,
-              cumulativeInputTokens: cumulative.totalInputTokens,
-              cumulativeOutputTokens: cumulative.totalOutputTokens,
-              cumulativeTotalTokens: cumulative.totalInputTokens + cumulative.totalOutputTokens,
-            },
-          });
-        },
-        onContextCompactionStart: async () => {
-          execution.throwIfAborted();
-          execution.updatePhase('sampling');
-          execution.setCanSteer(false);
-          this.publishThinking(sessionId, '本轮上下文较长，正在压缩后继续');
-        },
+        const message = await this.persistTextMessage(user.id, sessionId, content, 'assistant', undefined, messageMeta);
+        this.publishAssistantMessageCommitted(sessionId, message);
       },
-    });
-
-    execution.throwIfAborted();
-    if (finalText.trim()) {
-      const messageMeta: AssistantMessageMeta = {
-        turnId: execution.turnId,
-        durationMs: Math.max(0, Date.now() - samplingStartedAt),
-        tokenUsage: result.tokenUsage,
-      };
-      if (latestReasoningSummary.trim()) {
-        messageMeta.reasoningSummary = latestReasoningSummary.trim();
-      }
-      await this.persistTextMessage(user.id, sessionId, finalText, 'assistant', undefined, messageMeta);
-    }
-    return {
-      roundsUsed: result.roundsUsed,
     };
+    this.activeAssistantSegments.set(assistantSegmentKey, assistantSegment);
+
+    try {
+      execution.setRound(startingRound);
+      execution.updatePhase('sampling');
+      execution.setCanSteer(execution.kind === 'regular');
+      this.publishThinking(sessionId, startingRound === 1 ? '正在分析需求' : '继续处理追加引导');
+
+      const result = await this.openAIHarness.run({
+        userId: user.id,
+        sessionId,
+        message: input.content,
+        attachmentIds: input.attachmentIds,
+        history,
+        files,
+        availableSkills,
+        contextState,
+        signal: execution.signal,
+        drainPendingInputs: async () => execution.drainPendingInputs(),
+        startingRound,
+        turnConfig: input.turnConfig,
+        callbacks: {
+          onRoundStart: (round) => {
+            execution.throwIfAborted();
+            execution.setRound(round);
+            execution.updatePhase('sampling');
+            execution.setCanSteer(execution.kind === 'regular');
+          },
+          onToolCall: async ({ callId, tool, arguments: toolArguments, hidden, meta }) => {
+            execution.throwIfAborted();
+            execution.updatePhase('tool_call');
+            execution.setCanSteer(false);
+            const toolCallEvent: ToolCallEvent = {
+              id: createEventId(),
+              sessionId,
+              kind: 'tool_call',
+              callId,
+              skill: tool,
+              arguments: toolArguments,
+              hidden,
+              meta,
+              createdAt: now(),
+            };
+            await this.emitStored(user.id, sessionId, toolCallEvent);
+          },
+          onToolProgress: async ({ callId, tool, message, percent, status, hidden, meta }) => {
+            execution.throwIfAborted();
+            execution.updatePhase('waiting_tool_result');
+            execution.setCanSteer(false);
+            await this.emitToolProgress(user.id, sessionId, callId, tool, message, percent, status, hidden, meta);
+          },
+          onToolResult: async ({ callId, tool, summary, content: resultContent, hidden, meta }) => {
+            execution.throwIfAborted();
+            execution.updatePhase('waiting_tool_result');
+            execution.setCanSteer(false);
+            await this.emitStored(user.id, sessionId, {
+              id: createEventId(),
+              sessionId,
+              kind: 'tool_result',
+              callId,
+              skill: tool,
+              message: summary,
+              content: resultContent,
+              hidden,
+              meta,
+              createdAt: now(),
+            });
+          },
+          onArtifact: async (file) => {
+            execution.throwIfAborted();
+            execution.updatePhase('waiting_tool_result');
+            execution.setCanSteer(false);
+            await this.emitStored(user.id, sessionId, {
+              id: createEventId(),
+              sessionId,
+              kind: 'file',
+              file,
+              createdAt: now(),
+            });
+            this.publish(sessionId, {
+              id: createEventId(),
+              event: 'file_ready',
+              data: {
+                file: {
+                  id: file.id,
+                  name: file.displayName,
+                  size: file.size,
+                  url: file.downloadUrl,
+                },
+              },
+            });
+          },
+          onTextDelta: async (delta) => {
+            execution.throwIfAborted();
+            execution.updatePhase('streaming_assistant');
+            execution.setCanSteer(execution.kind === 'regular');
+            assistantSegmentText += delta;
+            this.publish(sessionId, {
+              id: createEventId(),
+              event: 'text_delta',
+              data: {
+                content: delta,
+              },
+            });
+          },
+          onImageGenerated: async ({ file, operation, model, source, prompt, revisedPrompt, inputFileIds }) => {
+            execution.throwIfAborted();
+            execution.updatePhase('waiting_tool_result');
+            execution.setCanSteer(false);
+            const imageEvent: ImageMessageEvent = {
+              id: createEventId(),
+              sessionId,
+              kind: 'image',
+              file,
+              operation,
+              provider: 'openai',
+              model,
+              source,
+              prompt,
+              revisedPrompt,
+              inputFileIds,
+              createdAt: now(),
+            };
+            await this.emitStored(user.id, sessionId, imageEvent);
+            this.publish(sessionId, {
+              id: createEventId(),
+              event: 'file_ready',
+              data: {
+                file: {
+                  id: file.id,
+                  name: file.displayName,
+                  size: file.size,
+                  url: file.downloadUrl,
+                },
+              },
+            });
+          },
+          onReasoningDelta: async ({ content, summaryIndex }) => {
+            execution.throwIfAborted();
+            latestReasoningSummary += content;
+            this.publish(sessionId, {
+              id: createEventId(),
+              event: 'reasoning_delta',
+              data: {
+                content,
+                summaryIndex,
+              },
+            });
+          },
+          onTokenUsage: async (usage) => {
+            execution.throwIfAborted();
+            const state = await this.sessionContextStore.load(user.id, sessionId);
+            const cumulative = accumulateSessionTokenUsage(state.tokenUsage ?? null, usage, now());
+            await this.sessionContextStore.save(user.id, sessionId, {
+              ...state,
+              tokenUsage: cumulative,
+            });
+            this.publish(sessionId, {
+              id: createEventId(),
+              event: 'token_count',
+              data: {
+                ...usage,
+                cumulativeInputTokens: cumulative.totalInputTokens,
+                cumulativeOutputTokens: cumulative.totalOutputTokens,
+                cumulativeTotalTokens: cumulative.totalInputTokens + cumulative.totalOutputTokens,
+              },
+            });
+          },
+          onContextCompactionStart: async () => {
+            execution.throwIfAborted();
+            execution.updatePhase('sampling');
+            execution.setCanSteer(false);
+            this.publishThinking(sessionId, '本轮上下文较长，正在压缩后继续');
+          },
+        },
+      });
+
+      execution.throwIfAborted();
+      await assistantSegment.flush({
+        tokenUsage: result.tokenUsage,
+      });
+      return {
+        roundsUsed: result.roundsUsed,
+      };
+    } finally {
+      if (this.activeAssistantSegments.get(assistantSegmentKey) === assistantSegment) {
+        this.activeAssistantSegments.delete(assistantSegmentKey);
+      }
+    }
   }
 
   private async maybeAutoCompactHistory(args: {
@@ -571,6 +605,24 @@ export class ChatService {
     };
     await this.messageStore.appendEvent(userId, sessionId, event);
     await this.sessionService.touch(userId, sessionId);
+    return event;
+  }
+
+  private async flushAssistantSegment(userId: string, sessionId: string, turnId: string) {
+    await this.activeAssistantSegments.get(this.getAssistantSegmentKey(userId, sessionId, turnId))?.flush();
+  }
+
+  private publishAssistantMessageCommitted(sessionId: string, message: TextMessageEvent) {
+    const payload: AssistantMessageCommittedPayload = { message };
+    this.publish(sessionId, {
+      id: message.id,
+      event: 'assistant_message_committed',
+      data: payload,
+    });
+  }
+
+  private getAssistantSegmentKey(userId: string, sessionId: string, turnId: string) {
+    return `${userId}:${sessionId}:${turnId}`;
   }
 
   private async emitToolProgress(

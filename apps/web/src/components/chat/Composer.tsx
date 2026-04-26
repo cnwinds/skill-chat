@@ -21,6 +21,7 @@ export interface ComposerProps {
   hasUploadingAttachments?: boolean;
   placeholder?: string;
   bottomInsetPx?: number;
+  showTopBorder?: boolean;
 }
 
 const TEXTAREA_MAX_HEIGHT_PX = 192; // ~12rem
@@ -43,6 +44,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(
       hasUploadingAttachments = false,
       placeholder,
       bottomInsetPx = 0,
+      showTopBorder = true,
     },
     forwardedRef,
   ) => {
@@ -92,7 +94,10 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(
 
     return (
       <footer
-        className="composer border-t border-border bg-background px-4 pt-3"
+        className={cn(
+          'composer bg-background px-4 pt-3',
+          showTopBorder && 'border-t border-border',
+        )}
         style={{
           paddingBottom: `calc(14px + env(safe-area-inset-bottom) + ${bottomInsetPx}px)`,
         }}

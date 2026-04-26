@@ -1,5 +1,5 @@
 import type { ClipboardEvent as ReactClipboardEvent } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { Trash2 } from 'lucide-react';
@@ -17,6 +17,7 @@ import { useSessionStream } from '@/hooks/useSessionStream';
 import {
   composerAttachmentsActions,
   createComposerAttachmentId,
+  type ComposerAttachment,
   useComposerAttachments,
 } from '@/hooks/useComposerAttachments';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
@@ -135,6 +136,138 @@ const EmptyState = ({ title, detail, action }: EmptyStateProps) => (
   </div>
 );
 
+interface TimelineEventListProps {
+  timeline: TimelineItem[];
+  highlightedEventId: string | null;
+  bindMessageNode: (eventId: string) => (node: HTMLDivElement | null) => void;
+  onDownload: (file: FileRecord) => void;
+  onReuseImage: (file: FileRecord) => void;
+  downloading: boolean;
+  canExpandToolTrace: boolean;
+}
+
+const TimelineEventList = memo(({
+  timeline,
+  highlightedEventId,
+  bindMessageNode,
+  onDownload,
+  onReuseImage,
+  downloading,
+  canExpandToolTrace,
+}: TimelineEventListProps) => (
+  <>
+    {timeline.map((event) => (
+      <div
+        key={event.id}
+        ref={bindMessageNode(event.id)}
+        className={cn(
+          'scroll-mt-6 rounded-2xl transition-[box-shadow,background-color] duration-300',
+          highlightedEventId === event.id &&
+            'bg-accent/5 shadow-[0_0_0_2px_var(--accent)]',
+        )}
+      >
+        <MessageItem
+          event={event}
+          onDownload={onDownload}
+          onReuseImage={onReuseImage}
+          downloading={downloading}
+          canExpandToolTrace={canExpandToolTrace}
+        />
+      </div>
+    ))}
+  </>
+));
+TimelineEventList.displayName = 'TimelineEventList';
+
+interface ChatComposerPanelProps {
+  activeSessionId: string | null;
+  onSubmit: (content: string) => void;
+  onPaste: (event: ReactClipboardEvent<HTMLTextAreaElement>) => void;
+  attachments: ComposerAttachment[];
+  onRemoveAttachment: (localId: string) => void;
+  onSelectFiles: (files: File[]) => void;
+  isTurnRunning: boolean;
+  onInterrupt: () => void;
+  interruptPending: boolean;
+  sendPending: boolean;
+  disabled: boolean;
+  hasUploadingAttachments: boolean;
+  placeholder: string;
+  bottomInsetPx: number;
+  showTopBorder: boolean;
+}
+
+const ChatComposerPanel = memo(forwardRef<HTMLTextAreaElement, ChatComposerPanelProps>(
+  function ChatComposerPanel({
+    activeSessionId,
+    onSubmit,
+    onPaste,
+    attachments,
+    onRemoveAttachment,
+    onSelectFiles,
+    isTurnRunning,
+    onInterrupt,
+    interruptPending,
+    sendPending,
+    disabled,
+    hasUploadingAttachments,
+    placeholder,
+    bottomInsetPx,
+    showTopBorder,
+  }, ref) {
+    const draft = useUiStore((state) => (activeSessionId ? state.drafts[activeSessionId] ?? '' : ''));
+    const setDraft = useUiStore((state) => state.setDraft);
+
+    const handleSend = useCallback(() => {
+      const value = draft.trim();
+      if (
+        !activeSessionId ||
+        !value ||
+        disabled ||
+        hasUploadingAttachments ||
+        sendPending ||
+        interruptPending
+      ) {
+        return;
+      }
+      setDraft(activeSessionId, '');
+      onSubmit(value);
+    }, [
+      activeSessionId,
+      disabled,
+      draft,
+      hasUploadingAttachments,
+      interruptPending,
+      onSubmit,
+      sendPending,
+      setDraft,
+    ]);
+
+    return (
+      <Composer
+        ref={ref}
+        value={draft}
+        onValueChange={(value) => activeSessionId && setDraft(activeSessionId, value)}
+        onSend={handleSend}
+        onPaste={onPaste}
+        attachments={attachments}
+        onRemoveAttachment={onRemoveAttachment}
+        onSelectFiles={onSelectFiles}
+        isTurnRunning={isTurnRunning}
+        onInterrupt={onInterrupt}
+        interruptPending={interruptPending}
+        sendPending={sendPending}
+        disabled={disabled}
+        hasUploadingAttachments={hasUploadingAttachments}
+        placeholder={placeholder}
+        bottomInsetPx={bottomInsetPx}
+        showTopBorder={showTopBorder}
+      />
+    );
+  },
+));
+ChatComposerPanel.displayName = 'ChatComposerPanel';
+
 const formatCompactCount = (value: number) => {
   if (!Number.isFinite(value) || value <= 0) {
     return '0';
@@ -159,6 +292,46 @@ const getShortTurnId = (turnId: string | null | undefined) => {
   return normalized.length > 8 ? normalized.slice(0, 8) : normalized;
 };
 
+const buildOptimisticAttachments = (args: {
+  attachmentIds: string[];
+  cachedFiles: FileRecord[];
+  composerAttachments: Array<{
+    fileId?: string;
+    displayName: string;
+    mimeType: string | null;
+    size: number;
+  }>;
+  userId: string;
+  sessionId: string;
+}) => {
+  const cachedById = new Map(args.cachedFiles.map((file) => [file.id, file]));
+  return args.attachmentIds
+    .map<FileRecord | null>((fileId) => {
+      const cached = cachedById.get(fileId);
+      if (cached) {
+        return cached;
+      }
+      const composerEntry = args.composerAttachments.find((item) => item.fileId === fileId);
+      if (!composerEntry) {
+        return null;
+      }
+      return {
+        id: fileId,
+        userId: args.userId,
+        sessionId: args.sessionId,
+        displayName: composerEntry.displayName,
+        relativePath: '',
+        mimeType: composerEntry.mimeType,
+        size: composerEntry.size,
+        bucket: 'uploads',
+        source: 'upload',
+        createdAt: new Date().toISOString(),
+        downloadUrl: `/api/files/${fileId}/download`,
+      } satisfies FileRecord;
+    })
+    .filter((item): item is FileRecord => item !== null);
+};
+
 export const ChatPage = () => {
   const queryClient = useQueryClient();
   const { sessionId } = useParams();
@@ -177,7 +350,6 @@ export const ChatPage = () => {
     onDeleteSession,
   } = useAppShellOutlet();
 
-  const drafts = useUiStore((state) => state.drafts);
   const setDraft = useUiStore((state) => state.setDraft);
   const clearActiveTurn = useUiStore((state) => state.clearActiveTurn);
   const clearStreamContent = useUiStore((state) => state.clearStreamContent);
@@ -333,40 +505,15 @@ export const ChatPage = () => {
         const previous =
           queryClient.getQueryData<StoredEvent[]>(['messages', payload.sessionId]) ?? [];
         if (shouldOptimisticallyAppend) {
-          // Resolve FileRecords for the attachment IDs. Prefer the cached
-          // files list (which has full metadata); fall back to composer
-          // attachment data so the user sees their attachments instantly
-          // even before the files cache is hydrated.
           const cachedFiles =
             queryClient.getQueryData<FileRecord[]>(['files', payload.sessionId]) ?? [];
-          const cachedById = new Map(cachedFiles.map((file) => [file.id, file]));
-          const optimisticAttachments = payload.attachmentIds
-            .map<FileRecord | null>((fileId) => {
-              const cached = cachedById.get(fileId);
-              if (cached) {
-                return cached;
-              }
-              const composerEntry = composerAttachments.find(
-                (item) => item.fileId === fileId,
-              );
-              if (!composerEntry) {
-                return null;
-              }
-              return {
-                id: fileId,
-                userId: user.id,
-                sessionId: payload.sessionId,
-                displayName: composerEntry.displayName,
-                relativePath: '',
-                mimeType: composerEntry.mimeType,
-                size: composerEntry.size,
-                bucket: 'uploads',
-                source: 'upload',
-                createdAt: new Date().toISOString(),
-                downloadUrl: `/api/files/${fileId}/download`,
-              } satisfies FileRecord;
-            })
-            .filter((item): item is FileRecord => item !== null);
+          const optimisticAttachments = buildOptimisticAttachments({
+            attachmentIds: payload.attachmentIds,
+            cachedFiles,
+            composerAttachments,
+            userId: user.id,
+            sessionId: payload.sessionId,
+          });
 
           const optimisticMessage: TextMessageEvent = {
             id: `optimistic-${Date.now()}`,
@@ -404,6 +551,11 @@ export const ChatPage = () => {
       setPageError(error instanceof ApiError ? error.message : '发送消息失败');
     },
   });
+  const sendMessageRef = useRef(sendMessageMutation.mutate);
+
+  useEffect(() => {
+    sendMessageRef.current = sendMessageMutation.mutate;
+  }, [sendMessageMutation.mutate]);
 
   const interruptMutation = useMutation({
     mutationFn: () => api.interruptTurn(activeSessionId!, stream.activeTurnId!),
@@ -415,6 +567,11 @@ export const ChatPage = () => {
     },
     onError: (error) => setPageError(error instanceof ApiError ? error.message : '中断失败'),
   });
+  const interruptTurnRef = useRef(interruptMutation.mutate);
+
+  useEffect(() => {
+    interruptTurnRef.current = interruptMutation.mutate;
+  }, [interruptMutation.mutate]);
 
   const removeFollowUpInputMutation = useMutation({
     mutationFn: (inputId: string) => api.removeFollowUpInput(activeSessionId!, inputId),
@@ -440,11 +597,21 @@ export const ChatPage = () => {
     },
     onError: (error) => setPageError(error instanceof ApiError ? error.message : '上传失败'),
   });
+  const uploadFileRef = useRef(uploadMutation.mutateAsync);
+
+  useEffect(() => {
+    uploadFileRef.current = uploadMutation.mutateAsync;
+  }, [uploadMutation.mutateAsync]);
 
   const downloadMutation = useMutation({
     mutationFn: (file: FileRecord) => api.downloadFile(file),
     onError: (error) => setPageError(error instanceof ApiError ? error.message : '下载失败'),
   });
+  const downloadFileRef = useRef(downloadMutation.mutate);
+
+  useEffect(() => {
+    downloadFileRef.current = downloadMutation.mutate;
+  }, [downloadMutation.mutate]);
 
   const { items: timeline, activeThinking } = useMemo<{
     items: TimelineItem[];
@@ -578,13 +745,13 @@ export const ChatPage = () => {
     saveSessionScrollPosition(activeSessionId, node);
   };
 
-  const bindMessageNode = (eventId: string) => (node: HTMLDivElement | null) => {
+  const bindMessageNode = useCallback((eventId: string) => (node: HTMLDivElement | null) => {
     if (node) {
       messageNodeRefs.current.set(eventId, node);
       return;
     }
     messageNodeRefs.current.delete(eventId);
-  };
+  }, []);
 
   const handleSelectQuestionFromTimeline = (eventId: string) => {
     const node = messageNodeRefs.current.get(eventId);
@@ -602,13 +769,12 @@ export const ChatPage = () => {
     }, 1800);
   };
 
-  const draft = hasActiveSession ? drafts[activeSessionId!] ?? '' : '';
   const isTurnRunning =
     Boolean(stream.activeTurnId) &&
     (stream.activeTurnStatus === 'running' || stream.activeTurnStatus === 'interrupting');
   const hasUploadingAttachments = composerAttachments.some((item) => item.status === 'uploading');
 
-  const uploadComposerFiles = async (files: File[]) => {
+  const uploadComposerFiles = useCallback(async (files: File[]) => {
     if (!activeSessionId || files.length === 0) {
       return;
     }
@@ -629,7 +795,7 @@ export const ChatPage = () => {
       ]);
 
       try {
-        const record = await uploadMutation.mutateAsync({
+        const record = await uploadFileRef.current({
           sessionId: activeSessionId,
           file,
         });
@@ -653,9 +819,9 @@ export const ChatPage = () => {
         );
       }
     }
-  };
+  }, [activeSessionId, setPageError, updateAttachments]);
 
-  const handleComposerPaste = (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+  const handleComposerPaste = useCallback((event: ReactClipboardEvent<HTMLTextAreaElement>) => {
     const pastedImagesFromItems = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
       .map((item) => item.getAsFile())
@@ -671,38 +837,66 @@ export const ChatPage = () => {
 
     event.preventDefault();
     void uploadComposerFiles(pastedImages);
-  };
+  }, [uploadComposerFiles]);
 
-  const handleReuseImage = (file: FileRecord) => {
+  const handleRemoveComposerAttachment = useCallback((localId: string) => {
+    if (!activeSessionId) {
+      return;
+    }
+    updateAttachments(activeSessionId, (current) =>
+      current.filter((item) => item.localId !== localId),
+    );
+  }, [activeSessionId, updateAttachments]);
+
+  const handleSelectComposerFiles = useCallback((files: File[]) => {
+    void uploadComposerFiles(files);
+  }, [uploadComposerFiles]);
+
+  const handleInterruptTurn = useCallback(() => {
+    interruptTurnRef.current();
+  }, []);
+
+  const handleReuseImage = useCallback((file: FileRecord) => {
     if (!activeSessionId) {
       return;
     }
     composerAttachmentsActions.addFromFileRecord(activeSessionId, file);
-  };
+  }, [activeSessionId]);
 
-  const handleSend = () => {
+  const handleDownloadFile = useCallback((file: FileRecord) => {
+    downloadFileRef.current(file);
+  }, []);
+
+  const handleSubmitDraft = useCallback((content: string) => {
     if (
       !activeSessionId ||
-      !draft.trim() ||
+      !content.trim() ||
       hasUploadingAttachments ||
       sendMessageMutation.isPending ||
       interruptMutation.isPending
     ) {
       return;
     }
-    const value = draft.trim();
+    const value = content.trim();
     const attachmentIds = composerAttachments
       .filter((item) => item.status === 'uploaded' && typeof item.fileId === 'string')
       .map((item) => item.fileId as string);
-    setDraft(activeSessionId, '');
     setPageError(null);
-    sendMessageMutation.mutate({
+    sendMessageRef.current({
       sessionId: activeSessionId,
       content: value,
       attachmentIds,
       activeTurnId: stream.activeTurnId,
     });
-  };
+  }, [
+    activeSessionId,
+    composerAttachments,
+    hasUploadingAttachments,
+    interruptMutation.isPending,
+    sendMessageMutation.isPending,
+    setPageError,
+    stream.activeTurnId,
+  ]);
 
   const handleEmptyStatePromptClick = (prompt: string) => {
     if (!activeSessionId) {
@@ -771,6 +965,7 @@ export const ChatPage = () => {
     [timeline],
   );
   const totalTokens = streamedTokenTotal ?? persistedTokenTotal ?? messageTokenTotal;
+  const hasFollowUpQueue = stream.followUpQueue.length > 0;
   const headerSubtitle = hasActiveSession ? (
     <>
       Turn：{sessionTurnCount || '-'}
@@ -859,25 +1054,15 @@ export const ChatPage = () => {
                     }
                   />
                 ) : null}
-                {timeline.map((event) => (
-                  <div
-                    key={event.id}
-                    ref={bindMessageNode(event.id)}
-                    className={cn(
-                      'scroll-mt-6 rounded-2xl transition-[box-shadow,background-color] duration-300',
-                      highlightedEventId === event.id &&
-                        'bg-accent/5 shadow-[0_0_0_2px_var(--accent)]',
-                    )}
-                  >
-                    <MessageItem
-                      event={event}
-                      onDownload={(file) => downloadMutation.mutate(file)}
-                      onReuseImage={handleReuseImage}
-                      downloading={downloadMutation.isPending}
-                      canExpandToolTrace={user.role === 'admin'}
-                    />
-                  </div>
-                ))}
+                <TimelineEventList
+                  timeline={timeline}
+                  highlightedEventId={highlightedEventId}
+                  bindMessageNode={bindMessageNode}
+                  onDownload={handleDownloadFile}
+                  onReuseImage={handleReuseImage}
+                  downloading={downloadMutation.isPending}
+                  canExpandToolTrace={user.role === 'admin'}
+                />
                 {shouldRenderPendingText ? (
                   <MessageItem
                     event={{ kind: 'pending_text', content: stream.pendingText }}
@@ -888,7 +1073,7 @@ export const ChatPage = () => {
                       tokenUsage: stream.currentTurnTokenUsage ?? undefined,
                       reasoningSummary: stream.reasoningSummary || undefined,
                     }}
-                    onDownload={(file) => downloadMutation.mutate(file)}
+                    onDownload={handleDownloadFile}
                     onReuseImage={handleReuseImage}
                     downloading={downloadMutation.isPending}
                     canExpandToolTrace={user.role === 'admin'}
@@ -898,7 +1083,7 @@ export const ChatPage = () => {
                   <MessageItem
                     key={thinkingEvent.id}
                     event={thinkingEvent}
-                    onDownload={(file) => downloadMutation.mutate(file)}
+                    onDownload={handleDownloadFile}
                     onReuseImage={handleReuseImage}
                     downloading={downloadMutation.isPending}
                     canExpandToolTrace={user.role === 'admin'}
@@ -913,42 +1098,39 @@ export const ChatPage = () => {
             />
           </section>
 
-          <div
-            className="border-t border-border bg-background px-4 pt-3"
-            style={{
-              paddingBottom: `calc(0px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
-            }}
-          >
-            <div className="mx-auto max-w-3xl">
-              <FollowUpQueue
-                queue={stream.followUpQueue}
-                onCancel={(inputId) => removeFollowUpInputMutation.mutate(inputId)}
-                cancelDisabled={removeFollowUpInputMutation.isPending}
-              />
+          {hasFollowUpQueue ? (
+            <div
+              className="border-t border-border bg-background px-4 pt-3"
+              style={{
+                paddingBottom: `calc(0px + env(safe-area-inset-bottom) + ${keyboardInset}px)`,
+              }}
+            >
+              <div className="mx-auto max-w-3xl">
+                <FollowUpQueue
+                  queue={stream.followUpQueue}
+                  onCancel={(inputId) => removeFollowUpInputMutation.mutate(inputId)}
+                  cancelDisabled={removeFollowUpInputMutation.isPending}
+                />
+              </div>
             </div>
-          </div>
-          <Composer
+          ) : null}
+          <ChatComposerPanel
             ref={composerTextareaRef}
-            value={draft}
-            onValueChange={(value) => activeSessionId && setDraft(activeSessionId, value)}
-            onSend={handleSend}
+            activeSessionId={activeSessionId}
+            onSubmit={handleSubmitDraft}
             onPaste={handleComposerPaste}
             attachments={composerAttachments}
-            onRemoveAttachment={(localId) => {
-              if (!activeSessionId) return;
-              updateAttachments(activeSessionId, (current) =>
-                current.filter((item) => item.localId !== localId),
-              );
-            }}
-            onSelectFiles={(files) => void uploadComposerFiles(files)}
+            onRemoveAttachment={handleRemoveComposerAttachment}
+            onSelectFiles={handleSelectComposerFiles}
             isTurnRunning={isTurnRunning}
-            onInterrupt={() => interruptMutation.mutate()}
+            onInterrupt={handleInterruptTurn}
             interruptPending={interruptMutation.isPending}
             sendPending={sendMessageMutation.isPending}
             disabled={!activeSessionId}
             hasUploadingAttachments={hasUploadingAttachments}
             placeholder={isTurnRunning ? '继续补充信息，系统会按顺序处理' : '给 SkillChat 发送消息'}
             bottomInsetPx={keyboardInset}
+            showTopBorder={!hasFollowUpQueue}
           />
         </>
       ) : (

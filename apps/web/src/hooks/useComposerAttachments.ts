@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { create } from 'zustand';
 import type { FileRecord } from '@skillchat/shared';
 
@@ -73,19 +74,19 @@ export const useComposerAttachments = (sessionId: string | null) => {
 
   const attachments = sessionId ? bySession[sessionId] ?? [] : [];
 
-  const update = (
+  const update = useCallback((
     targetId: string,
     updater: (current: ComposerAttachment[]) => ComposerAttachment[],
   ) => {
     setForSession(targetId, updater);
-  };
+  }, [setForSession]);
 
-  const clear = (targetId?: string) => {
+  const clear = useCallback((targetId?: string) => {
     const id = targetId ?? sessionId;
     if (id) {
       clearSession(id);
     }
-  };
+  }, [clearSession, sessionId]);
 
   return {
     attachments,

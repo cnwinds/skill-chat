@@ -13,6 +13,7 @@ export const SSE_EVENT_NAMES = [
   'file_ready',
   'turn_started',
   'turn_status',
+  'assistant_message_committed',
   'user_message_committed',
   'turn_completed',
   'done',

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
-import type { StoredEvent } from '@skillchat/shared';
+import type { StoredEvent, TextMessageEvent } from '@skillchat/shared';
 import { useAuthStore } from '../stores/auth-store';
 import { useUiStore } from '../stores/ui-store';
 
@@ -56,6 +56,7 @@ export const useSessionStream = (sessionId: string | null) => {
   const setStreamStatus = useUiStore((state) => state.setStreamStatus);
   const applyTurnStarted = useUiStore((state) => state.applyTurnStarted);
   const applyTurnStatus = useUiStore((state) => state.applyTurnStatus);
+  const applyAssistantMessageCommitted = useUiStore((state) => state.applyAssistantMessageCommitted);
   const applyUserMessageCommitted = useUiStore((state) => state.applyUserMessageCommitted);
   const applyTurnCompleted = useUiStore((state) => state.applyTurnCompleted);
   const clearActiveTurn = useUiStore((state) => state.clearActiveTurn);
@@ -283,6 +284,47 @@ export const useSessionStream = (sessionId: string | null) => {
                 return;
               }
 
+              if (event.event === 'assistant_message_committed') {
+                const rawMessage = typeof payload.message === 'object' && payload.message
+                  ? payload.message as Partial<TextMessageEvent>
+                  : null;
+                if (
+                  !rawMessage ||
+                  rawMessage.kind !== 'message' ||
+                  rawMessage.role !== 'assistant' ||
+                  rawMessage.type !== 'text' ||
+                  typeof rawMessage.id !== 'string' ||
+                  typeof rawMessage.content !== 'string'
+                ) {
+                  return;
+                }
+
+                const message: TextMessageEvent = {
+                  id: rawMessage.id,
+                  sessionId,
+                  kind: 'message',
+                  role: 'assistant',
+                  type: 'text',
+                  content: rawMessage.content,
+                  createdAt: typeof rawMessage.createdAt === 'string' ? rawMessage.createdAt : new Date().toISOString(),
+                  meta: rawMessage.meta,
+                };
+
+                applyAssistantMessageCommitted(sessionId, message);
+                queryClient.setQueryData<StoredEvent[]>(['messages', sessionId], (current = []) => {
+                  const exists = current.some((item) => (
+                    item.kind === 'message' &&
+                    item.role === 'assistant' &&
+                    (
+                      item.id === message.id ||
+                      (item.content === message.content && item.createdAt === message.createdAt)
+                    )
+                  ));
+                  return exists ? current : [...current, message];
+                });
+                return;
+              }
+
               if (event.event === 'user_message_committed') {
                 const inputId = String(payload.inputId ?? '');
                 const content = String(payload.content ?? '');
@@ -299,6 +341,21 @@ export const useSessionStream = (sessionId: string | null) => {
                   consumedInputIds,
                 });
                 queryClient.setQueryData<StoredEvent[]>(['messages', sessionId], (current = []) => {
+                  const optimisticFollowUpIds = new Set(
+                    [inputId, ...(consumedInputIds ?? [])].map(
+                      (pendingInputId) => `optimistic-followup-${pendingInputId}`,
+                    ),
+                  );
+                  const optimisticFollowUpIndexes = current
+                    .map((item, index) => ({
+                      item,
+                      index,
+                    }))
+                    .filter(({ item }) => (
+                      item.kind === 'message' &&
+                      item.role === 'user' &&
+                      optimisticFollowUpIds.has(item.id)
+                    ));
                   const exists = current.some((item) => (
                     item.kind === 'message' &&
                     item.role === 'user' &&
@@ -306,6 +363,40 @@ export const useSessionStream = (sessionId: string | null) => {
                     item.content === content &&
                     item.createdAt === createdAt
                   ));
+
+                  if (optimisticFollowUpIndexes.length > 0) {
+                    const firstIndex = optimisticFollowUpIndexes[0]!.index;
+                    const optimisticAttachments = optimisticFollowUpIndexes.flatMap(({ item }) =>
+                      item.kind === 'message' && item.role === 'user'
+                        ? item.attachments ?? []
+                        : [],
+                    );
+                    const mergedAttachments = optimisticAttachments.filter((attachment, index, attachments) =>
+                      attachments.findIndex((candidate) => candidate.id === attachment.id) === index,
+                    );
+                    const next = current.filter((item) => !(
+                      item.kind === 'message' &&
+                      item.role === 'user' &&
+                      optimisticFollowUpIds.has(item.id)
+                    ));
+                    if (exists) {
+                      return next;
+                    }
+                    next.splice(firstIndex, 0, {
+                      id: `committed-${inputId}`,
+                      sessionId,
+                      kind: 'message',
+                      role: 'user',
+                      type: 'text',
+                      content,
+                      createdAt,
+                      ...(mergedAttachments.length > 0
+                        ? { attachments: mergedAttachments }
+                        : {}),
+                    });
+                    return next;
+                  }
+
                   if (exists) {
                     return current;
                   }
@@ -462,6 +553,7 @@ export const useSessionStream = (sessionId: string | null) => {
     applyTurnCompleted,
     applyTurnStarted,
     applyTurnStatus,
+    applyAssistantMessageCommitted,
     applyUserMessageCommitted,
     clearActiveTurn,
     clearStreamContent,

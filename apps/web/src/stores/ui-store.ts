@@ -6,6 +6,7 @@ import type {
   SessionRuntimeSnapshot,
   StoredEvent,
   TokenCountPayload,
+  TextMessageEvent,
   ThinkingEvent,
   ToolCallEvent,
   ToolProgressEvent,
@@ -81,6 +82,7 @@ type UiState = {
   hydrateRuntime: (sessionId: string, snapshot: SessionRuntimeSnapshot) => void;
   applyTurnStarted: (sessionId: string, payload: TurnLifecyclePayload) => void;
   applyTurnStatus: (sessionId: string, payload: TurnLifecyclePayload) => void;
+  applyAssistantMessageCommitted: (sessionId: string, message: TextMessageEvent) => void;
   applyUserMessageCommitted: (sessionId: string, payload: UserMessageCommittedPayload) => void;
   applyTurnCompleted: (sessionId: string, payload: TurnCompletedPayload) => void;
   clearActiveTurn: (sessionId: string) => void;
@@ -151,6 +153,16 @@ const clearActiveTurnFields = (current: SessionStreamState): SessionStreamState 
   activeTurnRound: null,
 });
 
+const trimCommittedAssistantText = (pendingText: string, committedContent: string) => {
+  if (!committedContent) {
+    return pendingText;
+  }
+  if (pendingText.startsWith(committedContent)) {
+    return pendingText.slice(committedContent.length);
+  }
+  return pendingText === committedContent ? '' : pendingText;
+};
+
 export const useUiStore = create<UiState>((set) => ({
   activeSessionId: null,
   mobilePanel: null,
@@ -172,12 +184,17 @@ export const useUiStore = create<UiState>((set) => ({
     },
   })),
   appendTextDelta: (sessionId, chunk) => set((state) => ({
-    streams: mutateStream(state.streams, sessionId, (current) => ({
-      ...current,
-      pendingText: `${current.pendingText}${chunk}`,
-      transientEvents: current.transientEvents.filter((event) => event.kind !== 'thinking'),
-      lastError: null,
-    })),
+    streams: mutateStream(state.streams, sessionId, (current) => {
+      const transientEvents = current.transientEvents.some((event) => event.kind === 'thinking')
+        ? current.transientEvents.filter((event) => event.kind !== 'thinking')
+        : current.transientEvents;
+      return {
+        ...current,
+        pendingText: `${current.pendingText}${chunk}`,
+        transientEvents,
+        lastError: null,
+      };
+    }),
   })),
   pushThinking: (sessionId, event) => set((state) => ({
     streams: mutateStream(state.streams, sessionId, (current) => ({
@@ -294,6 +311,12 @@ export const useUiStore = create<UiState>((set) => ({
         activeTurnRound: payload.round,
       };
     }),
+  })),
+  applyAssistantMessageCommitted: (sessionId, message) => set((state) => ({
+    streams: mutateStream(state.streams, sessionId, (current) => ({
+      ...current,
+      pendingText: trimCommittedAssistantText(current.pendingText, message.content),
+    })),
   })),
   applyUserMessageCommitted: (sessionId, payload) => set((state) => ({
     streams: mutateStream(state.streams, sessionId, (current) => ({

@@ -427,14 +427,17 @@ describe('ChatService harness-only flow', () => {
     expect(roundStarts).toEqual([1, 2]);
     expect(
       storedEvents
-        .filter((event) => event.kind === 'message' && event.role === 'user')
-        .map((event) => event.content),
-    ).toEqual(['第一轮请求', '补充：先看失败测试']);
-    expect(
-      storedEvents
-        .filter((event) => event.kind === 'message' && event.role === 'assistant')
-        .map((event) => event.content),
-    ).toEqual(['第一轮回复\n跟进回复：补充：先看失败测试']);
+        .filter((event) => event.kind === 'message')
+        .map((event) => ({
+          role: event.role,
+          content: event.content,
+        })),
+    ).toEqual([
+      { role: 'user', content: '第一轮请求' },
+      { role: 'assistant', content: '第一轮回复\n' },
+      { role: 'user', content: '补充：先看失败测试' },
+      { role: 'assistant', content: '跟进回复：补充：先看失败测试' },
+    ]);
   });
 
   it('merges multiple steer inputs into one committed follow-up when harness drains them', async () => {

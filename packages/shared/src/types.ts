@@ -303,6 +303,10 @@ export interface UserMessageCommittedPayload {
   attachments?: FileRecord[];
 }
 
+export interface AssistantMessageCommittedPayload {
+  message: TextMessageEvent;
+}
+
 export interface ReasoningDeltaPayload {
   content: string;
   summaryIndex?: number;

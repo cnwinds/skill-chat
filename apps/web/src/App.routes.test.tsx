@@ -1801,6 +1801,290 @@ describe('App routes', () => {
     });
   });
 
+  it('keeps steer-accepted guidance out of the chat stream until it is committed', async () => {
+    const followUpContent = '补充：优先讲就业和城市';
+    const committedMessage = {
+      id: 'evt_user_followup_1',
+      sessionId: 's1',
+      kind: 'message' as const,
+      role: 'user' as const,
+      type: 'text' as const,
+      content: followUpContent,
+      createdAt: '2026-04-12T00:00:03.000Z',
+    };
+    const refetchMessages = createDeferred<Response>();
+    let messageRequestCount = 0;
+    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
+
+    fetchEventSourceMock.mockImplementation(async (_input, init) => {
+      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
+      await init?.onopen?.(new Response(null, { status: 200 }));
+    });
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Streaming Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        messageRequestCount += 1;
+        if (messageRequestCount === 1) {
+          return jsonResponse({ body: [] });
+        }
+        return refetchMessages.promise;
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: {
+              turnId: 'turn_1',
+              kind: 'regular',
+              status: 'running',
+              phase: 'sampling',
+              phaseStartedAt: '2026-04-12T00:00:00.000Z',
+              canSteer: true,
+              startedAt: '2026-04-12T00:00:00.000Z',
+              round: 1,
+            },
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/sessions/s1/messages' && method === 'POST') {
+        expect(init?.body).toBe(JSON.stringify({
+          content: followUpContent,
+          attachmentIds: [],
+          dispatch: 'auto',
+          turnId: 'turn_1',
+        }));
+        return jsonResponse({
+          body: {
+            accepted: true,
+            dispatch: 'steer_accepted',
+            messageId: 'input_pending_1',
+            runId: 'turn_1',
+            turnId: 'turn_1',
+            inputId: 'input_pending_1',
+            runtime: {
+              sessionId: 's1',
+              activeTurn: {
+                turnId: 'turn_1',
+                kind: 'regular',
+                status: 'running',
+                phase: 'sampling',
+                phaseStartedAt: '2026-04-12T00:00:00.000Z',
+                canSteer: true,
+                startedAt: '2026-04-12T00:00:00.000Z',
+                round: 1,
+              },
+              followUpQueue: [
+                {
+                  inputId: 'input_pending_1',
+                  content: followUpContent,
+                  createdAt: '2026-04-12T00:00:02.000Z',
+                },
+              ],
+              recovery: null,
+            },
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    const textarea = await screen.findByLabelText('聊天输入框');
+    fireEvent.change(textarea, {
+      target: { value: followUpContent },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '补充信息' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(followUpContent)).toBeInTheDocument();
+    });
+    expect(document.querySelector('.message-list')).not.toHaveTextContent(followUpContent);
+
+    await act(async () => {
+      handleStreamMessage?.({
+        id: 'evt_commit_followup_1',
+        event: 'user_message_committed',
+        data: JSON.stringify({
+          turnId: 'turn_1',
+          inputId: 'input_pending_1',
+          content: followUpContent,
+          createdAt: committedMessage.createdAt,
+        }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText(followUpContent)).toHaveLength(1);
+    });
+
+    refetchMessages.resolve(jsonResponse({ body: [committedMessage] }));
+
+    await waitFor(() => {
+      expect(messageRequestCount).toBe(2);
+      expect(document.querySelector('.message-list')).toHaveTextContent(followUpContent);
+    });
+  });
+
+  it('renders committed assistant text before the inserted guidance it answered around', async () => {
+    const assistantSegment = {
+      id: 'evt_assistant_segment_1',
+      sessionId: 's1',
+      kind: 'message' as const,
+      role: 'assistant' as const,
+      type: 'text' as const,
+      content: '先答第一段。',
+      createdAt: '2026-04-12T00:00:02.000Z',
+      meta: {
+        turnId: 'turn_1',
+      },
+    };
+    const followUpMessage = {
+      id: 'evt_user_followup_1',
+      sessionId: 's1',
+      kind: 'message' as const,
+      role: 'user' as const,
+      type: 'text' as const,
+      content: '补充：把城市因素也加上',
+      createdAt: '2026-04-12T00:00:03.000Z',
+    };
+    let messageRequestCount = 0;
+    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
+
+    fetchEventSourceMock.mockImplementation(async (_input, init) => {
+      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
+      await init?.onopen?.(new Response(null, { status: 200 }));
+    });
+
+    installFetchMock((url) => {
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Streaming Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        messageRequestCount += 1;
+        return jsonResponse({
+          body: messageRequestCount === 1 ? [] : [assistantSegment, followUpMessage],
+        });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: {
+              turnId: 'turn_1',
+              kind: 'regular',
+              status: 'running',
+              phase: 'streaming_assistant',
+              phaseStartedAt: '2026-04-12T00:00:00.000Z',
+              canSteer: true,
+              startedAt: '2026-04-12T00:00:00.000Z',
+              round: 1,
+            },
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    await screen.findByLabelText('聊天输入框');
+
+    await act(async () => {
+      handleStreamMessage?.({
+        id: 'evt_delta_1',
+        event: 'text_delta',
+        data: JSON.stringify({ content: assistantSegment.content }),
+      });
+    });
+
+    await act(async () => {
+      handleStreamMessage?.({
+        id: assistantSegment.id,
+        event: 'assistant_message_committed',
+        data: JSON.stringify({ message: assistantSegment }),
+      });
+      handleStreamMessage?.({
+        id: 'evt_commit_followup_1',
+        event: 'user_message_committed',
+        data: JSON.stringify({
+          turnId: 'turn_1',
+          inputId: 'input_pending_1',
+          content: followUpMessage.content,
+          createdAt: followUpMessage.createdAt,
+        }),
+      });
+      handleStreamMessage?.({
+        id: 'evt_delta_2',
+        event: 'text_delta',
+        data: JSON.stringify({ content: '再结合补充继续。' }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(messageRequestCount).toBeGreaterThanOrEqual(2);
+      expect(screen.getAllByText(assistantSegment.content)).toHaveLength(1);
+      expect(document.querySelector('.message-list')).toHaveTextContent('再结合补充继续。');
+    });
+
+    const listText = document.querySelector('.message-list')?.textContent ?? '';
+    expect(listText.indexOf(assistantSegment.content)).toBeLessThan(listText.indexOf(followUpMessage.content));
+    expect(listText.indexOf(followUpMessage.content)).toBeLessThan(listText.indexOf('再结合补充继续。'));
+  });
+
   it('uploads pasted images into the current session and shows them as composer attachments', async () => {
     let uploadCount = 0;
 
