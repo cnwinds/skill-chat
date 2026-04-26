@@ -190,8 +190,12 @@ export const AppShell = () => {
 
   const shareMutation = useMutation({
     mutationFn: (fileId: string) => api.shareFile(fileId),
-    onSuccess: async () => {
+    onSuccess: async (sharedFile) => {
       await queryClient.invalidateQueries({ queryKey: ['files', activeSessionId] });
+      toast({
+        title: '已共享',
+        description: `${sharedFile.displayName} 已加入共享区`,
+      });
     },
     onError: (error) => notifyError(error instanceof ApiError ? error.message : '共享失败'),
   });

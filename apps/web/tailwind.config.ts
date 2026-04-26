@@ -1,6 +1,66 @@
 import type { Config } from 'tailwindcss';
 import typography from '@tailwindcss/typography';
 
+/* ---------------------------------------------------------------
+ * Typeface stacks
+ *
+ * Three roles, picked from system-installed fonts on every platform
+ * so we get a real upscale feel without paying a webfont round-trip.
+ *
+ *   - sans  → body, UI chrome
+ *   - serif → headings (editorial / literary feel; pairs with CJK Songti)
+ *   - mono  → code blocks, inline code, kbd
+ *
+ * Order matters: Latin face first so Latin glyphs land on the high-end
+ * Western face, then CJK fallbacks pick up Chinese characters from the
+ * matching CJK family. This is the "Apple-style mixed-script" pattern.
+ * ------------------------------------------------------------- */
+const FONT_SANS = [
+  '-apple-system',
+  'BlinkMacSystemFont',
+  '"Segoe UI Variable Text"',
+  '"Segoe UI"',
+  'Inter',
+  'Roboto',
+  'Ubuntu',
+  '"PingFang SC"',
+  '"Hiragino Sans GB"',
+  '"Source Han Sans SC"',
+  '"Noto Sans CJK SC"',
+  '"Microsoft YaHei"',
+  'system-ui',
+  'sans-serif',
+].join(', ');
+
+const FONT_SERIF = [
+  '"Source Serif 4"',
+  '"Source Serif Pro"',
+  'Charter',
+  '"Iowan Old Style"',
+  '"Palatino Linotype"',
+  'Cambria',
+  'Georgia',
+  '"Source Han Serif SC"',
+  '"Noto Serif CJK SC"',
+  '"Songti SC"',
+  'STSong',
+  'SimSun',
+  'serif',
+].join(', ');
+
+const FONT_MONO = [
+  '"JetBrains Mono"',
+  '"Fira Code"',
+  '"SF Mono"',
+  'ui-monospace',
+  'SFMono-Regular',
+  '"Cascadia Code"',
+  'Menlo',
+  'Consolas',
+  '"Liberation Mono"',
+  'monospace',
+].join(', ');
+
 const config: Config = {
   darkMode: ['class', '[data-theme="dark"]'],
   content: ['./index.html', './src/**/*.{ts,tsx}'],
@@ -47,12 +107,47 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
-          'Ubuntu Sans',
-          'Noto Sans CJK SC',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Segoe UI Variable Text',
+          'Segoe UI',
+          'Inter',
+          'Roboto',
+          'Ubuntu',
           'PingFang SC',
+          'Hiragino Sans GB',
+          'Source Han Sans SC',
+          'Noto Sans CJK SC',
           'Microsoft YaHei',
           'system-ui',
           'sans-serif',
+        ],
+        serif: [
+          'Source Serif 4',
+          'Source Serif Pro',
+          'Charter',
+          'Iowan Old Style',
+          'Palatino Linotype',
+          'Cambria',
+          'Georgia',
+          'Source Han Serif SC',
+          'Noto Serif CJK SC',
+          'Songti SC',
+          'STSong',
+          'SimSun',
+          'serif',
+        ],
+        mono: [
+          'JetBrains Mono',
+          'Fira Code',
+          'SF Mono',
+          'ui-monospace',
+          'SFMono-Regular',
+          'Cascadia Code',
+          'Menlo',
+          'Consolas',
+          'Liberation Mono',
+          'monospace',
         ],
       },
       keyframes: {
@@ -116,13 +211,18 @@ const config: Config = {
             },
 
             // Heading scale — refined, not oversized.
-            // h1/h2/h3 share a tight letter-spacing for headings.
+            // h1–h4 use a serif stack for editorial weight; h5/h6 stay sans
+            // because at small sizes serif feels noisy.
             'h1, h2, h3, h4, h5, h6': {
               color: 'var(--tw-prose-headings)',
               fontWeight: '600',
               letterSpacing: '-0.005em',
               lineHeight: '1.4',
               scrollMarginTop: '4rem',
+              fontFeatureSettings: '"kern", "liga", "calt"',
+            },
+            'h1, h2, h3, h4': {
+              fontFamily: FONT_SERIF,
             },
             h1: {
               fontSize: '1.4em',
@@ -223,8 +323,8 @@ const config: Config = {
             code: {
               fontWeight: '500',
               fontSize: '0.86em',
-              fontFamily:
-                'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+              fontFamily: FONT_MONO,
+              fontVariantNumeric: 'tabular-nums',
               backgroundColor: 'var(--surface-hover)',
               color: 'var(--text)',
               padding: '0.12em 0.4em',
@@ -246,6 +346,12 @@ const config: Config = {
               overflow: 'hidden',
               fontSize: '0.86em',
               lineHeight: '1.55',
+              fontFamily: FONT_MONO,
+              fontVariantNumeric: 'tabular-nums',
+              fontFeatureSettings: '"calt", "liga"',
+            },
+            'kbd, samp': {
+              fontFamily: FONT_MONO,
             },
             'pre code': {
               display: 'block',
@@ -259,18 +365,19 @@ const config: Config = {
               overflowX: 'auto',
             },
 
-            // Blockquote — accent rail, no quote glyphs
+            // Blockquote — accent rail, editorial serif feel
             blockquote: {
               marginTop: '0.75em',
               marginBottom: '0.75em',
               paddingLeft: '0.9em',
               borderLeftWidth: '3px',
               borderLeftColor: 'var(--tw-prose-quote-borders)',
-              fontStyle: 'normal',
+              fontFamily: FONT_SERIF,
+              fontStyle: 'italic',
               fontWeight: '400',
               color: 'var(--tw-prose-quotes)',
               quotes: 'none',
-              lineHeight: '1.6',
+              lineHeight: '1.65',
             },
             'blockquote p': {
               marginTop: '0.2em',
@@ -296,6 +403,7 @@ const config: Config = {
               marginTop: '0',
               marginBottom: '0',
               borderCollapse: 'collapse',
+              fontVariantNumeric: 'tabular-nums lining-nums',
             },
             thead: {
               borderBottomWidth: '0',

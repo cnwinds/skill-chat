@@ -46,13 +46,29 @@
     margin: 0;
     background-color: var(--background);
     color: var(--text);
+    /* Modern Latin → high-quality CJK fallback chain.
+     * Mirror of tailwind.config.ts fontFamily.sans so any element
+     * that doesn't carry the `font-sans` class still inherits
+     * the same upgraded stack. */
     font-family:
-      'Ubuntu Sans',
-      'Noto Sans CJK SC',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI Variable Text',
+      'Segoe UI',
+      'Inter',
+      'Roboto',
+      'Ubuntu',
       'PingFang SC',
+      'Hiragino Sans GB',
+      'Source Han Sans SC',
+      'Noto Sans CJK SC',
       'Microsoft YaHei',
       system-ui,
       sans-serif;
+    /* kerning + standard/contextual ligatures + Inter stylistic set 1
+     * (no-op on fonts that don't define ss01, so safe everywhere). */
+    font-feature-settings: 'kern', 'liga', 'calt', 'ss01';
+    font-variant-numeric: lining-nums proportional-nums;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
@@ -93,11 +109,18 @@
   /* Prevent overlong URLs / code from blowing out the bubble */
   overflow-wrap: anywhere;
   word-break: break-word;
+  /* Latin: kerning, ligatures, contextual alts.
+   * CJK: 'palt' enables proportional-alternate widths on PingFang /
+   * Source Han, tightening the gap around CJK punctuation. No-op on
+   * fonts that don't ship with palt. */
+  font-feature-settings: 'kern', 'liga', 'calt', 'palt';
 }
 
 .prose-chat :where(h1, h2, h3, h4, h5, h6) {
-  /* Slightly looser tracking for CJK headings — feels more confident */
-  letter-spacing: 0.01em;
+  /* Slightly looser tracking for CJK headings — feels more confident.
+   * Serif CJK (Songti / Source Han Serif) reads better with a touch of breath. */
+  letter-spacing: 0.015em;
+  font-feature-settings: 'kern', 'liga', 'calt', 'palt';
 }
 
 .prose-chat :where(pre, code, kbd, samp) {

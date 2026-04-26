@@ -1080,6 +1080,21 @@ describe('SkillChat server', () => {
     const sharedFile = shareResponse.json() as { id: string; displayName: string; bucket: string };
     expect(sharedFile.bucket).toBe('shared');
 
+    const sharedVisibleInSessionResponse = await app.inject({
+      method: 'GET',
+      url: `/api/files?sessionId=${session.id}`,
+      headers: {
+        cookie: auth.cookie,
+      },
+    });
+
+    expect(sharedVisibleInSessionResponse.statusCode).toBe(200);
+    expect(
+      (sharedVisibleInSessionResponse.json() as Array<{ id: string; bucket: string }>).some(
+        (file) => file.id === sharedFile.id && file.bucket === 'shared',
+      ),
+    ).toBe(true);
+
     const downloadResponse = await app.inject({
       method: 'GET',
       url: `/api/files/${sharedFile.id}/download`,

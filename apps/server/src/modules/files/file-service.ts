@@ -72,13 +72,19 @@ export class FileService {
     const params: unknown[] = [userId];
 
     if (filters.sessionId) {
-      clauses.push('session_id = ?');
-      params.push(filters.sessionId);
+      if (filters.bucket === 'shared') {
+        clauses.push("bucket = 'shared'");
+      } else {
+        clauses.push("(session_id = ? OR bucket = 'shared')");
+        params.push(filters.sessionId);
+      }
     }
 
     if (filters.bucket) {
-      clauses.push('bucket = ?');
-      params.push(filters.bucket);
+      if (!(filters.sessionId && filters.bucket === 'shared')) {
+        clauses.push('bucket = ?');
+        params.push(filters.bucket);
+      }
     }
 
     const rows = this.db

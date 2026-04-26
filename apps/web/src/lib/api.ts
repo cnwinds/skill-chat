@@ -27,9 +27,9 @@ export class ApiError extends Error {
   }
 }
 
-const createHeaders = (headers: HeadersInit = {}, skipJson?: boolean) => {
+const createHeaders = (headers: HeadersInit = {}, body?: BodyInit | null) => {
   const merged = new Headers(headers);
-  if (!skipJson && !merged.has('Content-Type')) {
+  if (typeof body === 'string' && !merged.has('Content-Type')) {
     merged.set('Content-Type', 'application/json');
   }
   return merged;
@@ -61,7 +61,7 @@ const requestJson = async <T>(input: string, init: RequestInit = {}) => {
   const response = await fetch(input, {
     ...init,
     credentials: init.credentials ?? 'include',
-    headers: createHeaders(init.headers, init.body instanceof FormData),
+    headers: createHeaders(init.headers, init.body),
   });
   return parseResponse<T>(response);
 };
@@ -69,7 +69,7 @@ const requestJson = async <T>(input: string, init: RequestInit = {}) => {
 const fetchFileBlob = async (fileId: string) => {
   const response = await fetch(`/api/files/${fileId}/download`, {
     credentials: 'include',
-    headers: createHeaders({}, true),
+    headers: createHeaders(),
   });
 
   if (!response.ok) {
@@ -85,7 +85,7 @@ const fetchFileBlob = async (fileId: string) => {
 const fetchFilePreviewBlob = async (file: FileRecord) => {
   const response = await fetch(file.thumbnailUrl ?? `/api/files/${file.id}/thumbnail`, {
     credentials: 'include',
-    headers: createHeaders({}, true),
+    headers: createHeaders(),
   });
 
   if (!response.ok) {

@@ -364,7 +364,11 @@ describe('QuestionTimelineControl', () => {
     expect(toggle).not.toHaveTextContent('问题');
 
     fireEvent.click(toggle);
-    expect(screen.queryByText('问题时间线')).not.toBeInTheDocument();
+    // The same button stays in place when open — it is the visual handle of
+    // the merged panel, just the panel content (search box) is now visible.
+    expect(
+      screen.getByRole('button', { name: '切换问题定位列表，共 2 个提问' }),
+    ).toBe(toggle);
 
     fireEvent.change(screen.getByPlaceholderText('搜索提问内容'), {
       target: { value: '法学' },

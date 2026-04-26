@@ -2404,6 +2404,125 @@ describe('App routes', () => {
     }
   });
 
+  it('shares a generated image without sending an empty json body header', async () => {
+    let fileRequestCount = 0;
+    let shareRequestCount = 0;
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Share Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        fileRequestCount += 1;
+        return jsonResponse({
+          body: fileRequestCount === 1
+            ? [
+              {
+                id: 'file_output_1',
+                userId: 'u_member',
+                sessionId: 's1',
+                displayName: 'generated-image.png',
+                relativePath: 'sessions/s1/outputs/generated-image.png',
+                mimeType: 'image/png',
+                size: 1536000,
+                bucket: 'outputs',
+                source: 'generated',
+                createdAt: '2026-04-12T00:00:00.000Z',
+                downloadUrl: '/api/files/file_output_1/download',
+                thumbnailUrl: '/api/files/file_output_1/thumbnail',
+              },
+            ]
+            : [
+              {
+                id: 'file_shared_1',
+                userId: 'u_member',
+                sessionId: null,
+                displayName: 'generated-image.png',
+                relativePath: 'shared/generated-image.png',
+                mimeType: 'image/png',
+                size: 1536000,
+                bucket: 'shared',
+                source: 'shared',
+                createdAt: '2026-04-12T00:00:10.000Z',
+                downloadUrl: '/api/files/file_shared_1/download',
+                thumbnailUrl: '/api/files/file_shared_1/thumbnail',
+              },
+            ],
+        });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/files/file_output_1/share' && method === 'POST') {
+        shareRequestCount += 1;
+        expect(init?.body).toBeUndefined();
+        expect(new Headers(init?.headers).get('Content-Type')).toBeNull();
+        return jsonResponse({
+          body: {
+            id: 'file_shared_1',
+            userId: 'u_member',
+            sessionId: null,
+            displayName: 'generated-image.png',
+            relativePath: 'shared/generated-image.png',
+            mimeType: 'image/png',
+            size: 1536000,
+            bucket: 'shared',
+            source: 'shared',
+            createdAt: '2026-04-12T00:00:10.000Z',
+            downloadUrl: '/api/files/file_shared_1/download',
+            thumbnailUrl: '/api/files/file_shared_1/thumbnail',
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    expect(await screen.findByText('generated-image.png')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '共享' }));
+
+    await waitFor(() => {
+      expect(shareRequestCount).toBe(1);
+      expect(fileRequestCount).toBeGreaterThanOrEqual(2);
+    });
+    expect(await screen.findByText('已共享')).toBeInTheDocument();
+    expect(screen.getByText('generated-image.png 已加入共享区')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '共享' })).toBeInTheDocument();
+  });
+
   it('renders skill starter badges in the empty state and writes the clicked prompt into the composer', async () => {
     installFetchMock((url) => {
       if (url === '/api/me/settings') {

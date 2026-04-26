@@ -52,7 +52,7 @@ const QuestionTimelineList = ({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b border-border px-3 py-3">
+      <div className="px-3 py-3">
         <label className="relative block">
           <span className="sr-only">搜索提问内容</span>
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-muted" />
@@ -64,7 +64,7 @@ const QuestionTimelineList = ({
           />
         </label>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {filteredQuestions.length > 0 ? (
           <div className="relative flex flex-col gap-1 before:absolute before:bottom-2 before:left-[1.15rem] before:top-2 before:w-px before:bg-border">
             {filteredQuestions.map((question) => {
@@ -132,26 +132,17 @@ export const QuestionTimelineControl = ({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        aria-label={`切换问题定位列表，共 ${questions.length} 个提问`}
-        className={cn(
-          'absolute right-4 z-40 inline-flex h-9 min-w-14 items-center justify-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur transition hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-          open && 'border-accent bg-surface-hover',
-          'bottom-4 lg:bottom-auto lg:top-4',
-        )}
-      >
-        <MessageCircleQuestionMark className="h-3.5 w-3.5" />
-        <span>{questions.length}</span>
-      </button>
-
       {open ? (
         <aside
+          aria-label={`问题定位列表，共 ${questions.length} 个提问`}
           className={cn(
             'absolute z-30 flex overflow-hidden rounded-2xl border border-border bg-surface shadow-lg',
-            'inset-x-3 bottom-16 max-h-[58dvh] flex-col lg:inset-x-auto lg:bottom-4 lg:right-4 lg:top-14 lg:max-h-none lg:w-[min(360px,calc(100%-2rem))]',
+            // Mobile: anchored to the button's corner (bottom-right). Panel
+            // reserves bottom padding so the button sits flush against the
+            // panel's bottom-right corner, making them look like one window.
+            'inset-x-3 bottom-4 max-h-[58dvh] flex-col pb-14',
+            // Desktop: panel grows from the button's top-right corner.
+            'lg:inset-x-auto lg:bottom-4 lg:right-4 lg:top-4 lg:max-h-none lg:w-[min(360px,calc(100%-2rem))] lg:pb-0 lg:pt-14',
           )}
         >
           <QuestionTimelineList
@@ -161,6 +152,23 @@ export const QuestionTimelineControl = ({
           />
         </aside>
       ) : null}
+
+      {/* Button is intentionally identical in open/closed states for a strong
+          sense of continuity — only its z-index keeps it above the panel so it
+          appears to be the corner/handle of the merged window. */}
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        aria-label={`切换问题定位列表，共 ${questions.length} 个提问`}
+        className={cn(
+          'absolute right-4 z-40 inline-flex h-9 min-w-14 items-center justify-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur transition hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+          'bottom-4 lg:bottom-auto lg:top-4',
+        )}
+      >
+        <MessageCircleQuestionMark className="h-3.5 w-3.5" />
+        <span>{questions.length}</span>
+      </button>
     </>
   );
 };
