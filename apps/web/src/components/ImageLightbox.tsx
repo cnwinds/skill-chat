@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Download, X } from 'lucide-react';
 import { useImagePreview, useImagePreviewActions } from '@/hooks/useImagePreview';
@@ -26,16 +26,218 @@ const useResolvedPreviewUrl = (target: ReturnType<typeof useImagePreview>) => {
   return { url: previewUrl, loading, error };
 };
 
+const MIN_SCALE = 1;
+const MAX_SCALE = 5;
+
+type Point = {
+  x: number;
+  y: number;
+};
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+const getDistance = (first: Point, second: Point) =>
+  Math.hypot(second.x - first.x, second.y - first.y);
+
+const getMidpoint = (first: Point, second: Point): Point => ({
+  x: (first.x + second.x) / 2,
+  y: (first.y + second.y) / 2,
+});
+
 export const ImageLightbox = () => {
   const target = useImagePreview();
   const { close } = useImagePreviewActions();
   const { url, loading, error } = useResolvedPreviewUrl(target);
   const [downloading, setDownloading] = useState(false);
+  const [scale, setScale] = useState(MIN_SCALE);
+  const [offset, setOffset] = useState<Point>({ x: 0, y: 0 });
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const pointersRef = useRef(new Map<number, Point>());
+  const transformRef = useRef({
+    scale: MIN_SCALE,
+    offset: { x: 0, y: 0 } as Point,
+  });
+  const pinchRef = useRef<{
+    startDistance: number;
+    startScale: number;
+    startOffset: Point;
+    startMidpoint: Point;
+    stageCenter: Point;
+  } | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startPoint: Point;
+    startOffset: Point;
+  } | null>(null);
 
   // Reset transient state when the target changes.
   useEffect(() => {
     setDownloading(false);
+    setScale(MIN_SCALE);
+    setOffset({ x: 0, y: 0 });
+    transformRef.current = {
+      scale: MIN_SCALE,
+      offset: { x: 0, y: 0 },
+    };
+    pointersRef.current.clear();
+    pinchRef.current = null;
+    dragRef.current = null;
   }, [target?.id]);
+
+  const clampOffset = (nextScale: number, nextOffset: Point): Point => {
+    if (nextScale <= MIN_SCALE) {
+      return { x: 0, y: 0 };
+    }
+
+    const stageRect = stageRef.current?.getBoundingClientRect();
+    const frameRect = frameRef.current?.getBoundingClientRect();
+    if (!stageRect || !frameRect) {
+      return nextOffset;
+    }
+
+    const maxX = Math.max(0, (frameRect.width * nextScale - stageRect.width) / 2);
+    const maxY = Math.max(0, (frameRect.height * nextScale - stageRect.height) / 2);
+
+    return {
+      x: clamp(nextOffset.x, -maxX, maxX),
+      y: clamp(nextOffset.y, -maxY, maxY),
+    };
+  };
+
+  const applyTransform = (nextScale: number, nextOffset: Point) => {
+    const clampedScale = clamp(nextScale, MIN_SCALE, MAX_SCALE);
+    const clampedOffset = clampOffset(clampedScale, nextOffset);
+    transformRef.current = {
+      scale: clampedScale,
+      offset: clampedOffset,
+    };
+    setScale(clampedScale);
+    setOffset(clampedOffset);
+  };
+
+  const beginPinchGesture = () => {
+    const stageRect = stageRef.current?.getBoundingClientRect();
+    if (!stageRect || pointersRef.current.size < 2) {
+      pinchRef.current = null;
+      return;
+    }
+
+    const [first, second] = [...pointersRef.current.values()];
+    pinchRef.current = {
+      startDistance: getDistance(first, second),
+      startScale: transformRef.current.scale,
+      startOffset: transformRef.current.offset,
+      startMidpoint: getMidpoint(first, second),
+      stageCenter: {
+        x: stageRect.left + stageRect.width / 2,
+        y: stageRect.top + stageRect.height / 2,
+      },
+    };
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!url) {
+      return;
+    }
+
+    const point = { x: event.clientX, y: event.clientY };
+    pointersRef.current.set(event.pointerId, point);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+
+    if (pointersRef.current.size >= 2) {
+      dragRef.current = null;
+      beginPinchGesture();
+      return;
+    }
+
+    if (transformRef.current.scale > MIN_SCALE) {
+      dragRef.current = {
+        pointerId: event.pointerId,
+        startPoint: point,
+        startOffset: transformRef.current.offset,
+      };
+    }
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointersRef.current.has(event.pointerId)) {
+      return;
+    }
+
+    const point = { x: event.clientX, y: event.clientY };
+    pointersRef.current.set(event.pointerId, point);
+
+    if (pointersRef.current.size >= 2) {
+      if (!pinchRef.current) {
+        beginPinchGesture();
+      }
+      const pinch = pinchRef.current;
+      const [first, second] = [...pointersRef.current.values()];
+      if (!pinch || !first || !second || pinch.startDistance <= 0) {
+        return;
+      }
+
+      const currentDistance = getDistance(first, second);
+      const nextScale = clamp(
+        pinch.startScale * (currentDistance / pinch.startDistance),
+        MIN_SCALE,
+        MAX_SCALE,
+      );
+      const currentMidpoint = getMidpoint(first, second);
+      const scaleRatio = nextScale / pinch.startScale;
+      const nextOffset = {
+        x:
+          currentMidpoint.x -
+          pinch.stageCenter.x -
+          scaleRatio * (pinch.startMidpoint.x - pinch.stageCenter.x - pinch.startOffset.x),
+        y:
+          currentMidpoint.y -
+          pinch.stageCenter.y -
+          scaleRatio * (pinch.startMidpoint.y - pinch.stageCenter.y - pinch.startOffset.y),
+      };
+      applyTransform(nextScale, nextOffset);
+      return;
+    }
+
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || transformRef.current.scale <= MIN_SCALE) {
+      return;
+    }
+
+    const nextOffset = {
+      x: drag.startOffset.x + (point.x - drag.startPoint.x),
+      y: drag.startOffset.y + (point.y - drag.startPoint.y),
+    };
+    applyTransform(transformRef.current.scale, nextOffset);
+  };
+
+  const handlePointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    pointersRef.current.delete(event.pointerId);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+
+    if (pointersRef.current.size >= 2) {
+      beginPinchGesture();
+      return;
+    }
+
+    pinchRef.current = null;
+
+    if (pointersRef.current.size === 1 && transformRef.current.scale > MIN_SCALE) {
+      const [remainingPointerId, remainingPoint] = [...pointersRef.current.entries()][0] ?? [];
+      if (typeof remainingPointerId === 'number' && remainingPoint) {
+        dragRef.current = {
+          pointerId: remainingPointerId,
+          startPoint: remainingPoint,
+          startOffset: transformRef.current.offset,
+        };
+        return;
+      }
+    }
+
+    dragRef.current = null;
+  };
 
   const handleDownload = async () => {
     if (!target?.file) {
@@ -105,6 +307,8 @@ export const ImageLightbox = () => {
 
           {/* Image */}
           <div
+            ref={stageRef}
+            data-testid="image-lightbox-stage"
             className="flex max-h-full max-w-full flex-1 items-center justify-center"
             onClick={(event) => {
               // Click on the empty area closes the lightbox.
@@ -112,14 +316,32 @@ export const ImageLightbox = () => {
                 close();
               }
             }}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+            onPointerLeave={handlePointerEnd}
+            style={{ touchAction: url ? 'none' : 'auto' }}
           >
             {url ? (
-              <img
-                src={url}
-                alt={target?.label ?? '图片预览'}
-                className="max-h-[85vh] max-w-[90vw] select-none object-contain shadow-2xl"
-                draggable={false}
-              />
+              <div
+                ref={frameRef}
+                data-testid="image-lightbox-frame"
+                style={{
+                  transform: `translate3d(${offset.x}px, ${offset.y}px, 0)`,
+                }}
+              >
+                <img
+                  src={url}
+                  alt={target?.label ?? '图片预览'}
+                  className="max-h-[85vh] max-w-[90vw] select-none object-contain shadow-2xl"
+                  draggable={false}
+                  style={{
+                    transform: `scale(${scale})`,
+                    transformOrigin: 'center center',
+                  }}
+                />
+              </div>
             ) : loading ? (
               <div className="text-sm text-white/80">图片加载中...</div>
             ) : error ? (
