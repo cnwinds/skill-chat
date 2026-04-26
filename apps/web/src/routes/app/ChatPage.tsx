@@ -2,6 +2,7 @@ import type { ClipboardEvent as ReactClipboardEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
+import { Trash2 } from 'lucide-react';
 import type {
   FileRecord,
   StoredEvent,
@@ -24,6 +25,16 @@ import { buildRenderableTimeline, type TimelineItem } from '@/lib/timeline';
 import { ChatHeader } from '@/components/layout/ChatHeader';
 import { Composer } from '@/components/chat/Composer';
 import { FollowUpQueue } from '@/components/chat/FollowUpQueue';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   QuestionTimelineControl,
   type QuestionTimelineEntry,
@@ -161,6 +172,9 @@ export const ChatPage = () => {
     openInspectorSheet,
     themeMode,
     onToggleTheme,
+    sessionActionPending,
+    onRenameSession,
+    onDeleteSession,
   } = useAppShellOutlet();
 
   const drafts = useUiStore((state) => state.drafts);
@@ -176,6 +190,9 @@ export const ChatPage = () => {
   const restoredScrollSessionIdRef = useRef<string | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const [highlightedEventId, setHighlightedEventId] = useState<string | null>(null);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const stream = useSessionStream(activeSessionId);
   const keyboardInset = useKeyboardInset();
@@ -199,6 +216,17 @@ export const ChatPage = () => {
     [activeSessionId, sessionsQuery.data],
   );
   const hasActiveSession = Boolean(activeSessionId && activeSession);
+
+  useEffect(() => {
+    if (!renameDialogOpen) {
+      setRenameTitle(activeSession?.title ?? '');
+    }
+  }, [activeSession?.title, renameDialogOpen]);
+
+  useEffect(() => {
+    setRenameDialogOpen(false);
+    setDeleteDialogOpen(false);
+  }, [activeSessionId]);
 
   useEffect(() => {
     messageNodeRefs.current.clear();
@@ -692,6 +720,30 @@ export const ChatPage = () => {
     focusComposer();
   };
 
+  const openRenameDialog = () => {
+    if (!activeSession) {
+      return;
+    }
+    setRenameTitle(activeSession.title);
+    setRenameDialogOpen(true);
+  };
+
+  const submitRename = () => {
+    if (!activeSessionId || !renameTitle.trim()) {
+      return;
+    }
+    onRenameSession(activeSessionId, renameTitle.trim());
+    setRenameDialogOpen(false);
+  };
+
+  const confirmDeleteSession = () => {
+    if (!activeSessionId || isTurnRunning) {
+      return;
+    }
+    onDeleteSession(activeSessionId);
+    setDeleteDialogOpen(false);
+  };
+
   const sessionTurnCount = useMemo(() => {
     const turnIds = new Set<string>();
     for (const item of timeline) {
@@ -736,6 +788,20 @@ export const ChatPage = () => {
       <ChatHeader
         title={activeSession?.title ?? '选择或创建会话'}
         subtitle={headerSubtitle}
+        onTitleClick={hasActiveSession ? openRenameDialog : undefined}
+        titleActions={hasActiveSession ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setDeleteDialogOpen(true)}
+            disabled={sessionActionPending || isTurnRunning}
+            aria-label={`删除会话：${activeSession?.title ?? ''}`}
+            title={isTurnRunning ? '当前会话回应中，暂不能删除' : '删除会话'}
+            className="text-foreground-muted hover:text-danger disabled:opacity-40"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        ) : undefined}
         themeMode={themeMode}
         onToggleTheme={onToggleTheme}
         onOpenSidebar={openSidebarSheet}
@@ -909,6 +975,65 @@ export const ChatPage = () => {
           </div>
         </section>
       )}
+
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>修改标题</DialogTitle>
+            <DialogDescription>给当前会话换一个更容易识别的名称。</DialogDescription>
+          </DialogHeader>
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitRename();
+            }}
+          >
+            <Input
+              aria-label="会话标题"
+              value={renameTitle}
+              onChange={(event) => setRenameTitle(event.target.value)}
+              maxLength={80}
+              autoFocus
+            />
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setRenameDialogOpen(false)}>
+                取消
+              </Button>
+              <Button type="submit" disabled={sessionActionPending || !renameTitle.trim()}>
+                保存
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>删除会话</DialogTitle>
+            <DialogDescription>
+              删除后会从会话列表移除，相关聊天记录和会话文件会进入服务端回收目录。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border border-border bg-surface-hover px-3 py-2 text-sm">
+            {activeSession?.title}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => setDeleteDialogOpen(false)}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={confirmDeleteSession}
+              disabled={sessionActionPending || isTurnRunning}
+            >
+              删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 };

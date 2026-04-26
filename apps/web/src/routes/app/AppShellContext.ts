@@ -10,6 +10,9 @@ export interface AppShellOutletValue {
   onToggleTheme: () => void;
   onLogout: () => void;
   logoutPending: boolean;
+  sessionActionPending: boolean;
+  onRenameSession: (sessionId: string, title: string) => void;
+  onDeleteSession: (sessionId: string) => void;
 }
 
 export const useAppShellOutlet = () => useOutletContext<AppShellOutletValue>();

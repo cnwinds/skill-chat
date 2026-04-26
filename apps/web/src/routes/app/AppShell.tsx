@@ -367,6 +367,9 @@ export const AppShell = () => {
       updateMySettingsMutation.mutate({ themeMode: themeMode === 'dark' ? 'light' : 'dark' }),
     onLogout: () => logoutMutation.mutate(),
     logoutPending: logoutMutation.isPending,
+    sessionActionPending: updateSessionMutation.isPending || deleteSessionMutation.isPending,
+    onRenameSession: handleRenameSession,
+    onDeleteSession: handleDeleteSession,
   };
 
   const showInspector = !isSettingsView;

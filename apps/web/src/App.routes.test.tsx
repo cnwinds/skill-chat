@@ -853,7 +853,7 @@ describe('App routes', () => {
     expect(screen.getByText('Session 7')).toBeInTheDocument();
   });
 
-  it('renames a session from the sidebar actions', async () => {
+  it('renames a session by clicking the chat title', async () => {
     let patchPayload: Record<string, unknown> | null = null;
     const sessions = [
       {
@@ -910,11 +910,7 @@ describe('App routes', () => {
     useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
-    fireEvent.pointerDown(await screen.findByRole('button', { name: '打开会话操作：旧标题' }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    fireEvent.click(await screen.findByRole('menuitem', { name: '修改标题' }));
+    fireEvent.click(await screen.findByRole('button', { name: '修改会话标题：旧标题' }));
     fireEvent.change(await screen.findByLabelText('会话标题'), {
       target: { value: '新标题' },
     });
@@ -928,7 +924,7 @@ describe('App routes', () => {
     });
   });
 
-  it('deletes the current session from the sidebar actions and selects the next one', async () => {
+  it('deletes the current session from the chat title bar and selects the next one', async () => {
     let deletedSessionId: string | null = null;
     let sessions = [
       {
@@ -989,11 +985,7 @@ describe('App routes', () => {
     useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
-    fireEvent.pointerDown(await screen.findByRole('button', { name: '打开会话操作：要删除的会话' }), {
-      button: 0,
-      ctrlKey: false,
-    });
-    fireEvent.click(await screen.findByRole('menuitem', { name: '删除会话' }));
+    fireEvent.click(await screen.findByRole('button', { name: '删除会话：要删除的会话' }));
     fireEvent.click(await screen.findByRole('button', { name: '删除' }));
 
     await waitFor(() => {
