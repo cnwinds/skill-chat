@@ -120,6 +120,7 @@ export const AppShell = () => {
         mobilePanel: null,
         drafts: {},
         streams: {},
+        sessionScrollStates: {},
       });
       queryClient.clear();
       navigate('/login', { replace: true });

@@ -44,14 +44,23 @@ type SessionStreamState = {
 
 type MobilePanel = 'sessions' | 'files' | 'skills' | null;
 
+export type SessionScrollState = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  wasAtBottom: boolean;
+};
+
 type UiState = {
   activeSessionId: string | null;
   mobilePanel: MobilePanel;
   drafts: Record<string, string>;
   streams: Record<string, SessionStreamState>;
+  sessionScrollStates: Record<string, SessionScrollState>;
   setActiveSessionId: (sessionId: string | null) => void;
   setMobilePanel: (panel: MobilePanel) => void;
   setDraft: (sessionId: string, value: string) => void;
+  setSessionScrollState: (sessionId: string, scrollState: SessionScrollState) => void;
   appendTextDelta: (sessionId: string, chunk: string) => void;
   pushThinking: (sessionId: string, event: ThinkingEvent) => void;
   pushToolCall: (sessionId: string, event: ToolCallEvent) => void;
@@ -147,12 +156,19 @@ export const useUiStore = create<UiState>((set) => ({
   mobilePanel: null,
   drafts: {},
   streams: {},
+  sessionScrollStates: {},
   setActiveSessionId: (sessionId) => set({ activeSessionId: sessionId }),
   setMobilePanel: (panel) => set({ mobilePanel: panel }),
   setDraft: (sessionId, value) => set((state) => ({
     drafts: {
       ...state.drafts,
       [sessionId]: value,
+    },
+  })),
+  setSessionScrollState: (sessionId, scrollState) => set((state) => ({
+    sessionScrollStates: {
+      ...state.sessionScrollStates,
+      [sessionId]: scrollState,
     },
   })),
   appendTextDelta: (sessionId, chunk) => set((state) => ({

@@ -44,6 +44,18 @@ const normalizeAttachmentFile = (file: File, index: number) => {
   });
 };
 
+const SCROLL_BOTTOM_THRESHOLD_PX = 48;
+
+const readScrollState = (node: HTMLElement) => {
+  const distanceFromBottom = node.scrollHeight - (node.scrollTop + node.clientHeight);
+  return {
+    scrollTop: node.scrollTop,
+    scrollHeight: node.scrollHeight,
+    clientHeight: node.clientHeight,
+    wasAtBottom: distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD_PX,
+  };
+};
+
 const buildRuntimeThinkingEvent = (args: {
   sessionId: string;
   phase: string | null;
@@ -143,9 +155,11 @@ export const ChatPage = () => {
   const clearStreamContent = useUiStore((state) => state.clearStreamContent);
   const hydrateRuntime = useUiStore((state) => state.hydrateRuntime);
   const confirmRemovedFollowUpInput = useUiStore((state) => state.confirmRemovedFollowUpInput);
+  const setSessionScrollState = useUiStore((state) => state.setSessionScrollState);
 
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageNodeRefs = useRef(new Map<string, HTMLDivElement>());
+  const restoredScrollSessionIdRef = useRef<string | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const [highlightedEventId, setHighlightedEventId] = useState<string | null>(null);
 
@@ -174,6 +188,7 @@ export const ChatPage = () => {
 
   useEffect(() => {
     messageNodeRefs.current.clear();
+    restoredScrollSessionIdRef.current = null;
     setHighlightedEventId(null);
   }, [activeSessionId]);
 
@@ -474,6 +489,53 @@ export const ChatPage = () => {
     activeSessionId,
   ]);
 
+  const saveSessionScrollPosition = (sessionId: string, node: HTMLElement) => {
+    setSessionScrollState(sessionId, readScrollState(node));
+  };
+
+  useEffect(() => {
+    if (
+      !activeSessionId ||
+      !messagesQuery.isSuccess ||
+      restoredScrollSessionIdRef.current === activeSessionId
+    ) {
+      return;
+    }
+
+    const node = messageListRef.current;
+    if (!node) {
+      return;
+    }
+
+    const saved = useUiStore.getState().sessionScrollStates[activeSessionId];
+    const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
+    node.scrollTop = saved
+      ? saved.wasAtBottom
+        ? maxScrollTop
+        : Math.min(saved.scrollTop, maxScrollTop)
+      : maxScrollTop;
+
+    saveSessionScrollPosition(activeSessionId, node);
+    restoredScrollSessionIdRef.current = activeSessionId;
+  }, [
+    activeSessionId,
+    messageListRef,
+    messagesQuery.isSuccess,
+    setSessionScrollState,
+    timeline.length,
+  ]);
+
+  const handleMessageListScroll = () => {
+    if (!activeSessionId) {
+      return;
+    }
+    const node = messageListRef.current;
+    if (!node) {
+      return;
+    }
+    saveSessionScrollPosition(activeSessionId, node);
+  };
+
   const bindMessageNode = (eventId: string) => (node: HTMLDivElement | null) => {
     if (node) {
       messageNodeRefs.current.set(eventId, node);
@@ -669,7 +731,11 @@ export const ChatPage = () => {
       {hasActiveSession ? (
         <>
           <section className="message-stage relative flex-1 overflow-hidden">
-            <div ref={messageListRef} className="message-list h-full overflow-y-auto">
+            <div
+              ref={messageListRef}
+              className="message-list h-full overflow-y-auto"
+              onScroll={handleMessageListScroll}
+            >
               <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
                 {stream.recovery ? (
                   <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs text-foreground-muted">

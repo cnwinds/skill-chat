@@ -125,6 +125,7 @@ beforeEach(() => {
     mobilePanel: null,
     drafts: {},
     streams: {},
+    sessionScrollStates: {},
   });
   fetchEventSourceMock.mockReset();
   fetchEventSourceMock.mockImplementation(async (_input, init) => {
@@ -436,6 +437,107 @@ describe('App routes', () => {
     expect(messageList).not.toHaveTextContent('下一轮整理文档');
     expect(previewStack).toHaveTextContent('1 下一轮整理文档');
     expect(previewStack).toHaveTextContent('下一轮整理文档');
+  });
+
+  it('restores the previous scroll position when switching back to a session', async () => {
+    installFetchMock((url) => {
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'First Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+            {
+              id: 's2',
+              title: 'Second Session',
+              createdAt: '2026-04-12T00:01:00.000Z',
+              updatedAt: '2026-04-12T00:01:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1_user_1',
+              sessionId: 's1',
+              kind: 'message',
+              role: 'user',
+              type: 'text',
+              content: '第一条会话的问题',
+              createdAt: '2026-04-12T00:00:01.000Z',
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s2/messages?limit=200') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's2_user_1',
+              sessionId: 's2',
+              kind: 'message',
+              role: 'user',
+              type: 'text',
+              content: '第二条会话的问题',
+              createdAt: '2026-04-12T00:01:01.000Z',
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/runtime' || url === '/api/sessions/s2/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: url.includes('/s1/') ? 's1' : 's2',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1' || url === '/api/files?sessionId=s2') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    expect(await screen.findByText('第一条会话的问题')).toBeInTheDocument();
+    const messageList = document.querySelector('.message-list') as HTMLDivElement;
+    Object.defineProperty(messageList, 'scrollHeight', { configurable: true, value: 1800 });
+    Object.defineProperty(messageList, 'clientHeight', { configurable: true, value: 500 });
+
+    messageList.scrollTop = 620;
+    fireEvent.scroll(messageList);
+
+    fireEvent.click(screen.getByText('Second Session'));
+    expect(await screen.findByText('第二条会话的问题')).toBeInTheDocument();
+    messageList.scrollTop = 120;
+    fireEvent.scroll(messageList);
+
+    fireEvent.click(screen.getByText('First Session'));
+    expect(await screen.findByText('第一条会话的问题')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(messageList.scrollTop).toBe(620);
+    });
   });
 
   it('removes a queued follow-up item when the user clicks cancel', async () => {
