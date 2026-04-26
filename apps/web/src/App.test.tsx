@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { FileEvent, TextMessageEvent, ThinkingEvent, ToolProgressEvent } from '@skillchat/shared';
 import { MessageItem } from './components/MessageItem';
+import { QuestionTimelineControl } from './components/chat/QuestionTimelineControl';
 import type { ToolTraceDisplayEvent, ToolTraceGroupDisplayEvent } from './lib/timeline';
 
 describe('MessageItem', () => {
@@ -325,5 +326,48 @@ describe('MessageItem', () => {
     expect(screen.getByText('最近：已读取 Skill 定义：another-perspective / SKILL.md')).toBeInTheDocument();
     expect(screen.getByText('第 1 次')).toBeInTheDocument();
     expect(screen.getByText('第 2 次')).toBeInTheDocument();
+  });
+});
+
+describe('QuestionTimelineControl', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('opens a searchable question timeline and selects a question', () => {
+    const onSelectQuestion = vi.fn();
+    render(
+      <div className="relative h-96">
+        <QuestionTimelineControl
+          questions={[
+            {
+              id: 'q1',
+              index: 1,
+              content: '我应该怎么选择专业？',
+              createdAt: '2026-04-26T10:00:00.000Z',
+            },
+            {
+              id: 'q2',
+              index: 2,
+              content: '法学和师范类哪个更适合普通家庭？',
+              createdAt: '2026-04-26T10:05:00.000Z',
+            },
+          ]}
+          activeQuestionId={null}
+          onSelectQuestion={onSelectQuestion}
+        />
+      </div>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '打开问题时间线，共 2 个提问' }));
+    expect(screen.getByText('问题时间线')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('搜索提问内容'), {
+      target: { value: '法学' },
+    });
+    expect(screen.queryByText('我应该怎么选择专业？')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /法学和师范类/ }));
+    expect(onSelectQuestion).toHaveBeenCalledWith('q2');
   });
 });

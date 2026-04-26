@@ -1,5 +1,5 @@
 import type { ClipboardEvent as ReactClipboardEvent } from 'react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import type {
@@ -24,6 +24,11 @@ import { buildRenderableTimeline, type TimelineItem } from '@/lib/timeline';
 import { ChatHeader } from '@/components/layout/ChatHeader';
 import { Composer } from '@/components/chat/Composer';
 import { FollowUpQueue } from '@/components/chat/FollowUpQueue';
+import {
+  QuestionTimelineControl,
+  type QuestionTimelineEntry,
+} from '@/components/chat/QuestionTimelineControl';
+import { cn } from '@/lib/cn';
 import { useAppShellOutlet } from './AppShellContext';
 
 const normalizeAttachmentFile = (file: File, index: number) => {
@@ -140,6 +145,9 @@ export const ChatPage = () => {
   const confirmRemovedFollowUpInput = useUiStore((state) => state.confirmRemovedFollowUpInput);
 
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const messageNodeRefs = useRef(new Map<string, HTMLDivElement>());
+  const highlightTimerRef = useRef<number | null>(null);
+  const [highlightedEventId, setHighlightedEventId] = useState<string | null>(null);
 
   const stream = useSessionStream(activeSessionId);
   const keyboardInset = useKeyboardInset();
@@ -163,6 +171,17 @@ export const ChatPage = () => {
     [activeSessionId, sessionsQuery.data],
   );
   const hasActiveSession = Boolean(activeSessionId && activeSession);
+
+  useEffect(() => {
+    messageNodeRefs.current.clear();
+    setHighlightedEventId(null);
+  }, [activeSessionId]);
+
+  useEffect(() => () => {
+    if (highlightTimerRef.current) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+  }, []);
 
   const messagesQuery = useQuery({
     queryKey: ['messages', activeSessionId],
@@ -378,6 +397,21 @@ export const ChatPage = () => {
       buildRenderableTimeline([...(messagesQuery.data ?? []), ...stream.transientEvents]),
     [messagesQuery.data, stream.transientEvents],
   );
+  const questionTimeline = useMemo<QuestionTimelineEntry[]>(
+    () =>
+      timeline
+        .filter(
+          (item): item is TextMessageEvent =>
+            item.kind === 'message' && item.role === 'user',
+        )
+        .map((item, index) => ({
+          id: item.id,
+          index: index + 1,
+          content: item.content,
+          createdAt: item.createdAt,
+        })),
+    [timeline],
+  );
   const thinkingEvent = useMemo(() => {
     if (
       activeSessionId &&
@@ -439,6 +473,30 @@ export const ChatPage = () => {
     stream.followUpQueue,
     activeSessionId,
   ]);
+
+  const bindMessageNode = (eventId: string) => (node: HTMLDivElement | null) => {
+    if (node) {
+      messageNodeRefs.current.set(eventId, node);
+      return;
+    }
+    messageNodeRefs.current.delete(eventId);
+  };
+
+  const handleSelectQuestionFromTimeline = (eventId: string) => {
+    const node = messageNodeRefs.current.get(eventId);
+    if (!node) {
+      return;
+    }
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedEventId(eventId);
+    if (highlightTimerRef.current) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setHighlightedEventId(null);
+      highlightTimerRef.current = null;
+    }, 1800);
+  };
 
   const draft = hasActiveSession ? drafts[activeSessionId!] ?? '' : '';
   const isTurnRunning =
@@ -594,7 +652,7 @@ export const ChatPage = () => {
   const statusTone = STREAM_STATUS_TO_TONE[stream.status] ?? 'idle';
 
   return (
-    <main className="flex h-full min-h-0 flex-1 flex-col">
+    <main className="relative flex h-full min-h-0 flex-1 flex-col">
       <ChatHeader
         title={activeSession?.title ?? '选择或创建会话'}
         subtitle={headerSubtitle}
@@ -610,7 +668,7 @@ export const ChatPage = () => {
 
       {hasActiveSession ? (
         <>
-          <section className="message-stage flex-1 overflow-hidden">
+          <section className="message-stage relative flex-1 overflow-hidden">
             <div ref={messageListRef} className="message-list h-full overflow-y-auto">
               <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
                 {stream.recovery ? (
@@ -656,14 +714,23 @@ export const ChatPage = () => {
                   />
                 ) : null}
                 {timeline.map((event) => (
-                  <MessageItem
+                  <div
                     key={event.id}
-                    event={event}
-                    onDownload={(file) => downloadMutation.mutate(file)}
-                    onReuseImage={handleReuseImage}
-                    downloading={downloadMutation.isPending}
-                    canExpandToolTrace={user.role === 'admin'}
-                  />
+                    ref={bindMessageNode(event.id)}
+                    className={cn(
+                      'scroll-mt-6 rounded-2xl transition-[box-shadow,background-color] duration-300',
+                      highlightedEventId === event.id &&
+                        'bg-accent/5 shadow-[0_0_0_2px_var(--accent)]',
+                    )}
+                  >
+                    <MessageItem
+                      event={event}
+                      onDownload={(file) => downloadMutation.mutate(file)}
+                      onReuseImage={handleReuseImage}
+                      downloading={downloadMutation.isPending}
+                      canExpandToolTrace={user.role === 'admin'}
+                    />
+                  </div>
                 ))}
                 {shouldRenderPendingText ? (
                   <MessageItem
@@ -693,6 +760,11 @@ export const ChatPage = () => {
                 ) : null}
               </div>
             </div>
+            <QuestionTimelineControl
+              questions={questionTimeline}
+              activeQuestionId={highlightedEventId}
+              onSelectQuestion={handleSelectQuestionFromTimeline}
+            />
           </section>
 
           <div
