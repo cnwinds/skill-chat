@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { Children, isValidElement, useEffect, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AlertCircle, Check, Copy, Download, ImagePlus, Loader2 } from 'lucide-react';
+import { AlertCircle, Check, Copy, Download, ExternalLink, ImagePlus, Loader2 } from 'lucide-react';
 import type {
   AssistantMessageMeta,
   FileRecord,
@@ -301,12 +301,165 @@ const ImageEventCard = ({
   );
 };
 
+/* ----------------------------- markdown chrome ----------------------------- */
+
+const collectText = (node: ReactNode): string => {
+  if (node == null || node === false) return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(collectText).join('');
+  if (isValidElement(node)) {
+    const props = node.props as { children?: ReactNode } | undefined;
+    return collectText(props?.children);
+  }
+  return '';
+};
+
+const LANG_LABEL: Record<string, string> = {
+  js: 'JavaScript',
+  jsx: 'JSX',
+  ts: 'TypeScript',
+  tsx: 'TSX',
+  py: 'Python',
+  rb: 'Ruby',
+  sh: 'Shell',
+  bash: 'Bash',
+  zsh: 'Zsh',
+  md: 'Markdown',
+  yml: 'YAML',
+  yaml: 'YAML',
+  json: 'JSON',
+  html: 'HTML',
+  css: 'CSS',
+  scss: 'SCSS',
+  go: 'Go',
+  rs: 'Rust',
+  java: 'Java',
+  kt: 'Kotlin',
+  swift: 'Swift',
+  php: 'PHP',
+  sql: 'SQL',
+  c: 'C',
+  cpp: 'C++',
+  cs: 'C#',
+  text: 'Text',
+  txt: 'Text',
+};
+
+const formatLanguage = (lang: string) => {
+  if (!lang) return '';
+  const lower = lang.toLowerCase();
+  return LANG_LABEL[lower] ?? lang;
+};
+
+const InlineCopyButton = ({ getText, label = '复制' }: { getText: () => string; label?: string }) => {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  useEffect(() => {
+    if (state === 'idle') return;
+    const t = window.setTimeout(() => setState('idle'), 1400);
+    return () => window.clearTimeout(t);
+  }, [state]);
+
+  return (
+    <button
+      type="button"
+      onClick={async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+          await navigator.clipboard.writeText(getText());
+          setState('copied');
+        } catch {
+          setState('failed');
+        }
+      }}
+      className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-2xs text-foreground-muted transition-colors hover:bg-surface-hover hover:text-foreground"
+      aria-label={label}
+      title={label}
+    >
+      {state === 'copied' ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      <span>{state === 'copied' ? '已复制' : state === 'failed' ? '复制失败' : label}</span>
+    </button>
+  );
+};
+
+const MarkdownCodeBlock = ({
+  language,
+  children,
+  rawText,
+}: {
+  language: string;
+  children: ReactNode;
+  rawText: string;
+}) => {
+  const displayLang = formatLanguage(language);
+  return (
+    <div className="md-codeblock overflow-hidden rounded-[10px] border border-border bg-surface-hover">
+      <div className="flex items-center justify-between gap-2 border-b border-border bg-surface px-3 py-1">
+        <span className="text-2xs font-medium uppercase tracking-wide text-foreground-muted">
+          {displayLang || 'Code'}
+        </span>
+        <InlineCopyButton getText={() => rawText} label="复制代码" />
+      </div>
+      <pre className="!m-0 !rounded-none !border-0">
+        {children}
+      </pre>
+    </div>
+  );
+};
+
+const isExternalHref = (href?: string) =>
+  typeof href === 'string' && /^https?:\/\//i.test(href);
+
 const markdownComponents: Components = {
+  // Wrap tables in a scroll container with rounded border so wide tables
+  // don't break the bubble layout on mobile.
   table: ({ node: _node, ...props }) => (
-    <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full text-sm" {...props} />
+    <div className="md-table-scroll my-2.5 overflow-x-auto rounded-[10px] border border-border">
+      <table {...props} />
     </div>
   ),
+
+  // Render block code with header + copy button. We hook into `pre` (not `code`)
+  // because that is the reliable signal for "code block, not inline".
+  pre: ({ node: _node, children }) => {
+    const codeEl = Children.toArray(children).find(isValidElement);
+    let language = '';
+    let rawText = '';
+
+    if (codeEl) {
+      const codeProps = codeEl.props as { className?: string; children?: ReactNode };
+      const match = /language-([\w-]+)/.exec(codeProps.className ?? '');
+      language = match ? match[1] : '';
+      rawText = collectText(codeProps.children).replace(/\n$/, '');
+    } else {
+      rawText = collectText(children);
+    }
+
+    return (
+      <MarkdownCodeBlock language={language} rawText={rawText}>
+        {children}
+      </MarkdownCodeBlock>
+    );
+  },
+
+  // External links: open in a new tab with a subtle indicator icon
+  a: ({ node: _node, href, children, ...rest }) => {
+    const external = isExternalHref(href);
+    return (
+      <a
+        href={href}
+        {...(external ? { target: '_blank', rel: 'noreferrer noopener' } : {})}
+        {...rest}
+      >
+        {children}
+        {external ? (
+          <ExternalLink className="ml-0.5 inline h-[0.85em] w-[0.85em] -translate-y-[1px] opacity-70" />
+        ) : null}
+      </a>
+    );
+  },
 };
 
 const CopyableMessageBlock = ({
@@ -361,8 +514,8 @@ const CopyableMessageBlock = ({
         <div
           className={cn(
             isUser
-              ? 'rounded-2xl bg-surface-hover px-4 py-2.5 text-foreground'
-              : 'prose prose-sm text-foreground',
+              ? 'prose prose-chat max-w-none rounded-2xl bg-surface-hover px-4 py-2.5 text-foreground'
+              : 'prose prose-chat text-foreground',
           )}
         >
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>

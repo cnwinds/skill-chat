@@ -88,28 +88,274 @@ const config: Config = {
             '--tw-prose-links': 'var(--accent)',
             '--tw-prose-bold': 'var(--text)',
             '--tw-prose-counters': 'var(--text-muted)',
-            '--tw-prose-bullets': 'var(--text-muted)',
+            '--tw-prose-bullets': 'var(--border-strong)',
             '--tw-prose-hr': 'var(--border)',
             '--tw-prose-quotes': 'var(--text-muted)',
-            '--tw-prose-quote-borders': 'var(--border-strong)',
+            '--tw-prose-quote-borders': 'var(--accent)',
             '--tw-prose-captions': 'var(--text-muted)',
             '--tw-prose-code': 'var(--text)',
             '--tw-prose-pre-code': 'var(--text)',
             '--tw-prose-pre-bg': 'var(--surface-hover)',
-            '--tw-prose-th-borders': 'var(--border)',
+            '--tw-prose-th-borders': 'var(--border-strong)',
             '--tw-prose-td-borders': 'var(--border)',
             maxWidth: 'none',
+          },
+        },
+        // Chat-tuned prose. Use as `prose prose-chat` (no `prose-sm`).
+        // Designed for refined reading rhythm in CJK+EN mixed chat content.
+        chat: {
+          css: {
+            fontSize: '0.9375rem',
+            lineHeight: '1.65',
+            color: 'var(--tw-prose-body)',
+
+            // Paragraph spacing — tighter than default prose
+            p: {
+              marginTop: '0',
+              marginBottom: '0.65em',
+            },
+
+            // Heading scale — refined, not oversized.
+            // h1/h2/h3 share a tight letter-spacing for headings.
+            'h1, h2, h3, h4, h5, h6': {
+              color: 'var(--tw-prose-headings)',
+              fontWeight: '600',
+              letterSpacing: '-0.005em',
+              lineHeight: '1.4',
+              scrollMarginTop: '4rem',
+            },
+            h1: {
+              fontSize: '1.4em',
+              fontWeight: '700',
+              marginTop: '1.3em',
+              marginBottom: '0.5em',
+              paddingBottom: '0.3em',
+              borderBottom: '1px solid var(--border)',
+            },
+            h2: {
+              fontSize: '1.2em',
+              fontWeight: '700',
+              marginTop: '1.2em',
+              marginBottom: '0.4em',
+            },
+            h3: {
+              fontSize: '1.075em',
+              fontWeight: '600',
+              marginTop: '1.05em',
+              marginBottom: '0.3em',
+            },
+            h4: {
+              fontSize: '1em',
+              fontWeight: '600',
+              marginTop: '0.95em',
+              marginBottom: '0.25em',
+            },
+            h5: {
+              fontSize: '0.95em',
+              fontWeight: '600',
+              color: 'var(--text-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.04em',
+              marginTop: '0.95em',
+              marginBottom: '0.25em',
+            },
+            h6: {
+              fontSize: '0.875em',
+              fontWeight: '600',
+              color: 'var(--text-muted)',
+              marginTop: '0.9em',
+              marginBottom: '0.25em',
+            },
+
+            // Lead-in: avoid huge top gap on the first heading
+            ':where(h1, h2, h3, h4, h5, h6):first-child': {
+              marginTop: '0',
+            },
+
+            // Lists — tighter rhythm, subtler markers
+            'ul, ol': {
+              marginTop: '0.35em',
+              marginBottom: '0.65em',
+              paddingLeft: '1.4em',
+            },
+            li: {
+              marginTop: '0.1em',
+              marginBottom: '0.1em',
+              paddingLeft: '0.2em',
+              lineHeight: '1.6',
+            },
+            'li > p': {
+              marginTop: '0.25em',
+              marginBottom: '0.25em',
+            },
+            'ul > li::marker': {
+              color: 'var(--tw-prose-bullets)',
+            },
+            'ol > li::marker': {
+              color: 'var(--text-muted)',
+              fontWeight: '500',
+            },
+            'li > ul, li > ol': {
+              marginTop: '0.15em',
+              marginBottom: '0.15em',
+            },
+
+            // Inline emphasis
+            strong: {
+              color: 'var(--tw-prose-bold)',
+              fontWeight: '600',
+            },
+            em: { fontStyle: 'italic' },
+
+            // Links — accent color with a soft underline that brightens on hover
+            a: {
+              color: 'var(--tw-prose-links)',
+              fontWeight: '500',
+              textDecoration: 'none',
+              borderBottom: '1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
+              transition: 'border-color 120ms ease, color 120ms ease',
+            },
+            'a:hover': {
+              borderBottomColor: 'var(--accent)',
+            },
+
+            // Inline code — softly bordered chip
             code: {
               fontWeight: '500',
+              fontSize: '0.86em',
+              fontFamily:
+                'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
               backgroundColor: 'var(--surface-hover)',
-              padding: '0.15em 0.35em',
-              borderRadius: '4px',
+              color: 'var(--text)',
+              padding: '0.12em 0.4em',
+              borderRadius: '5px',
+              border: '1px solid var(--border)',
             },
             'code::before': { content: '""' },
             'code::after': { content: '""' },
+
+            // Block code — flat container; the React component renders the chrome.
             pre: {
+              marginTop: '0.7em',
+              marginBottom: '0.7em',
+              padding: '0',
+              border: '1px solid var(--border)',
+              borderRadius: '10px',
+              backgroundColor: 'var(--surface-hover)',
+              color: 'var(--text)',
+              overflow: 'hidden',
+              fontSize: '0.86em',
+              lineHeight: '1.55',
+            },
+            'pre code': {
+              display: 'block',
+              padding: '0.75em 1em',
+              backgroundColor: 'transparent',
+              border: 'none',
+              borderRadius: '0',
+              fontWeight: '400',
+              fontSize: 'inherit',
+              color: 'inherit',
+              overflowX: 'auto',
+            },
+
+            // Blockquote — accent rail, no quote glyphs
+            blockquote: {
+              marginTop: '0.75em',
+              marginBottom: '0.75em',
+              paddingLeft: '0.9em',
+              borderLeftWidth: '3px',
+              borderLeftColor: 'var(--tw-prose-quote-borders)',
+              fontStyle: 'normal',
+              fontWeight: '400',
+              color: 'var(--tw-prose-quotes)',
+              quotes: 'none',
+              lineHeight: '1.6',
+            },
+            'blockquote p': {
+              marginTop: '0.2em',
+              marginBottom: '0.2em',
+            },
+            'blockquote p:first-of-type::before': { content: 'none' },
+            'blockquote p:last-of-type::after': { content: 'none' },
+
+            // Horizontal rule — subtle
+            hr: {
+              marginTop: '1.4em',
+              marginBottom: '1.4em',
+              borderTopWidth: '1px',
+              borderColor: 'var(--tw-prose-hr)',
+            },
+
+            // Tables — zebra rows, sticky-feel header. The React `table` override
+            // provides the rounded scroll container, so styles here target inner cells.
+            table: {
+              width: '100%',
+              fontSize: '0.875em',
+              lineHeight: '1.5',
+              marginTop: '0',
+              marginBottom: '0',
+              borderCollapse: 'collapse',
+            },
+            thead: {
+              borderBottomWidth: '0',
+            },
+            'thead th': {
+              fontWeight: '600',
+              padding: '0.45em 0.8em',
+              backgroundColor: 'var(--surface-hover)',
+              color: 'var(--text)',
+              textAlign: 'left',
+              borderBottom: '1px solid var(--tw-prose-th-borders)',
+            },
+            'tbody tr': {
+              borderBottomWidth: '1px',
+              borderBottomColor: 'var(--tw-prose-td-borders)',
+            },
+            'tbody tr:nth-child(even)': {
+              backgroundColor: 'color-mix(in srgb, var(--surface-hover) 45%, transparent)',
+            },
+            'tbody tr:last-child': {
+              borderBottomWidth: '0',
+            },
+            'tbody td': {
+              padding: '0.45em 0.8em',
+              verticalAlign: 'top',
+            },
+
+            // Images
+            img: {
+              marginTop: '0.7em',
+              marginBottom: '0.7em',
+              borderRadius: '8px',
               border: '1px solid var(--border)',
             },
+
+            // Task list checkboxes (GFM)
+            'input[type="checkbox"]': {
+              marginRight: '0.45em',
+              transform: 'translateY(1px)',
+              accentColor: 'var(--accent)',
+            },
+
+            // Detail/summary
+            details: {
+              marginTop: '0.85em',
+              marginBottom: '0.85em',
+              border: '1px solid var(--border)',
+              borderRadius: '8px',
+              padding: '0.5em 0.85em',
+              backgroundColor: 'var(--surface)',
+            },
+            summary: {
+              cursor: 'pointer',
+              fontWeight: '500',
+              color: 'var(--text)',
+            },
+
+            // First/last child margin reset — prevents extra space inside a bubble
+            '> :first-child': { marginTop: '0' },
+            '> :last-child': { marginBottom: '0' },
           },
         },
       }),

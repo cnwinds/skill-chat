@@ -77,3 +77,88 @@
     border: 0;
   }
 }
+
+/* ---------------------------------------------------------------
+ * Chat markdown polish
+ * Pairs with the `prose-chat` modifier in tailwind.config.ts.
+ * Anything that is awkward to express in JS-config lives here:
+ *   - CJK <-> ASCII micro-spacing
+ *   - Mobile font scaling
+ *   - Code-block scrollbar finesse
+ *   - Word breaking for long URLs/identifiers
+ * ------------------------------------------------------------- */
+.prose-chat {
+  /* Improve breath between CJK and Latin glyphs (Chrome/Safari support) */
+  text-spacing-trim: space-all;
+  /* Prevent overlong URLs / code from blowing out the bubble */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.prose-chat :where(h1, h2, h3, h4, h5, h6) {
+  /* Slightly looser tracking for CJK headings — feels more confident */
+  letter-spacing: 0.01em;
+}
+
+.prose-chat :where(pre, code, kbd, samp) {
+  /* Tabular spacing for code, no CJK trim that would distort monospace alignment */
+  text-spacing-trim: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+/* Slimmer scrollbars inside code blocks and tables so they don't dominate */
+.prose-chat :where(pre, .md-table-scroll)::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.prose-chat :where(pre, .md-table-scroll)::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 4px;
+}
+.prose-chat :where(pre, .md-table-scroll)::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--text-muted) 55%, transparent);
+}
+.prose-chat :where(pre, .md-table-scroll)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Mobile: shave a hair off body & headings, tighten code padding */
+@media (max-width: 640px) {
+  .prose-chat {
+    font-size: 0.875rem;
+    line-height: 1.6;
+  }
+  .prose-chat :where(h1) {
+    font-size: 1.3em;
+  }
+  .prose-chat :where(h2) {
+    font-size: 1.15em;
+  }
+  .prose-chat :where(h3) {
+    font-size: 1.05em;
+  }
+  .prose-chat :where(li) {
+    line-height: 1.55;
+  }
+  .prose-chat :where(pre code) {
+    padding: 0.65em 0.8em;
+  }
+  .prose-chat :where(thead th, tbody td) {
+    padding: 0.4em 0.6em;
+  }
+}
+
+/* The custom code-block chrome (header bar + copy button) lives in
+ * MessageItem.tsx. Reset prose's `pre` margins inside the chrome
+ * so the rounded container doesn't have double spacing. */
+.prose-chat .md-codeblock {
+  margin-top: 0.85em;
+  margin-bottom: 0.85em;
+}
+.prose-chat .md-codeblock pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
