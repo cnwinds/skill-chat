@@ -141,6 +141,11 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  deleteSession: (sessionId: string) =>
+    requestJson<void>(`/api/sessions/${sessionId}`, {
+      method: 'DELETE',
+    }),
+
   listMessages: (sessionId: string) =>
     requestJson<StoredEvent[]>(`/api/sessions/${sessionId}/messages?limit=200`),
 

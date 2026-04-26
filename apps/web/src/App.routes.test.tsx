@@ -257,7 +257,7 @@ describe('App routes', () => {
 
     useAuthStore.setState({ user: adminUser, ready: true });
     const adminView = renderApp(['/app/session/s1']);
-    expect(await screen.findByText('系统配置 / 用户 / 邀请码')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '设置' })).toBeInTheDocument();
 
     adminView.unmount();
 
@@ -265,7 +265,7 @@ describe('App routes', () => {
     renderApp(['/app/session/s1']);
 
     await waitFor(() => {
-      expect(screen.queryByText('系统配置 / 用户 / 邀请码')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '设置' })).not.toBeInTheDocument();
     });
   });
 
@@ -318,7 +318,7 @@ describe('App routes', () => {
     useAuthStore.setState({ user: memberUser, ready: true });
     renderApp(['/app/session/s1']);
 
-    fireEvent.click(await screen.findByRole('button', { name: '退出' }));
+    fireEvent.click((await screen.findAllByRole('button', { name: '退出' }))[0]);
 
     expect(await screen.findByRole('button', { name: '登录' })).toBeInTheDocument();
   });
@@ -853,6 +853,156 @@ describe('App routes', () => {
     expect(screen.getByText('Session 7')).toBeInTheDocument();
   });
 
+  it('renames a session from the sidebar actions', async () => {
+    let patchPayload: Record<string, unknown> | null = null;
+    const sessions = [
+      {
+        id: 's1',
+        title: '旧标题',
+        createdAt: '2026-04-12T00:00:00.000Z',
+        updatedAt: '2026-04-12T00:00:00.000Z',
+        lastMessageAt: null,
+        activeSkills: [],
+      },
+    ];
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions' && method === 'GET') {
+        return jsonResponse({ body: sessions });
+      }
+      if (url === '/api/sessions/s1' && method === 'PATCH') {
+        patchPayload = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        sessions[0] = {
+          ...sessions[0],
+          title: '新标题',
+          updatedAt: '2026-04-12T00:01:00.000Z',
+        };
+        return jsonResponse({ body: sessions[0] });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: '打开会话操作：旧标题' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: '修改标题' }));
+    fireEvent.change(await screen.findByLabelText('会话标题'), {
+      target: { value: '新标题' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(patchPayload).toEqual({
+        title: '新标题',
+      });
+      expect(screen.getByRole('heading', { level: 1, name: '新标题' })).toBeInTheDocument();
+    });
+  });
+
+  it('deletes the current session from the sidebar actions and selects the next one', async () => {
+    let deletedSessionId: string | null = null;
+    let sessions = [
+      {
+        id: 's1',
+        title: '要删除的会话',
+        createdAt: '2026-04-12T00:00:00.000Z',
+        updatedAt: '2026-04-12T00:00:00.000Z',
+        lastMessageAt: null,
+        activeSkills: [],
+      },
+      {
+        id: 's2',
+        title: '保留的会话',
+        createdAt: '2026-04-12T00:01:00.000Z',
+        updatedAt: '2026-04-12T00:01:00.000Z',
+        lastMessageAt: null,
+        activeSkills: [],
+      },
+    ];
+
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions' && method === 'GET') {
+        return jsonResponse({ body: sessions });
+      }
+      if (url === '/api/sessions/s1' && method === 'DELETE') {
+        deletedSessionId = 's1';
+        sessions = sessions.filter((session) => session.id !== 's1');
+        return new Response(null, { status: 204 });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200' || url === '/api/sessions/s2/messages?limit=200') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/sessions/s1/runtime' || url === '/api/sessions/s2/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: url.includes('/s1/') ? 's1' : 's2',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1' || url === '/api/files?sessionId=s2') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    fireEvent.pointerDown(await screen.findByRole('button', { name: '打开会话操作：要删除的会话' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: '删除会话' }));
+    fireEvent.click(await screen.findByRole('button', { name: '删除' }));
+
+    await waitFor(() => {
+      expect(deletedSessionId).toBe('s1');
+      expect(screen.getByRole('heading', { level: 1, name: '保留的会话' })).toBeInTheDocument();
+      expect(screen.queryByText('要删除的会话')).not.toBeInTheDocument();
+    });
+  });
+
   it('restores active turn status and thinking when switching away and back to a running session', async () => {
     installFetchMock((url) => {
       if (url === '/api/me/settings') {
@@ -928,10 +1078,10 @@ describe('App routes', () => {
     expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
     expect(screen.getByText('regular / sampling / round 2')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Session 2/ }));
+    fireEvent.click(screen.getByRole('button', { name: '打开会话：Session 2' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'Session 2' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Session 1/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^打开会话：Session 1/ }));
 
     expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
     expect(screen.getByText('regular / sampling / round 2')).toBeInTheDocument();
@@ -1225,8 +1375,6 @@ describe('App routes', () => {
     });
 
     renderApp(['/app/session/s1']);
-
-    expect(await screen.findByRole('button', { name: '中断当前 turn' })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: '中断当前 turn' })).not.toBeInTheDocument();

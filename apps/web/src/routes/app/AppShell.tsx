@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   createSessionSchema,
@@ -43,6 +43,7 @@ export const AppShell = () => {
   const user = useAuthStore((state) => state.user);
   const setAnonymous = useAuthStore((state) => state.setAnonymous);
   const setActiveSessionId = useUiStore((state) => state.setActiveSessionId);
+  const streams = useUiStore((state) => state.streams);
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
 
@@ -144,8 +145,11 @@ export const AppShell = () => {
   });
 
   const updateSessionMutation = useMutation({
-    mutationFn: (payload: { sessionId: string; activeSkills: string[] }) =>
-      api.updateSession(payload.sessionId, { activeSkills: payload.activeSkills }),
+    mutationFn: (payload: { sessionId: string; title?: string; activeSkills?: string[] }) =>
+      api.updateSession(payload.sessionId, {
+        title: payload.title,
+        activeSkills: payload.activeSkills,
+      }),
     onSuccess: async (session) => {
       await queryClient.invalidateQueries({ queryKey: ['sessions'] });
       queryClient.setQueryData<SessionSummary[] | undefined>(['sessions'], (current) =>
@@ -153,6 +157,35 @@ export const AppShell = () => {
       );
     },
     onError: (error) => notifyError(error instanceof ApiError ? error.message : '更新会话失败'),
+  });
+
+  const deleteSessionMutation = useMutation({
+    mutationFn: (sessionIdToDelete: string) => api.deleteSession(sessionIdToDelete),
+    onSuccess: async (_payload, sessionIdToDelete) => {
+      const currentSessions = queryClient.getQueryData<SessionSummary[]>(['sessions']) ?? sessions;
+      const remaining = currentSessions.filter((session) => session.id !== sessionIdToDelete);
+      queryClient.setQueryData<SessionSummary[] | undefined>(['sessions'], remaining);
+      queryClient.removeQueries({ queryKey: ['messages', sessionIdToDelete] });
+      queryClient.removeQueries({ queryKey: ['runtime', sessionIdToDelete] });
+      queryClient.removeQueries({ queryKey: ['files', sessionIdToDelete] });
+      useUiStore.setState((state) => {
+        const { [sessionIdToDelete]: _deletedStream, ...streamsRest } = state.streams;
+        const { [sessionIdToDelete]: _deletedDraft, ...draftsRest } = state.drafts;
+        const { [sessionIdToDelete]: _deletedScroll, ...scrollRest } = state.sessionScrollStates;
+        return {
+          streams: streamsRest,
+          drafts: draftsRest,
+          sessionScrollStates: scrollRest,
+        };
+      });
+      await queryClient.invalidateQueries({ queryKey: ['sessions'] });
+
+      if (activeSessionId === sessionIdToDelete) {
+        const nextSession = remaining[0];
+        navigate(nextSession ? `/app/session/${nextSession.id}` : '/app', { replace: true });
+      }
+    },
+    onError: (error) => notifyError(error instanceof ApiError ? error.message : '删除会话失败'),
   });
 
   const shareMutation = useMutation({
@@ -203,6 +236,46 @@ export const AppShell = () => {
   );
   const hasActiveSession = Boolean(activeSessionId && activeSession);
   const sessions = sessionsQuery.data ?? [];
+  const visibleSessions = useMemo(
+    () => sessions.slice(0, visibleSessionCount),
+    [sessions, visibleSessionCount],
+  );
+  const runtimeQueries = useQueries({
+    queries: visibleSessions.map((session) => ({
+      queryKey: ['runtime', session.id],
+      queryFn: () => api.getSessionRuntime(session.id),
+      enabled: Boolean(user),
+      staleTime: 3_000,
+      refetchInterval: 5_000,
+    })),
+  });
+  const runningSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+
+    for (const session of visibleSessions) {
+      const stream = streams[session.id];
+      if (
+        stream?.activeTurnId &&
+        (stream.activeTurnStatus === 'running' || stream.activeTurnStatus === 'interrupting')
+      ) {
+        ids.add(session.id);
+      }
+    }
+
+    for (const [index, query] of runtimeQueries.entries()) {
+      const activeTurn = query.data?.activeTurn;
+      const sessionIdForQuery = visibleSessions[index]?.id;
+      if (
+        sessionIdForQuery &&
+        activeTurn &&
+        (activeTurn.status === 'running' || activeTurn.status === 'interrupting')
+      ) {
+        ids.add(sessionIdForQuery);
+      }
+    }
+
+    return ids;
+  }, [runtimeQueries, streams, visibleSessions]);
   const hiddenSessionCount = Math.max(0, sessions.length - visibleSessionCount);
   const installedSkills = skillsQuery.data ?? [];
   const groupedFiles = useMemo(
@@ -255,6 +328,15 @@ export const AppShell = () => {
     setSidebarOpen(false);
   };
 
+  const handleRenameSession = (id: string, title: string) => {
+    updateSessionMutation.mutate({ sessionId: id, title });
+  };
+
+  const handleDeleteSession = (id: string) => {
+    deleteSessionMutation.mutate(id);
+    setSidebarOpen(false);
+  };
+
   const handleToggleSkill = (skillName: string) => {
     if (!activeSessionId) {
       return;
@@ -295,12 +377,19 @@ export const AppShell = () => {
       visibleSessionCount={visibleSessionCount}
       hiddenSessionCount={hiddenSessionCount}
       activeSessionId={activeSessionId}
+      runningSessionIds={runningSessionIds}
       isSettingsView={isSettingsView}
       showSettingsEntry={user.role === 'admin'}
+      user={user}
+      actionPending={updateSessionMutation.isPending || deleteSessionMutation.isPending}
+      logoutPending={logoutMutation.isPending}
       onSelectSession={handleSelectSession}
+      onRenameSession={handleRenameSession}
+      onDeleteSession={handleDeleteSession}
       onSelectSettings={handleSelectSettings}
       onCreateSession={openCreateSessionDialog}
       onLoadMoreSessions={() => setVisibleSessionCount((current) => current + 5)}
+      onLogout={() => logoutMutation.mutate()}
     />
   );
 
@@ -347,7 +436,7 @@ export const AppShell = () => {
 
       {/* Mobile sidebar drawer */}
       <Sheet open={sidebarOpen && !isDesktop} onOpenChange={setSidebarOpen}>
-        <SheetContent side="left" className="p-0 lg:hidden">
+        <SheetContent side="left" className="p-0 lg:hidden" showClose={false}>
           {sidebarNode}
         </SheetContent>
       </Sheet>

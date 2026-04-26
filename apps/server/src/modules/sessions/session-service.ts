@@ -1,11 +1,17 @@
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { nanoid } from 'nanoid';
 import type { SessionSummary } from '@skillchat/shared';
 import { DEFAULT_SESSION_TITLE } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
 import type { AppDatabase } from '../../db/database.js';
 import { ensureSessionDirectories } from '../../core/storage/fs-utils.js';
-import { getSessionMessagesPath, getSessionMetaPath } from '../../core/storage/paths.js';
+import {
+  getSessionMessagesPath,
+  getSessionMetaPath,
+  getSessionRoot,
+  getTrashRoot,
+} from '../../core/storage/paths.js';
 
 type SessionRow = {
   id: string;
@@ -182,6 +188,21 @@ export class SessionService {
     return this.requireOwned(userId, sessionId);
   }
 
+  async delete(userId: string, sessionId: string) {
+    this.requireOwned(userId, sessionId);
+
+    this.db.transaction(() => {
+      this.db
+        .prepare('DELETE FROM files WHERE user_id = ? AND session_id = ?')
+        .run(userId, sessionId);
+      this.db
+        .prepare('DELETE FROM sessions WHERE id = ? AND user_id = ?')
+        .run(sessionId, userId);
+    })();
+
+    await this.moveSessionDirectoryToTrash(userId, sessionId);
+  }
+
   private async readFirstUserMessage(userId: string, sessionId: string) {
     const filePath = getSessionMessagesPath(this.config, userId, sessionId);
     try {
@@ -216,6 +237,24 @@ export class SessionService {
     await this.patchMeta(userId, sessionId, (meta) => {
       meta.title = title;
     });
+  }
+
+  private async moveSessionDirectoryToTrash(userId: string, sessionId: string) {
+    const sessionRoot = getSessionRoot(this.config, userId, sessionId);
+    const trashRoot = getTrashRoot(this.config, userId);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const targetRoot = path.join(trashRoot, `session-${stamp}-${sessionId}`);
+
+    try {
+      await fs.mkdir(trashRoot, { recursive: true });
+      await fs.rename(sessionRoot, targetRoot);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      // The database is the source of truth for deletion; filesystem cleanup
+      // can be retried manually from the trash/session directory if needed.
+    }
   }
 
   private async patchMeta(

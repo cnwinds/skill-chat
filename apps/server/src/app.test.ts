@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
-import { getSessionMessagesPath, getSessionTurnRuntimePath } from './core/storage/paths.js';
+import { getSessionMessagesPath, getSessionRoot, getSessionTurnRuntimePath } from './core/storage/paths.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const skillsRoot = path.join(repoRoot, 'skills');
@@ -616,6 +616,35 @@ describe('SkillChat server', () => {
       id: session.id,
       activeSkills: ['pdf', 'zhangxuefeng-perspective'],
     });
+  });
+
+  it('deletes a session through the session api', async () => {
+    const auth = await registerAndLogin(app, 'delete_session_user');
+    const session = await createSession(app, auth.cookie, '待删除会话');
+    const sessionRoot = getSessionRoot(app.config, auth.user.id, session.id);
+    await expect(fs.stat(sessionRoot)).resolves.toBeTruthy();
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/sessions/${session.id}`,
+      headers: {
+        cookie: auth.cookie,
+      },
+    });
+
+    expect(response.statusCode).toBe(204);
+
+    const sessionsResponse = await app.inject({
+      method: 'GET',
+      url: '/api/sessions',
+      headers: {
+        cookie: auth.cookie,
+      },
+    });
+
+    expect(sessionsResponse.statusCode).toBe(200);
+    expect((sessionsResponse.json() as Array<{ id: string }>).map((item) => item.id)).not.toContain(session.id);
+    await expect(fs.stat(sessionRoot)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('returns a user-friendly validation message for invalid registration input', async () => {

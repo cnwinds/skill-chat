@@ -483,6 +483,16 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     }
   });
 
+  app.delete('/api/sessions/:id', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      const params = z.object({ id: z.string().min(1) }).parse(request.params);
+      await sessionService.delete(request.user.sub, params.id);
+      return reply.code(204).send();
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '删除会话失败') });
+    }
+  });
+
   app.get('/api/sessions/:id/messages', { preHandler: app.authenticate }, async (request, reply) => {
     try {
       const params = z.object({ id: z.string().min(1) }).parse(request.params);
