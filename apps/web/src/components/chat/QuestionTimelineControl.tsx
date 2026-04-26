@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
-import { List, Search } from 'lucide-react';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { MessageCircleQuestionMark, Search } from 'lucide-react';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { cn } from '@/lib/cn';
 
@@ -53,7 +52,7 @@ const QuestionTimelineList = ({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b border-border px-3 pb-3">
+      <div className="border-b border-border px-3 py-3">
         <label className="relative block">
           <span className="sr-only">搜索提问内容</span>
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-muted" />
@@ -135,61 +134,33 @@ export const QuestionTimelineControl = ({
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        aria-label={`打开问题时间线，共 ${questions.length} 个提问`}
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        aria-label={`切换问题定位列表，共 ${questions.length} 个提问`}
         className={cn(
-          'absolute right-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 py-2 text-xs text-foreground shadow-md backdrop-blur transition hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+          'absolute right-4 z-40 inline-flex h-9 min-w-14 items-center justify-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur transition hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+          open && 'border-accent bg-surface-hover',
           'bottom-4 lg:bottom-auto lg:top-4',
         )}
       >
-        <List className="h-3.5 w-3.5" />
-        <span>问题 {questions.length}</span>
+        <MessageCircleQuestionMark className="h-3.5 w-3.5" />
+        <span>{questions.length}</span>
       </button>
 
-      {isDesktop ? (
-        open ? (
-          <aside className="absolute bottom-4 right-4 top-14 z-30 hidden w-[min(360px,calc(100%-2rem))] overflow-hidden rounded-2xl border border-border bg-surface shadow-lg lg:flex lg:flex-col">
-            <div className="flex items-start justify-between gap-3 px-4 py-3">
-              <div>
-                <div className="text-sm font-semibold">问题时间线</div>
-                <div className="text-2xs text-foreground-muted">
-                  点击任意提问定位到原位置
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="rounded-md px-2 py-1 text-2xs text-foreground-muted hover:bg-surface-hover hover:text-foreground"
-              >
-                收起
-              </button>
-            </div>
-            <QuestionTimelineList
-              questions={questions}
-              activeQuestionId={activeQuestionId}
-              onSelectQuestion={handleSelectQuestion}
-            />
-          </aside>
-        ) : null
-      ) : (
-        <Sheet open={open} onOpenChange={setOpen}>
-          <SheetContent
-            side="bottom"
-            className="max-h-[72dvh] rounded-t-2xl p-0"
-            showClose
-          >
-            <SheetHeader className="pb-2">
-              <SheetTitle>问题时间线</SheetTitle>
-              <SheetDescription>快速浏览提问，点击后回到聊天位置。</SheetDescription>
-            </SheetHeader>
-            <QuestionTimelineList
-              questions={questions}
-              activeQuestionId={activeQuestionId}
-              onSelectQuestion={handleSelectQuestion}
-            />
-          </SheetContent>
-        </Sheet>
-      )}
+      {open ? (
+        <aside
+          className={cn(
+            'absolute z-30 flex overflow-hidden rounded-2xl border border-border bg-surface shadow-lg',
+            'inset-x-3 bottom-16 max-h-[58dvh] flex-col lg:inset-x-auto lg:bottom-4 lg:right-4 lg:top-14 lg:max-h-none lg:w-[min(360px,calc(100%-2rem))]',
+          )}
+        >
+          <QuestionTimelineList
+            questions={questions}
+            activeQuestionId={activeQuestionId}
+            onSelectQuestion={handleSelectQuestion}
+          />
+        </aside>
+      ) : null}
     </>
   );
 };

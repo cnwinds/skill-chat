@@ -359,8 +359,12 @@ describe('QuestionTimelineControl', () => {
       </div>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: '打开问题时间线，共 2 个提问' }));
-    expect(screen.getByText('问题时间线')).toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: '切换问题定位列表，共 2 个提问' });
+    expect(toggle).toHaveTextContent('2');
+    expect(toggle).not.toHaveTextContent('问题');
+
+    fireEvent.click(toggle);
+    expect(screen.queryByText('问题时间线')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText('搜索提问内容'), {
       target: { value: '法学' },
@@ -369,5 +373,8 @@ describe('QuestionTimelineControl', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /法学和师范类/ }));
     expect(onSelectQuestion).toHaveBeenCalledWith('q2');
+
+    fireEvent.click(toggle);
+    expect(screen.queryByPlaceholderText('搜索提问内容')).not.toBeInTheDocument();
   });
 });
