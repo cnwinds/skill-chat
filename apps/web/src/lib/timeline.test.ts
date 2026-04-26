@@ -81,6 +81,98 @@ describe('buildTimelineItems', () => {
     });
   });
 
+  it('groups consecutive tool traces with the same low-frequency display category', () => {
+    const events: StoredEvent[] = [
+      {
+        id: 'call_1',
+        sessionId: 's1',
+        kind: 'tool_call',
+        callId: 'tool_1',
+        skill: 'read_workspace_path_slice',
+        arguments: { root: 'workspace', path: 'skills/zhangxuefeng-perspective/SKILL.md' },
+        createdAt: '2026-04-10T10:00:00.000Z',
+      },
+      {
+        id: 'result_1',
+        sessionId: 's1',
+        kind: 'tool_result',
+        callId: 'tool_1',
+        skill: 'read_workspace_path_slice',
+        message: '已读取 当前工作区 / skills/zhangxuefeng-perspective/SKILL.md',
+        content: '# Skill',
+        createdAt: '2026-04-10T10:00:01.000Z',
+      },
+      {
+        id: 'call_2',
+        sessionId: 's1',
+        kind: 'tool_call',
+        callId: 'tool_2',
+        skill: 'read_workspace_path_slice',
+        arguments: { root: 'workspace', path: 'skills/another-perspective/SKILL.md' },
+        createdAt: '2026-04-10T10:00:02.000Z',
+      },
+      {
+        id: 'result_2',
+        sessionId: 's1',
+        kind: 'tool_result',
+        callId: 'tool_2',
+        skill: 'read_workspace_path_slice',
+        message: '已读取 当前工作区 / skills/another-perspective/SKILL.md',
+        content: '# Another',
+        createdAt: '2026-04-10T10:00:03.000Z',
+      },
+    ];
+
+    const timeline = buildTimelineItems(events);
+
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toMatchObject({
+      kind: 'tool_trace_group',
+      groupKey: 'read_workspace_path_slice:skill',
+      status: 'success',
+      items: [
+        { kind: 'tool_trace', callId: 'tool_1' },
+        { kind: 'tool_trace', callId: 'tool_2' },
+      ],
+    });
+  });
+
+  it('does not group matching tool traces across visible timeline boundaries', () => {
+    const events: StoredEvent[] = [
+      {
+        id: 'call_1',
+        sessionId: 's1',
+        kind: 'tool_call',
+        callId: 'tool_1',
+        skill: 'read_workspace_path_slice',
+        arguments: { root: 'workspace', path: 'skills/zhangxuefeng-perspective/SKILL.md' },
+        createdAt: '2026-04-10T10:00:00.000Z',
+      },
+      {
+        id: 'assistant_1',
+        sessionId: 's1',
+        kind: 'message',
+        role: 'assistant',
+        type: 'text',
+        content: '先说明一下。',
+        createdAt: '2026-04-10T10:00:01.000Z',
+      },
+      {
+        id: 'call_2',
+        sessionId: 's1',
+        kind: 'tool_call',
+        callId: 'tool_2',
+        skill: 'read_workspace_path_slice',
+        arguments: { root: 'workspace', path: 'skills/another-perspective/SKILL.md' },
+        createdAt: '2026-04-10T10:00:02.000Z',
+      },
+    ];
+
+    const timeline = buildTimelineItems(events);
+
+    expect(timeline.map((item) => item.kind)).toEqual(['tool_trace', 'message', 'tool_trace']);
+  });
+
   it('skips hidden tool events so invalid provider payloads are not displayed', () => {
     const events: StoredEvent[] = [
       {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import type { FileEvent, TextMessageEvent, ThinkingEvent, ToolProgressEvent } from '@skillchat/shared';
 import { MessageItem } from './components/MessageItem';
-import type { ToolTraceDisplayEvent } from './lib/timeline';
+import type { ToolTraceDisplayEvent, ToolTraceGroupDisplayEvent } from './lib/timeline';
 
 describe('MessageItem', () => {
   afterEach(() => {
@@ -218,7 +218,7 @@ describe('MessageItem', () => {
     };
 
     render(<MessageItem event={event} />);
-    expect(screen.getByText('web_search')).toBeInTheDocument();
+    expect(screen.getByText('搜索页面')).toBeInTheDocument();
     expect(screen.getByText('已完成')).toBeInTheDocument();
     expect(screen.getByText('检索到 3 条网页结果')).toBeInTheDocument();
     expect(screen.getByText('返回结果')).toBeInTheDocument();
@@ -239,7 +239,7 @@ describe('MessageItem', () => {
     };
 
     const { container } = render(<MessageItem event={event} canExpandToolTrace={false} />);
-    expect(within(container).getByText('web_search')).toBeInTheDocument();
+    expect(within(container).getByText('搜索页面')).toBeInTheDocument();
     expect(within(container).getByText('检索到 3 条网页结果')).toBeInTheDocument();
     expect(container.querySelector('details')).toBeNull();
     expect(within(container).queryByText('返回结果')).not.toBeInTheDocument();
@@ -283,5 +283,47 @@ describe('MessageItem', () => {
     expect(screen.getByText('已读取参考资料：zhangxuefeng-perspective / references/majors.md')).toBeInTheDocument();
     expect(screen.getAllByText(/zhangxuefeng-perspective \/ references\/majors.md/)).toHaveLength(2);
     expect(screen.getByText(/人工智能、口腔医学、临床医学/)).toBeInTheDocument();
+  });
+
+  it('renders consecutive tool traces as a collapsed group', () => {
+    const group: ToolTraceGroupDisplayEvent = {
+      id: 'tool_2-group',
+      kind: 'tool_trace_group',
+      sessionId: 's1',
+      createdAt: new Date().toISOString(),
+      groupKey: 'read_workspace_path_slice:skill',
+      tool: 'read_workspace_path_slice',
+      status: 'success',
+      items: [
+        {
+          id: 'tool_2',
+          kind: 'tool_trace',
+          sessionId: 's1',
+          createdAt: new Date().toISOString(),
+          tool: 'read_workspace_path_slice',
+          arguments: { root: 'workspace', path: 'skills/zhangxuefeng-perspective/SKILL.md' },
+          message: '已读取 当前工作区 / skills/zhangxuefeng-perspective/SKILL.md',
+          resultContent: '# Skill',
+          status: 'success',
+        },
+        {
+          id: 'tool_3',
+          kind: 'tool_trace',
+          sessionId: 's1',
+          createdAt: new Date().toISOString(),
+          tool: 'read_workspace_path_slice',
+          arguments: { root: 'workspace', path: 'skills/another-perspective/SKILL.md' },
+          message: '已读取 当前工作区 / skills/another-perspective/SKILL.md',
+          resultContent: '# Another',
+          status: 'success',
+        },
+      ],
+    };
+
+    render(<MessageItem event={group} />);
+    expect(screen.getByText('读取 Skill x 2')).toBeInTheDocument();
+    expect(screen.getByText('最近：已读取 Skill 定义：another-perspective / SKILL.md')).toBeInTheDocument();
+    expect(screen.getByText('第 1 次')).toBeInTheDocument();
+    expect(screen.getByText('第 2 次')).toBeInTheDocument();
   });
 });

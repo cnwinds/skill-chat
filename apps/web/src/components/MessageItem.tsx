@@ -10,7 +10,7 @@ import type {
 } from '@skillchat/shared';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/utils';
-import type { ToolTraceDisplayEvent } from '@/lib/timeline';
+import type { ToolTraceDisplayEvent, ToolTraceGroupDisplayEvent } from '@/lib/timeline';
 import { useFilePreviewUrl } from '@/hooks/useFilePreviewUrl';
 import { imagePreviewActions } from '@/hooks/useImagePreview';
 import { MessageAttachments } from '@/components/chat/MessageAttachments';
@@ -19,6 +19,7 @@ type Props = {
   event:
     | StoredEvent
     | ToolTraceDisplayEvent
+    | ToolTraceGroupDisplayEvent
     | { kind: 'pending_text'; content: string };
   assistantMeta?: AssistantMessageMeta;
   onDownload?: (file: FileRecord) => void;
@@ -41,14 +42,17 @@ const formatSkillPathLabel = (path: string) => {
 };
 
 const formatToolName = (tool: string, args?: Record<string, unknown>) => {
+  if (tool === 'web_search') {
+    return '搜索页面';
+  }
   if (tool !== 'read_workspace_path_slice') {
     return tool;
   }
   const path = typeof args?.path === 'string' ? args.path : '';
-  if (/\/SKILL\.md$/i.test(path)) {
+  if (/(^|\/)SKILL\.md$/i.test(path)) {
     return '读取 Skill';
   }
-  if (/\/references\//i.test(path)) {
+  if (/(^|\/)references\//i.test(path)) {
     return '读取参考资料';
   }
   return '读取工作区文件';
@@ -63,10 +67,10 @@ const formatToolMessage = (tool: string, message: string, args?: Record<string, 
     return message;
   }
   const label = formatSkillPathLabel(path);
-  if (/\/SKILL\.md$/i.test(path)) {
+  if (/(^|\/)SKILL\.md$/i.test(path)) {
     return `已读取 Skill 定义：${label}`;
   }
-  if (/\/references\//i.test(path)) {
+  if (/(^|\/)references\//i.test(path)) {
     return `已读取参考资料：${label}`;
   }
   if (message.startsWith('已读取')) {
@@ -196,9 +200,11 @@ const ImageEventCard = ({
     });
   };
 
+  const prompt = event.revisedPrompt || event.prompt;
+
   return (
-    <article className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-row">
-      <div className="flex w-full max-w-[260px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-surface-hover">
+    <article className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-3 sm:flex-row sm:items-start">
+      <div className="flex w-full shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-surface-hover sm:w-64">
         {previewUrl ? (
           <button
             type="button"
@@ -221,37 +227,56 @@ const ImageEventCard = ({
           </div>
         )}
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div className="text-2xs uppercase tracking-wide text-foreground-muted">
-          {event.operation === 'edit' ? '图片编辑' : '图片生成'}
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-2xs uppercase tracking-wide text-foreground-muted">
+              {event.operation === 'edit' ? '图片编辑' : '图片生成'}
+            </div>
+            <div className="truncate text-sm font-medium">{event.file.displayName}</div>
+          </div>
+          <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => onDownload?.(event.file)}
+              disabled={downloading}
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground hover:bg-surface-hover disabled:opacity-50"
+            >
+              <Download className="h-3 w-3" />
+              下载
+            </button>
+            <button
+              type="button"
+              onClick={() => onReuseImage?.(event.file)}
+              className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground hover:bg-surface-hover"
+            >
+              <ImagePlus className="h-3 w-3" />
+              继续编辑
+            </button>
+          </div>
         </div>
-        <div className="truncate text-sm font-medium">{event.file.displayName}</div>
-        <div className="text-2xs text-foreground-muted">
-          {event.model} · {event.file.mimeType ?? 'image/png'} · {formatBytes(event.file.size)}
-        </div>
-        <div className="rounded-md border border-border bg-surface-hover px-2 py-1.5 text-xs">
-          <strong className="mr-1 text-foreground-muted">提示词</strong>
-          <span className="text-foreground">{event.revisedPrompt || event.prompt}</span>
-        </div>
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          <button
-            type="button"
-            onClick={() => onDownload?.(event.file)}
-            disabled={downloading}
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground hover:bg-surface-hover disabled:opacity-50"
-          >
-            <Download className="h-3 w-3" />
-            下载
-          </button>
-          <button
-            type="button"
-            onClick={() => onReuseImage?.(event.file)}
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs text-foreground hover:bg-surface-hover"
-          >
-            <ImagePlus className="h-3 w-3" />
-            继续编辑
-          </button>
-        </div>
+        <details className="group/image rounded-md border border-border bg-surface">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-1.5 text-2xs text-foreground-muted hover:bg-surface-hover">
+            <span>图片信息</span>
+            <span className="group-open/image:hidden">展开</span>
+            <span className="hidden group-open/image:inline">收起</span>
+          </summary>
+          <div className="flex flex-col gap-2 border-t border-border px-2.5 py-2 text-xs">
+            <div className="flex flex-wrap gap-1.5 text-2xs text-foreground-muted">
+              <span className="rounded-full bg-background px-2 py-0.5">{event.model}</span>
+              <span className="rounded-full bg-background px-2 py-0.5">
+                {event.file.mimeType ?? 'image/png'}
+              </span>
+              <span className="rounded-full bg-background px-2 py-0.5">
+                {formatBytes(event.file.size)}
+              </span>
+            </div>
+            <div className="rounded-md border border-border bg-surface px-2 py-1.5">
+              <strong className="mr-1 text-foreground-muted">提示词</strong>
+              <span className="text-foreground">{prompt}</span>
+            </div>
+          </div>
+        </details>
       </div>
     </article>
   );
@@ -384,23 +409,51 @@ const ThinkingBubble = ({ createdAt, content }: { createdAt: string; content: st
   );
 };
 
-const ToolTraceCardView = ({
-  event,
-  canExpandToolTrace,
-}: {
-  event: ToolTraceDisplayEvent;
-  canExpandToolTrace: boolean;
-}) => {
-  const displayTool = formatToolName(event.tool, event.arguments);
-  const displayMessage = formatToolMessage(event.tool, event.message, event.arguments);
-  const displayArguments = formatToolArguments(event.tool, event.arguments);
-  const hasDetails = Boolean(
+const hasToolTraceDetails = (event: ToolTraceDisplayEvent) =>
+  Boolean(
     (event.arguments && Object.keys(event.arguments).length > 0) ||
       event.resultContent ||
       (typeof event.percent === 'number' && event.status === 'running'),
   );
 
-  const summary = (
+const ToolTraceDetails = ({ event }: { event: ToolTraceDisplayEvent }) => {
+  const displayArguments = formatToolArguments(event.tool, event.arguments);
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-border px-3 py-2 text-xs">
+      {event.arguments && Object.keys(event.arguments).length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <div className="text-2xs uppercase tracking-wide text-foreground-muted">参数</div>
+          <pre className="overflow-x-auto rounded-md bg-surface-hover px-2 py-1.5 text-2xs text-foreground">
+            {displayArguments}
+          </pre>
+        </div>
+      ) : null}
+      {event.resultContent ? (
+        <div className="flex flex-col gap-1">
+          <div className="text-2xs uppercase tracking-wide text-foreground-muted">返回结果</div>
+          <pre className="max-h-72 overflow-auto rounded-md bg-surface-hover px-2 py-1.5 text-2xs text-foreground whitespace-pre-wrap">
+            {event.resultContent}
+          </pre>
+        </div>
+      ) : null}
+      {typeof event.percent === 'number' && event.status === 'running' ? (
+        <div className="h-1.5 overflow-hidden rounded-full bg-surface-hover">
+          <div
+            className="h-full bg-accent transition-all"
+            style={{ width: `${Math.max(0, Math.min(100, event.percent))}%` }}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const ToolTraceSummary = ({ event }: { event: ToolTraceDisplayEvent }) => {
+  const displayTool = formatToolName(event.tool, event.arguments);
+  const displayMessage = formatToolMessage(event.tool, event.message, event.arguments);
+
+  return (
     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
       <div className="flex items-center gap-2">
         <strong className="truncate text-sm font-medium">{displayTool}</strong>
@@ -416,8 +469,72 @@ const ToolTraceCardView = ({
       <div className="truncate text-2xs text-foreground-muted">{displayMessage}</div>
     </div>
   );
+};
+
+const ToolTraceCardView = ({
+  event,
+  canExpandToolTrace,
+}: {
+  event: ToolTraceDisplayEvent;
+  canExpandToolTrace: boolean;
+}) => {
+  const hasDetails = hasToolTraceDetails(event);
 
   if (!canExpandToolTrace || !hasDetails) {
+    return (
+      <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface px-3 py-2">
+        <ToolTraceSummary event={event} />
+      </article>
+    );
+  }
+
+  return (
+    <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface">
+      <details className="group/trace">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 hover:bg-surface-hover">
+          <ToolTraceSummary event={event} />
+          <span className="text-2xs text-foreground-muted group-open/trace:hidden">展开</span>
+          <span className="hidden text-2xs text-foreground-muted group-open/trace:inline">收起</span>
+        </summary>
+        <ToolTraceDetails event={event} />
+      </details>
+    </article>
+  );
+};
+
+const ToolTraceGroupCardView = ({
+  event,
+  canExpandToolTrace,
+}: {
+  event: ToolTraceGroupDisplayEvent;
+  canExpandToolTrace: boolean;
+}) => {
+  const firstItem = event.items[0];
+  const latestItem = event.items.at(-1);
+  const displayTool = firstItem ? formatToolName(event.tool, firstItem.arguments) : event.tool;
+  const latestMessage = latestItem
+    ? formatToolMessage(latestItem.tool, latestItem.message, latestItem.arguments)
+    : '';
+  const summary = (
+    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <strong className="truncate text-sm font-medium">{displayTool} x {event.items.length}</strong>
+        <span
+          className={cn(
+            'rounded-full px-2 py-0.5 text-2xs',
+            toolStatusToneClass[event.status],
+          )}
+        >
+          {toolStatusLabel[event.status]}
+        </span>
+      </div>
+      <div className="truncate text-2xs text-foreground-muted">
+        {latestMessage ? `最近：${latestMessage}` : `${event.items.length} 条连续工具记录已合并`}
+      </div>
+    </div>
+  );
+
+  if (!canExpandToolTrace) {
     return (
       <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface px-3 py-2">
         {summary}
@@ -427,37 +544,19 @@ const ToolTraceCardView = ({
 
   return (
     <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface">
-      <details className="group/trace">
+      <details className="group/trace-group">
         <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 hover:bg-surface-hover">
           {summary}
-          <span className="text-2xs text-foreground-muted group-open/trace:hidden">展开</span>
-          <span className="hidden text-2xs text-foreground-muted group-open/trace:inline">收起</span>
+          <span className="text-2xs text-foreground-muted group-open/trace-group:hidden">展开</span>
+          <span className="hidden text-2xs text-foreground-muted group-open/trace-group:inline">收起</span>
         </summary>
-        <div className="flex flex-col gap-2 border-t border-border px-3 py-2 text-xs">
-          {event.arguments && Object.keys(event.arguments).length > 0 ? (
-            <div className="flex flex-col gap-1">
-              <div className="text-2xs uppercase tracking-wide text-foreground-muted">参数</div>
-              <pre className="overflow-x-auto rounded-md bg-surface-hover px-2 py-1.5 text-2xs text-foreground">
-                {displayArguments}
-              </pre>
+        <div className="flex flex-col gap-2 border-t border-border bg-background px-2 py-2">
+          {event.items.map((item, index) => (
+            <div key={item.id} className="flex flex-col gap-1">
+              <div className="px-1 text-2xs text-foreground-muted">第 {index + 1} 次</div>
+              <ToolTraceCardView event={item} canExpandToolTrace />
             </div>
-          ) : null}
-          {event.resultContent ? (
-            <div className="flex flex-col gap-1">
-              <div className="text-2xs uppercase tracking-wide text-foreground-muted">返回结果</div>
-              <pre className="max-h-72 overflow-auto rounded-md bg-surface-hover px-2 py-1.5 text-2xs text-foreground whitespace-pre-wrap">
-                {event.resultContent}
-              </pre>
-            </div>
-          ) : null}
-          {typeof event.percent === 'number' && event.status === 'running' ? (
-            <div className="h-1.5 overflow-hidden rounded-full bg-surface-hover">
-              <div
-                className="h-full bg-accent transition-all"
-                style={{ width: `${Math.max(0, Math.min(100, event.percent))}%` }}
-              />
-            </div>
-          ) : null}
+          ))}
         </div>
       </details>
     </article>
@@ -506,6 +605,10 @@ export const MessageItem = ({
 
   if (event.kind === 'tool_trace') {
     return <ToolTraceCardView event={event} canExpandToolTrace={canExpandToolTrace} />;
+  }
+
+  if (event.kind === 'tool_trace_group') {
+    return <ToolTraceGroupCardView event={event} canExpandToolTrace={canExpandToolTrace} />;
   }
 
   if (event.kind === 'tool_call') {

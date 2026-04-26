@@ -1,5 +1,7 @@
 import type { StoredEvent, ThinkingEvent } from '@skillchat/shared';
 
+type ToolTraceStatus = 'queued' | 'running' | 'success' | 'failed';
+
 export type ToolTraceDisplayEvent = {
   id: string;
   kind: 'tool_trace';
@@ -10,12 +12,23 @@ export type ToolTraceDisplayEvent = {
   arguments?: Record<string, unknown>;
   message: string;
   resultContent?: string;
-  status: 'queued' | 'running' | 'success' | 'failed';
+  status: ToolTraceStatus;
   percent?: number;
   meta?: Record<string, unknown>;
 };
 
-export type TimelineItem = StoredEvent | ToolTraceDisplayEvent;
+export type ToolTraceGroupDisplayEvent = {
+  id: string;
+  kind: 'tool_trace_group';
+  sessionId: string;
+  createdAt: string;
+  groupKey: string;
+  tool: string;
+  status: ToolTraceStatus;
+  items: ToolTraceDisplayEvent[];
+};
+
+export type TimelineItem = StoredEvent | ToolTraceDisplayEvent | ToolTraceGroupDisplayEvent;
 
 export type RenderableTimeline = {
   items: TimelineItem[];
@@ -42,6 +55,89 @@ const isHiddenToolEvent = (event: Extract<StoredEvent, { kind: 'tool_call' | 'to
   event.hidden === true;
 
 const isThinkingEvent = (event: StoredEvent): event is ThinkingEvent => event.kind === 'thinking';
+
+const getWorkspaceReadCategory = (trace: ToolTraceDisplayEvent) => {
+  const path = typeof trace.arguments?.path === 'string' ? trace.arguments.path.replace(/\\/g, '/') : '';
+  if (/(^|\/)SKILL\.md$/i.test(path)) {
+    return 'skill';
+  }
+  if (/(^|\/)references\//i.test(path)) {
+    return 'reference';
+  }
+  return 'workspace';
+};
+
+const getToolTraceGroupKey = (trace: ToolTraceDisplayEvent) => {
+  if (trace.tool === 'read_workspace_path_slice') {
+    return `${trace.tool}:${getWorkspaceReadCategory(trace)}`;
+  }
+  return trace.tool;
+};
+
+const aggregateToolStatus = (items: ToolTraceDisplayEvent[]): ToolTraceStatus => {
+  if (items.some((item) => item.status === 'failed')) {
+    return 'failed';
+  }
+  if (items.some((item) => item.status === 'running')) {
+    return 'running';
+  }
+  if (items.every((item) => item.status === 'queued')) {
+    return 'queued';
+  }
+  return 'success';
+};
+
+const createToolTraceGroup = (
+  groupKey: string,
+  items: ToolTraceDisplayEvent[],
+): ToolTraceGroupDisplayEvent => {
+  const firstItem = items[0]!;
+  return {
+    id: `${firstItem.id}-group`,
+    kind: 'tool_trace_group',
+    sessionId: firstItem.sessionId,
+    createdAt: firstItem.createdAt,
+    groupKey,
+    tool: firstItem.tool,
+    status: aggregateToolStatus(items),
+    items,
+  };
+};
+
+const compactConsecutiveToolTraces = (items: TimelineItem[]): TimelineItem[] => {
+  const compacted: TimelineItem[] = [];
+  let currentGroupKey: string | null = null;
+  let currentGroup: ToolTraceDisplayEvent[] = [];
+
+  const flushGroup = () => {
+    if (currentGroup.length === 1) {
+      compacted.push(currentGroup[0]!);
+    } else if (currentGroup.length > 1 && currentGroupKey) {
+      compacted.push(createToolTraceGroup(currentGroupKey, currentGroup));
+    }
+    currentGroupKey = null;
+    currentGroup = [];
+  };
+
+  for (const item of items) {
+    if (item.kind !== 'tool_trace') {
+      flushGroup();
+      compacted.push(item);
+      continue;
+    }
+
+    const groupKey = getToolTraceGroupKey(item);
+    if (currentGroupKey && currentGroupKey !== groupKey) {
+      flushGroup();
+    }
+
+    currentGroupKey = groupKey;
+    currentGroup.push(item);
+  }
+
+  flushGroup();
+  return compacted;
+};
 
 export const buildTimelineItems = (events: StoredEvent[]): TimelineItem[] => {
   const items: TimelineItem[] = [];
@@ -141,7 +237,7 @@ export const buildTimelineItems = (events: StoredEvent[]): TimelineItem[] => {
     }));
   }
 
-  return items;
+  return compactConsecutiveToolTraces(items);
 };
 
 export const buildRenderableTimeline = (events: StoredEvent[]): RenderableTimeline => ({
