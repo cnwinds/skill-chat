@@ -359,6 +359,7 @@ export const ChatPage = () => {
   const restoredScrollSessionIdRef = useRef<string | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const [highlightedEventId, setHighlightedEventId] = useState<string | null>(null);
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -401,6 +402,7 @@ export const ChatPage = () => {
     messageNodeRefs.current.clear();
     restoredScrollSessionIdRef.current = null;
     setHighlightedEventId(null);
+    setActiveQuestionId(null);
   }, [activeSessionId]);
 
   useEffect(() => () => {
@@ -633,6 +635,46 @@ export const ChatPage = () => {
         })),
     [timeline],
   );
+  const updateActiveQuestionFromScroll = useCallback(() => {
+    const container = messageListRef.current;
+    if (!container || questionTimeline.length === 0) {
+      setActiveQuestionId(null);
+      return;
+    }
+
+    const containerRect = container.getBoundingClientRect();
+    const anchorOffset = Math.min(
+      Math.max(containerRect.height * 0.3, 96),
+      containerRect.height * 0.55,
+    );
+    const anchorY = containerRect.top + anchorOffset;
+    let nextActiveId: string | null = null;
+
+    for (const question of questionTimeline) {
+      const node = messageNodeRefs.current.get(question.id);
+      if (!node) {
+        continue;
+      }
+
+      const rect = node.getBoundingClientRect();
+      if (rect.top <= anchorY) {
+        nextActiveId = question.id;
+        continue;
+      }
+
+      if (!nextActiveId && rect.bottom >= containerRect.top) {
+        nextActiveId = question.id;
+      }
+      break;
+    }
+
+    setActiveQuestionId((current) => (current === nextActiveId ? current : nextActiveId));
+  }, [questionTimeline]);
+
+  useEffect(() => {
+    updateActiveQuestionFromScroll();
+  }, [activeSessionId, questionTimeline.length, updateActiveQuestionFromScroll]);
+
   const thinkingEvent = useMemo(() => {
     if (
       activeSessionId &&
@@ -740,6 +782,7 @@ export const ChatPage = () => {
       return;
     }
     saveSessionScrollPosition(activeSessionId, node);
+    updateActiveQuestionFromScroll();
   };
 
   const bindMessageNode = useCallback((eventId: string) => (node: HTMLDivElement | null) => {
@@ -757,6 +800,7 @@ export const ChatPage = () => {
     }
     node.scrollIntoView({ behavior: 'smooth', block: 'center' });
     setHighlightedEventId(eventId);
+    setActiveQuestionId(eventId);
     if (highlightTimerRef.current) {
       window.clearTimeout(highlightTimerRef.current);
     }
@@ -1090,7 +1134,7 @@ export const ChatPage = () => {
             </div>
             <QuestionTimelineControl
               questions={questionTimeline}
-              activeQuestionId={highlightedEventId}
+              activeQuestionId={highlightedEventId ?? activeQuestionId}
               onSelectQuestion={handleSelectQuestionFromTimeline}
             />
           </section>
