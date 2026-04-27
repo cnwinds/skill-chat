@@ -363,12 +363,24 @@ describe('QuestionTimelineControl', () => {
     expect(toggle).toHaveTextContent('2');
     expect(toggle).not.toHaveTextContent('问题');
 
+    // Closed state: panel is mounted (so the open transition can interpolate
+    // smoothly) but inert + aria-hidden so users can't reach it. Note we can't
+    // assert visual hiding via `toBeVisible()` here because jsdom doesn't apply
+    // the Tailwind utility classes that drive the visual transition.
+    const panel = screen.getByLabelText('问题定位列表，共 2 个提问');
+    expect(panel).toHaveAttribute('aria-hidden', 'true');
+    expect(panel).toHaveAttribute('inert');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
     fireEvent.click(toggle);
     // The same button stays in place when open — it is the visual handle of
-    // the merged panel, just the panel content (search box) is now visible.
+    // the merged panel, just the panel content (search box) is now interactive.
     expect(
       screen.getByRole('button', { name: '切换问题定位列表，共 2 个提问' }),
     ).toBe(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(panel).toHaveAttribute('aria-hidden', 'false');
+    expect(panel).not.toHaveAttribute('inert');
 
     fireEvent.change(screen.getByPlaceholderText('搜索提问内容'), {
       target: { value: '法学' },
@@ -379,6 +391,9 @@ describe('QuestionTimelineControl', () => {
     expect(onSelectQuestion).toHaveBeenCalledWith('q2');
 
     fireEvent.click(toggle);
-    expect(screen.queryByPlaceholderText('搜索提问内容')).not.toBeInTheDocument();
+    // Re-closed: panel returns to inert + aria-hidden state.
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(panel).toHaveAttribute('aria-hidden', 'true');
+    expect(panel).toHaveAttribute('inert');
   });
 });

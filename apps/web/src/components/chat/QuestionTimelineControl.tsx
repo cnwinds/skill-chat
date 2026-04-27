@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { MessageCircleQuestionMark, Search } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { cn } from '@/lib/cn';
 
@@ -15,6 +15,12 @@ export interface QuestionTimelineControlProps {
   activeQuestionId: string | null;
   onSelectQuestion: (questionId: string) => void;
 }
+
+// Matches docs/prompt-explorer-prototype.html.
+const DURATION = 'duration-[260ms]';
+const CONTENT_DURATION = 'duration-[180ms]';
+const EASING = 'ease-[cubic-bezier(0.22,1,0.36,1)]';
+const PANEL_WIDTH = 'w-[min(440px,calc(100vw-2rem))]';
 
 const truncateQuestion = (content: string) => {
   const normalized = content.replace(/\s+/g, ' ').trim();
@@ -39,7 +45,8 @@ const QuestionTimelineList = ({
   questions,
   activeQuestionId,
   onSelectQuestion,
-}: QuestionTimelineControlProps) => {
+  open,
+}: QuestionTimelineControlProps & { open: boolean }) => {
   const [query, setQuery] = useState('');
   const normalizedQuery = query.trim().toLowerCase();
   const filteredQuestions = useMemo(
@@ -52,21 +59,35 @@ const QuestionTimelineList = ({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="px-3 py-3">
-        <label className="relative block">
+      <div className="py-3.5 pl-3.5 pr-[62px]">
+        <label
+          className={cn(
+            'relative block transition-opacity motion-reduce:transition-none',
+            CONTENT_DURATION,
+            EASING,
+            open ? 'opacity-100 delay-100' : 'opacity-0 delay-0',
+          )}
+        >
           <span className="sr-only">搜索提问内容</span>
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-muted" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索提问内容"
-            className="h-9 w-full rounded-md border border-border bg-background pl-8 pr-3 text-sm text-foreground outline-none placeholder:text-foreground-muted focus:border-accent"
+            className="h-10 w-full rounded-[10px] border-0 bg-surface-hover pl-8 pr-3 text-sm text-foreground outline-none placeholder:text-foreground-muted focus:ring-2 focus:ring-accent"
           />
         </label>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1.5 transition-opacity motion-reduce:transition-none',
+          CONTENT_DURATION,
+          EASING,
+          open ? 'opacity-100 delay-100' : 'opacity-0 delay-0',
+        )}
+      >
         {filteredQuestions.length > 0 ? (
-          <div className="relative flex flex-col gap-1 before:absolute before:bottom-2 before:left-[1.15rem] before:top-2 before:w-px before:bg-border">
+          <div className="flex flex-col">
             {filteredQuestions.map((question) => {
               const isActive = question.id === activeQuestionId;
               return (
@@ -75,16 +96,14 @@ const QuestionTimelineList = ({
                   type="button"
                   onClick={() => onSelectQuestion(question.id)}
                   className={cn(
-                    'relative flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                    'flex w-full items-start gap-3 rounded-md px-0 py-2.5 text-left transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
                     isActive && 'bg-accent/10',
                   )}
                 >
                   <span
                     className={cn(
-                      'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border bg-surface text-2xs font-medium',
-                      isActive
-                        ? 'border-accent text-accent'
-                        : 'border-border text-foreground-muted',
+                      'mt-0.5 w-4 shrink-0 text-sm tabular-nums text-foreground-muted',
+                      isActive && 'text-accent',
                     )}
                   >
                     {question.index}
@@ -125,51 +144,84 @@ export const QuestionTimelineControl = ({
 
   const handleSelectQuestion = (questionId: string) => {
     onSelectQuestion(questionId);
+    // On narrow viewports the panel covers most of the chat surface, so close
+    // it after a selection lets the user see the result. On desktop the panel
+    // sits beside the chat content and can stay open for browsing.
     if (!isDesktop) {
       setOpen(false);
     }
   };
 
   return (
-    <>
-      {open ? (
-        <aside
-          aria-label={`问题定位列表，共 ${questions.length} 个提问`}
-          className={cn(
-            'absolute z-30 flex overflow-hidden rounded-2xl border border-border bg-surface shadow-lg',
-            // Mobile: anchored to the button's corner (bottom-right). Panel
-            // reserves bottom padding so the button sits flush against the
-            // panel's bottom-right corner, making them look like one window.
-            'inset-x-3 bottom-4 max-h-[58dvh] flex-col pb-14',
-            // Desktop: panel grows from the button's top-right corner.
-            'lg:inset-x-auto lg:bottom-4 lg:right-4 lg:top-4 lg:max-h-none lg:w-[min(360px,calc(100%-2rem))] lg:pb-0 lg:pt-14',
-          )}
-        >
-          <QuestionTimelineList
-            questions={questions}
-            activeQuestionId={activeQuestionId}
-            onSelectQuestion={handleSelectQuestion}
-          />
-        </aside>
-      ) : null}
+    <div className="absolute bottom-6 right-6 top-6 z-30 w-0">
+      <aside
+        aria-label={`问题定位列表，共 ${questions.length} 个提问`}
+        aria-hidden={!open}
+        // React 19 supports `inert` as a boolean attribute.
+        inert={!open}
+        className={cn(
+          'absolute right-0 top-0 flex h-full flex-col overflow-hidden rounded-[14px] border border-border bg-surface shadow-lg',
+          'transition-[width,opacity] motion-reduce:transition-none',
+          DURATION,
+          EASING,
+          open ? `${PANEL_WIDTH} opacity-100` : 'pointer-events-none w-0 opacity-0',
+        )}
+      >
+        <QuestionTimelineList
+          questions={questions}
+          activeQuestionId={activeQuestionId}
+          onSelectQuestion={handleSelectQuestion}
+          open={open}
+        />
+      </aside>
 
-      {/* Button is intentionally identical in open/closed states for a strong
-          sense of continuity — only its z-index keeps it above the panel so it
-          appears to be the corner/handle of the merged window. */}
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
         aria-expanded={open}
         aria-label={`切换问题定位列表，共 ${questions.length} 个提问`}
         className={cn(
-          'absolute right-4 z-40 inline-flex h-9 min-w-14 items-center justify-center gap-1.5 rounded-full border border-border bg-surface/95 px-3 text-xs font-medium text-foreground shadow-md backdrop-blur transition hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-          'bottom-4 lg:bottom-auto lg:top-4',
+          'absolute right-[14px] top-[14px] z-40 flex h-10 w-10 items-center justify-center rounded-full border text-foreground shadow-md backdrop-blur',
+          'transition-[background-color,border-color] hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+          DURATION,
+          EASING,
+          open ? 'border-border-strong bg-surface-hover' : 'border-border bg-surface/95',
         )}
       >
-        <MessageCircleQuestionMark className="h-3.5 w-3.5" />
-        <span>{questions.length}</span>
+        <span className="relative block h-full w-full">
+          {/* Count: visible when closed; rotates out and shrinks when opening. */}
+          <span
+            aria-hidden={open}
+            className={cn(
+              'absolute inset-0 flex items-center justify-center text-sm font-semibold tabular-nums',
+              'transition-[transform,opacity] motion-reduce:transition-none',
+              DURATION,
+              EASING,
+              open
+                ? 'rotate-90 scale-50 opacity-0'
+                : 'rotate-0 scale-100 opacity-100',
+            )}
+          >
+            {questions.length}
+          </span>
+          {/* Close glyph: visible when open; rotates in from -90°. */}
+          <span
+            aria-hidden={!open}
+            className={cn(
+              'absolute inset-0 flex items-center justify-center',
+              'transition-[transform,opacity] motion-reduce:transition-none',
+              DURATION,
+              EASING,
+              open
+                ? 'rotate-0 scale-100 opacity-100'
+                : '-rotate-90 scale-50 opacity-0',
+            )}
+          >
+            <X className="h-4 w-4" strokeWidth={2.25} />
+          </span>
+        </span>
       </button>
-    </>
+    </div>
   );
 };
 

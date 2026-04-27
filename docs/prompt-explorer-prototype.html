@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>提问探索 · 动画原型 v2</title>
+<style>
+  :root {
+    --bg: #1a1a1a;
+    --panel: #242424;
+    --panel-2: #2d2d2d;
+    --border: rgba(255, 255, 255, 0.08);
+    --text: #e8e8e8;
+    --text-dim: #888;
+    --accent: #c8956d;
+    --easing: cubic-bezier(0.22, 1, 0.36, 1); /* 利落 ease-out */
+    --duration: 260ms;
+    --panel-width: 440px;
+    --btn-size: 40px;
+    --btn-inset: 14px;   /* 按钮距 .explorer 右边缘的距离，决定 X 嵌入深度 */
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+  }
+
+  /* === 模拟主聊天区域 === */
+  .chat-area {
+    flex: 1;
+    position: relative;
+    padding: 24px 32px;
+    overflow: hidden;
+  }
+  .chat-header { color: var(--text-dim); font-size: 13px; margin-bottom: 8px; }
+  .chat-title { font-size: 18px; color: var(--text); margin-bottom: 4px; }
+
+  .chat-fake-content {
+    margin-top: 24px;
+    width: 320px;
+    height: 480px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #4a6b3a, #6b8a4a, #8aab5a);
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
+  }
+
+  .chat-input {
+    position: absolute;
+    bottom: 24px; left: 32px; right: 32px;
+    height: 56px;
+    background: var(--panel);
+    border-radius: 14px;
+    padding: 0 18px;
+    display: flex; align-items: center;
+    color: var(--text-dim); font-size: 14px;
+  }
+
+  /* === 提问探索容器 ===
+     这是按钮 + 面板共同的"参考系"。
+     右边缘 right:24px 即未来面板展开时的右边缘位置，
+     按钮则用 right:--btn-inset 锚定在该参考系内偏左一点，
+     于是面板展开后按钮自然就落在面板"里面"。 */
+  .explorer {
+    position: absolute;
+    top: 24px;
+    right: 24px;
+    height: 520px;
+    z-index: 10;
+    /* 不需要宽度，子元素全部 absolute 锚定 */
+    width: 0;
+  }
+
+  /* === 面板 === */
+  .panel {
+    position: absolute;
+    top: 0;
+    right: 0;                /* 与 .explorer 右边缘对齐 */
+    height: 100%;
+    width: 0;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    opacity: 0;
+    transition:
+      width var(--duration) var(--easing),
+      opacity calc(var(--duration) - 60ms) var(--easing);
+    display: flex; flex-direction: column;
+  }
+
+  .explorer.open .panel {
+    width: var(--panel-width);
+    opacity: 1;
+  }
+
+  .panel-search-row {
+    display: flex;
+    align-items: center;
+    /* 关键：右内边距留出 X 按钮的空间 + 间距，让 X 视觉上嵌在面板内 */
+    padding: 14px calc(var(--btn-inset) + var(--btn-size) + 8px) 12px 14px;
+    /* btn-inset(14) + btn-size(40) + gap(8) = 62px 右内边距 */
+    gap: 10px;
+  }
+
+  .search-box {
+    flex: 1;
+    height: 40px;
+    background: var(--panel-2);
+    border-radius: 10px;
+    display: flex; align-items: center;
+    padding: 0 14px;
+    color: var(--text-dim);
+    font-size: 13px;
+    gap: 8px;
+    /* 文字内容随面板展开淡入，避免被压缩时变形 */
+    opacity: 0;
+    transition: opacity calc(var(--duration) - 100ms) var(--easing) 100ms;
+    white-space: nowrap;
+  }
+  .explorer.open .search-box { opacity: 1; }
+
+  .search-box .icon-search {
+    width: 14px; height: 14px;
+    border: 1.5px solid var(--text-dim);
+    border-radius: 50%;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .search-box .icon-search::after {
+    content: '';
+    position: absolute;
+    width: 6px; height: 1.5px;
+    background: var(--text-dim);
+    bottom: -3px; right: -3px;
+    transform: rotate(45deg);
+  }
+
+  /* === Q&A 列表 === */
+  .qa-list {
+    flex: 1;
+    padding: 6px 16px 16px 16px;
+    overflow-y: auto;
+    opacity: 0;
+    transition: opacity calc(var(--duration) - 80ms) var(--easing) 100ms;
+  }
+  .explorer.open .qa-list { opacity: 1; }
+
+  .qa-item {
+    display: flex; gap: 12px;
+    padding: 10px 0;
+    font-size: 13.5px;
+    color: var(--text);
+  }
+  .qa-num { color: var(--text-dim); flex-shrink: 0; width: 16px; }
+  .qa-content { flex: 1; }
+  .qa-time { color: var(--text-dim); font-size: 12px; margin-top: 4px; }
+
+  /* === 切换按钮 === 始终位于 .explorer 内右侧偏内的固定位置 */
+  .toggle-btn {
+    position: absolute;
+    top: 14px;
+    right: var(--btn-inset);    /* 折叠时距右 14px，展开后则是面板内右内边距 14px */
+    width: var(--btn-size);
+    height: var(--btn-size);
+    border-radius: 50%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    cursor: pointer;
+    z-index: 2;                  /* 永远在面板之上 */
+    display: flex; align-items: center; justify-content: center;
+    transition: background-color var(--duration) var(--easing),
+                border-color var(--duration) var(--easing);
+  }
+  .toggle-btn:hover { background: #353535; }
+
+  /* 展开后按钮换一个稍亮的底色，与面板背景区分 */
+  .explorer.open .toggle-btn {
+    background: var(--panel-2);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  /* === 图标层叠：数字 ↔ X === */
+  .icon-wrap {
+    position: relative;
+    width: 100%; height: 100%;
+  }
+  .icon-num,
+  .icon-close {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      opacity calc(var(--duration) - 60ms) var(--easing),
+      transform var(--duration) var(--easing);
+  }
+
+  .icon-num {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+  .icon-close {
+    opacity: 0;
+    transform: scale(0.5) rotate(-90deg);
+  }
+
+  .explorer.open .icon-num {
+    opacity: 0;
+    transform: scale(0.5) rotate(90deg);
+  }
+  .explorer.open .icon-close {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+
+  .icon-svg {
+    width: 16px; height: 16px;
+    stroke: var(--text);
+    stroke-width: 2;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  /* === Demo 控制条 === */
+  .demo-controls {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 12px 20px;
+    border-radius: 10px;
+    display: flex; gap: 16px; align-items: center;
+    color: var(--text-dim); font-size: 13px;
+    z-index: 100;
+  }
+  .demo-controls button {
+    background: var(--accent);
+    color: #1a1a1a;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .demo-controls input[type="range"] { width: 130px; vertical-align: middle; }
+  .demo-controls .value { color: var(--text); min-width: 50px; display: inline-block; }
+  .demo-controls label { display: flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+
+<div class="chat-area">
+  <div class="chat-title">图片生成测试</div>
+  <div class="chat-header">Turn: 5 · Round: - · 总消耗 token: 22.3K</div>
+
+  <div class="chat-fake-content">[ 模拟图片内容区 ]</div>
+
+  <!-- 提问探索 -->
+  <div class="explorer" id="explorer">
+    <!-- 面板：从按钮位置向左展开，右边缘超过按钮 -->
+    <div class="panel">
+      <div class="panel-search-row">
+        <div class="search-box">
+          <span class="icon-search"></span>
+          <span>搜索提问内容</span>
+        </div>
+      </div>
+      <div class="qa-list">
+        <div class="qa-item"><span class="qa-num">1</span><div class="qa-content">hi<div class="qa-time">23:54</div></div></div>
+        <div class="qa-item"><span class="qa-num">2</span><div class="qa-content">帮我修复照片中人物的眼睛，有的闭上了。狗狗也调整为开心的表情。蛋糕也帮我换成一个更漂亮更应景的生日蛋糕<div class="qa-time">23:58</div></div></div>
+        <div class="qa-item"><span class="qa-num">3</span><div class="qa-content">小狗放在2个人的中间<div class="qa-time">09:41</div></div></div>
+        <div class="qa-item"><span class="qa-num">4</span><div class="qa-content">让这只可爱的小狗狗在绿色的草地上开心地奔跑。<div class="qa-time">10:34</div></div></div>
+        <div class="qa-item"><span class="qa-num">5</span><div class="qa-content">小狗站起来了，跳着华尔兹。<div class="qa-time">10:43</div></div></div>
+      </div>
+    </div>
+
+    <!-- 切换按钮：折叠态显示数量 5；展开态显示 X，且物理位置不动，自动嵌入面板内部 -->
+    <button class="toggle-btn" id="toggleBtn" aria-label="切换提问探索">
+      <div class="icon-wrap">
+        <span class="icon-num">5</span>
+        <span class="icon-close">
+          <svg class="icon-svg" viewBox="0 0 24 24">
+            <path d="M6 6l12 12M18 6l-12 12" />
+          </svg>
+        </span>
+      </div>
+    </button>
+  </div>
+
+  <div class="chat-input">给 SkillChat 发送消息</div>
+</div>
+
+<div class="demo-controls">
+  <button id="resetBtn">点击按钮 / 这里 切换 →</button>
+  <label>时长
+    <input type="range" id="durationRange" min="100" max="800" step="20" value="260">
+    <span class="value" id="durationVal">260ms</span>
+  </label>
+  <label>面板宽度
+    <input type="range" id="widthRange" min="300" max="560" step="10" value="440">
+    <span class="value" id="widthVal">440px</span>
+  </label>
+  <label>X 嵌入深度
+    <input type="range" id="insetRange" min="0" max="40" step="2" value="14">
+    <span class="value" id="insetVal">14px</span>
+  </label>
+</div>
+
+<script>
+  const explorer = document.getElementById('explorer');
+  const btn = document.getElementById('toggleBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const durationRange = document.getElementById('durationRange');
+  const widthRange = document.getElementById('widthRange');
+  const insetRange = document.getElementById('insetRange');
+
+  btn.addEventListener('click', () => explorer.classList.toggle('open'));
+  resetBtn.addEventListener('click', () => explorer.classList.toggle('open'));
+
+  function bindRange(rangeEl, varName, valEl, suffix = 'px') {
+    rangeEl.addEventListener('input', e => {
+      const v = e.target.value;
+      document.documentElement.style.setProperty(varName, v + suffix);
+      valEl.textContent = v + suffix;
+    });
+  }
+  bindRange(durationRange, '--duration', document.getElementById('durationVal'), 'ms');
+  bindRange(widthRange, '--panel-width', document.getElementById('widthVal'));
+  bindRange(insetRange, '--btn-inset', document.getElementById('insetVal'));
+</script>
+
+</body>
+</html>
