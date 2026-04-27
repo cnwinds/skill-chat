@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cnwinds/qizhi.git"
+    "url": "https://github.com/cnwinds/skill-chat.git"
   },
   "workspaces": [
     "apps/*",
@@ -22,8 +22,5 @@
   },
   "engines": {
     "node": ">=24.0.0"
-  },
-  "devDependencies": {
-    "@esbuild/win32-x64": "^0.28.0"
   }
 }

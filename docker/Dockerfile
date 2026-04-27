@@ -14,6 +14,7 @@ RUN sed -i "s|http://deb.debian.org/debian|${APT_MIRROR}|g; s|http://deb.debian.
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
+COPY packages/qizhi-skill-spec/package.json packages/qizhi-skill-spec/package.json
 COPY packages/shared/package.json packages/shared/package.json
 
 RUN npm config set registry "${NPM_REGISTRY}" \
