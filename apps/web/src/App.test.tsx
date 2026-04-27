@@ -334,66 +334,96 @@ describe('QuestionTimelineControl', () => {
     cleanup();
   });
 
-  it('opens a searchable question timeline and selects a question', () => {
+  const questions = [
+    {
+      id: 'q1',
+      index: 1,
+      content: '我应该怎么选择专业？',
+      createdAt: '2026-04-26T10:00:00.000Z',
+    },
+    {
+      id: 'q2',
+      index: 2,
+      content: '法学和师范类哪个更适合普通家庭？',
+      createdAt: '2026-04-26T10:05:00.000Z',
+    },
+  ];
+
+  it('expands the question rail on hover and selects a question', () => {
     const onSelectQuestion = vi.fn();
     render(
       <div className="relative h-96">
         <QuestionTimelineControl
-          questions={[
-            {
-              id: 'q1',
-              index: 1,
-              content: '我应该怎么选择专业？',
-              createdAt: '2026-04-26T10:00:00.000Z',
-            },
-            {
-              id: 'q2',
-              index: 2,
-              content: '法学和师范类哪个更适合普通家庭？',
-              createdAt: '2026-04-26T10:05:00.000Z',
-            },
-          ]}
-          activeQuestionId={null}
+          questions={questions}
+          activeQuestionId="q2"
           onSelectQuestion={onSelectQuestion}
         />
       </div>,
     );
 
-    const toggle = screen.getByRole('button', { name: '切换问题定位列表，共 2 个提问' });
-    expect(toggle).toHaveTextContent('2');
-    expect(toggle).not.toHaveTextContent('问题');
-
-    // Closed state: panel is mounted (so the open transition can interpolate
-    // smoothly) but inert + aria-hidden so users can't reach it. Note we can't
-    // assert visual hiding via `toBeVisible()` here because jsdom doesn't apply
-    // the Tailwind utility classes that drive the visual transition.
+    const control = screen.getByRole('navigation', { name: '提问定位，共 2 个提问' });
     const panel = screen.getByLabelText('问题定位列表，共 2 个提问');
     expect(panel).toHaveAttribute('aria-hidden', 'true');
     expect(panel).toHaveAttribute('inert');
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
-
-    fireEvent.click(toggle);
-    // The same button stays in place when open — it is the visual handle of
-    // the merged panel, just the panel content (search box) is now interactive.
     expect(
-      screen.getByRole('button', { name: '切换问题定位列表，共 2 个提问' }),
-    ).toBe(toggle);
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      screen.getByRole('button', { name: '展开问题定位列表：第 1 个提问，我应该怎么选择专业？' }),
+    ).toBeInTheDocument();
+
+    fireEvent.mouseEnter(control);
     expect(panel).toHaveAttribute('aria-hidden', 'false');
     expect(panel).not.toHaveAttribute('inert');
 
-    fireEvent.change(screen.getByPlaceholderText('搜索提问内容'), {
-      target: { value: '法学' },
+    const activeQuestion = screen.getByRole('button', {
+      name: '定位到第 2 个提问：法学和师范类哪个更适合普通家庭？',
     });
-    expect(screen.queryByText('我应该怎么选择专业？')).not.toBeInTheDocument();
+    expect(activeQuestion).toHaveAttribute('aria-current', 'true');
 
-    fireEvent.click(screen.getByRole('button', { name: /法学和师范类/ }));
+    fireEvent.click(activeQuestion);
     expect(onSelectQuestion).toHaveBeenCalledWith('q2');
 
-    fireEvent.click(toggle);
-    // Re-closed: panel returns to inert + aria-hidden state.
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.mouseLeave(control);
     expect(panel).toHaveAttribute('aria-hidden', 'true');
     expect(panel).toHaveAttribute('inert');
+  });
+
+  it('opens from a rail tap on mobile and closes after selecting', () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    }));
+
+    const onSelectQuestion = vi.fn();
+    try {
+      render(
+        <div className="relative h-96">
+          <QuestionTimelineControl
+            questions={questions}
+            activeQuestionId={null}
+            onSelectQuestion={onSelectQuestion}
+          />
+        </div>,
+      );
+
+      const panel = screen.getByLabelText('问题定位列表，共 2 个提问');
+      fireEvent.click(screen.getByRole('button', {
+        name: '展开问题定位列表：第 1 个提问，我应该怎么选择专业？',
+      }));
+      expect(panel).toHaveAttribute('aria-hidden', 'false');
+
+      fireEvent.click(screen.getByRole('button', {
+        name: '定位到第 2 个提问：法学和师范类哪个更适合普通家庭？',
+      }));
+      expect(onSelectQuestion).toHaveBeenCalledWith('q2');
+      expect(panel).toHaveAttribute('aria-hidden', 'true');
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 });

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Search, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { FocusEvent } from 'react';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { cn } from '@/lib/cn';
 
@@ -16,118 +16,18 @@ export interface QuestionTimelineControlProps {
   onSelectQuestion: (questionId: string) => void;
 }
 
-// Matches docs/prompt-explorer-prototype.html.
-const DURATION = 'duration-[260ms]';
-const CONTENT_DURATION = 'duration-[180ms]';
+const DURATION = 'duration-[180ms]';
 const EASING = 'ease-[cubic-bezier(0.22,1,0.36,1)]';
-const PANEL_WIDTH = 'w-[min(440px,calc(100vw-2rem))]';
+const PANEL_WIDTH = 'w-[min(360px,calc(100vw-1rem))]';
+
+const normalizeQuestion = (content: string) => content.replace(/\s+/g, ' ').trim();
 
 const truncateQuestion = (content: string) => {
-  const normalized = content.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= 72) {
+  const normalized = normalizeQuestion(content);
+  if (normalized.length <= 44) {
     return normalized;
   }
-  return `${normalized.slice(0, 72)}...`;
-};
-
-const formatQuestionTime = (createdAt: string) => {
-  const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-  return date.toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
-
-const QuestionTimelineList = ({
-  questions,
-  activeQuestionId,
-  onSelectQuestion,
-  open,
-}: QuestionTimelineControlProps & { open: boolean }) => {
-  const [query, setQuery] = useState('');
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredQuestions = useMemo(
-    () =>
-      normalizedQuery
-        ? questions.filter((question) => question.content.toLowerCase().includes(normalizedQuery))
-        : questions,
-    [normalizedQuery, questions],
-  );
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="py-3.5 pl-3.5 pr-[62px]">
-        <label
-          className={cn(
-            'relative block transition-opacity motion-reduce:transition-none',
-            CONTENT_DURATION,
-            EASING,
-            open ? 'opacity-100 delay-100' : 'opacity-0 delay-0',
-          )}
-        >
-          <span className="sr-only">搜索提问内容</span>
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-muted" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索提问内容"
-            className="h-10 w-full rounded-[10px] border-0 bg-surface-hover pl-8 pr-3 text-sm text-foreground outline-none placeholder:text-foreground-muted focus:ring-2 focus:ring-accent"
-          />
-        </label>
-      </div>
-      <div
-        className={cn(
-          'min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-1.5 transition-opacity motion-reduce:transition-none',
-          CONTENT_DURATION,
-          EASING,
-          open ? 'opacity-100 delay-100' : 'opacity-0 delay-0',
-        )}
-      >
-        {filteredQuestions.length > 0 ? (
-          <div className="flex flex-col">
-            {filteredQuestions.map((question) => {
-              const isActive = question.id === activeQuestionId;
-              return (
-                <button
-                  key={question.id}
-                  type="button"
-                  onClick={() => onSelectQuestion(question.id)}
-                  className={cn(
-                    'flex w-full items-start gap-3 rounded-md px-0 py-2.5 text-left transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-                    isActive && 'bg-accent/10',
-                  )}
-                >
-                  <span
-                    className={cn(
-                      'mt-0.5 w-4 shrink-0 text-sm tabular-nums text-foreground-muted',
-                      isActive && 'text-accent',
-                    )}
-                  >
-                    {question.index}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm leading-5 text-foreground">
-                      {truncateQuestion(question.content)}
-                    </span>
-                    <span className="mt-0.5 block text-2xs text-foreground-muted">
-                      {formatQuestionTime(question.createdAt)}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="px-3 py-8 text-center text-sm text-foreground-muted">
-            没有匹配的提问
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return `${normalized.slice(0, 44)}...`;
 };
 
 export const QuestionTimelineControl = ({
@@ -136,7 +36,32 @@ export const QuestionTimelineControl = ({
   onSelectQuestion,
 }: QuestionTimelineControlProps) => {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const isDesktop = useIsDesktop();
+  const displayQuestions = useMemo(
+    () =>
+      questions.map((question) => ({
+        ...question,
+        label: truncateQuestion(question.content) || `第 ${question.index} 个提问`,
+      })),
+    [questions],
+  );
+
+  useEffect(() => {
+    if (!open || isDesktop || typeof document === 'undefined') {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && !rootRef.current?.contains(target)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [isDesktop, open]);
 
   if (questions.length < 2) {
     return null;
@@ -144,83 +69,140 @@ export const QuestionTimelineControl = ({
 
   const handleSelectQuestion = (questionId: string) => {
     onSelectQuestion(questionId);
-    // On narrow viewports the panel covers most of the chat surface, so close
-    // it after a selection lets the user see the result. On desktop the panel
-    // sits beside the chat content and can stay open for browsing.
     if (!isDesktop) {
       setOpen(false);
     }
   };
 
+  const handleRailClick = (questionId: string) => {
+    if (isDesktop) {
+      onSelectQuestion(questionId);
+      return;
+    }
+    setOpen(true);
+  };
+
+  const handleBlur = (event: FocusEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget)) {
+      setOpen(false);
+    }
+  };
+
   return (
-    <div className="absolute bottom-6 right-6 top-6 z-30 w-0">
+    <div
+      ref={rootRef}
+      role="navigation"
+      aria-label={`提问定位，共 ${questions.length} 个提问`}
+      className="absolute right-2 top-1/2 z-30 -translate-y-1/2 lg:right-5"
+      onMouseEnter={() => {
+        if (isDesktop) {
+          setOpen(true);
+        }
+      }}
+      onMouseLeave={() => {
+        if (isDesktop) {
+          setOpen(false);
+        }
+      }}
+      onFocusCapture={() => setOpen(true)}
+      onBlurCapture={handleBlur}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          setOpen(false);
+        }
+      }}
+    >
       <aside
         aria-label={`问题定位列表，共 ${questions.length} 个提问`}
         aria-hidden={!open}
-        // React 19 supports `inert` as a boolean attribute.
         inert={!open}
         className={cn(
-          'absolute right-0 top-0 flex h-full flex-col overflow-hidden rounded-[14px] border border-border bg-surface shadow-lg',
-          'transition-[width,opacity] motion-reduce:transition-none',
+          'pointer-events-auto absolute right-0 top-1/2 flex max-h-[min(420px,calc(100vh-12rem))] -translate-y-1/2 flex-col overflow-hidden rounded-[14px] border border-border bg-surface/95 py-2 shadow-xl backdrop-blur',
+          'transition-[opacity,transform] motion-reduce:transition-none',
+          PANEL_WIDTH,
           DURATION,
           EASING,
-          open ? `${PANEL_WIDTH} opacity-100` : 'pointer-events-none w-0 opacity-0',
+          open ? 'translate-x-0 opacity-100' : 'pointer-events-none translate-x-3 opacity-0',
         )}
       >
-        <QuestionTimelineList
-          questions={questions}
-          activeQuestionId={activeQuestionId}
-          onSelectQuestion={handleSelectQuestion}
-          open={open}
-        />
+        <div className="min-h-0 overflow-y-auto">
+          {displayQuestions.map((question) => {
+            const isActive = question.id === activeQuestionId;
+            return (
+              <button
+                key={question.id}
+                type="button"
+                aria-current={isActive ? 'true' : undefined}
+                aria-label={`定位到第 ${question.index} 个提问：${question.label}`}
+                onClick={() => handleSelectQuestion(question.id)}
+                className={cn(
+                  'group/row grid w-full grid-cols-[minmax(0,1fr)_2rem] items-center gap-3 px-4 py-3 text-left transition-colors',
+                  'hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent',
+                  isActive && 'bg-surface-hover',
+                )}
+              >
+                <span
+                  className={cn(
+                    'min-w-0 truncate text-sm leading-5 transition-colors',
+                    isActive
+                      ? 'text-foreground'
+                      : 'text-foreground-muted group-hover/row:text-foreground',
+                  )}
+                >
+                  {question.label}
+                </span>
+                <span className="flex h-5 w-8 items-center justify-end">
+                  <span
+                    className={cn(
+                      'h-[3px] rounded-full transition-[width,opacity,background-color,box-shadow] motion-reduce:transition-none',
+                      DURATION,
+                      EASING,
+                      isActive
+                        ? 'w-5 bg-[#4f7df6] opacity-100 shadow-[0_0_12px_rgba(79,125,246,0.35)] dark:bg-[#6ea0ff]'
+                        : 'w-3 bg-foreground-muted opacity-45 group-hover/row:w-5 group-hover/row:opacity-75',
+                    )}
+                  />
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </aside>
 
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        aria-label={`切换问题定位列表，共 ${questions.length} 个提问`}
+      <div
+        aria-hidden={open}
+        inert={open}
         className={cn(
-          'absolute right-[14px] top-[14px] z-40 flex h-10 w-10 items-center justify-center rounded-full border text-foreground shadow-md backdrop-blur',
-          'transition-[background-color,border-color] hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+          'pointer-events-auto flex flex-col items-end gap-3 rounded-full px-1 py-2 transition-opacity motion-reduce:transition-none',
           DURATION,
           EASING,
-          open ? 'border-border-strong bg-surface-hover' : 'border-border bg-surface/95',
+          open ? 'pointer-events-none opacity-0' : 'opacity-100',
         )}
       >
-        <span className="relative block h-full w-full">
-          {/* Count: visible when closed; rotates out and shrinks when opening. */}
-          <span
-            aria-hidden={open}
-            className={cn(
-              'absolute inset-0 flex items-center justify-center text-sm font-semibold tabular-nums',
-              'transition-[transform,opacity] motion-reduce:transition-none',
-              DURATION,
-              EASING,
-              open
-                ? 'rotate-90 scale-50 opacity-0'
-                : 'rotate-0 scale-100 opacity-100',
-            )}
-          >
-            {questions.length}
-          </span>
-          {/* Close glyph: visible when open; rotates in from -90°. */}
-          <span
-            aria-hidden={!open}
-            className={cn(
-              'absolute inset-0 flex items-center justify-center',
-              'transition-[transform,opacity] motion-reduce:transition-none',
-              DURATION,
-              EASING,
-              open
-                ? 'rotate-0 scale-100 opacity-100'
-                : '-rotate-90 scale-50 opacity-0',
-            )}
-          >
-            <X className="h-4 w-4" strokeWidth={2.25} />
-          </span>
-        </span>
-      </button>
+        {displayQuestions.map((question) => {
+          const isActive = question.id === activeQuestionId;
+          return (
+            <button
+              key={question.id}
+              type="button"
+              aria-label={`展开问题定位列表：第 ${question.index} 个提问，${question.label}`}
+              onClick={() => handleRailClick(question.id)}
+              className="group/rail flex h-8 w-10 items-center justify-end rounded-md pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              <span
+                className={cn(
+                  'h-[3px] rounded-full transition-[width,opacity,background-color,box-shadow] motion-reduce:transition-none',
+                  DURATION,
+                  EASING,
+                  isActive
+                    ? 'w-5 bg-[#4f7df6] opacity-100 shadow-[0_0_12px_rgba(79,125,246,0.35)] dark:bg-[#6ea0ff]'
+                    : 'w-3 bg-foreground-muted opacity-45 group-hover/rail:w-5 group-hover/rail:opacity-75',
+                )}
+              />
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 };
