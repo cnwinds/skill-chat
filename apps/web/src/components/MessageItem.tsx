@@ -592,11 +592,11 @@ const ToolTraceDetails = ({ event }: { event: ToolTraceDisplayEvent }) => {
   const displayArguments = formatToolArguments(event.tool, event.arguments);
 
   return (
-    <div className="flex flex-col gap-2 border-t border-border px-3 py-2 text-xs">
+    <div className="flex flex-col gap-1.5 border-t border-border px-2.5 py-1.5 text-2xs">
       {event.arguments && Object.keys(event.arguments).length > 0 ? (
         <div className="flex flex-col gap-1">
           <div className="text-2xs uppercase tracking-wide text-foreground-muted">参数</div>
-          <pre className="overflow-x-auto rounded-md bg-surface-hover px-2 py-1.5 text-2xs text-foreground">
+          <pre className="overflow-x-auto rounded-md bg-surface-hover px-2 py-1 text-2xs text-foreground">
             {displayArguments}
           </pre>
         </div>
@@ -604,7 +604,7 @@ const ToolTraceDetails = ({ event }: { event: ToolTraceDisplayEvent }) => {
       {event.resultContent ? (
         <div className="flex flex-col gap-1">
           <div className="text-2xs uppercase tracking-wide text-foreground-muted">返回结果</div>
-          <pre className="max-h-72 overflow-auto rounded-md bg-surface-hover px-2 py-1.5 text-2xs text-foreground whitespace-pre-wrap">
+          <pre className="max-h-72 overflow-auto rounded-md bg-surface-hover px-2 py-1 text-2xs text-foreground whitespace-pre-wrap">
             {event.resultContent}
           </pre>
         </div>
@@ -627,18 +627,18 @@ const ToolTraceSummary = ({ event }: { event: ToolTraceDisplayEvent }) => {
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-      <div className="flex items-center gap-2">
-        <strong className="truncate text-sm font-medium">{displayTool}</strong>
+      <div className="flex items-center gap-1.5">
+        <strong className="truncate text-xs font-medium">{displayTool}</strong>
         <span
           className={cn(
-            'rounded-full px-2 py-0.5 text-2xs',
+            'rounded-full px-1.5 py-0.5 text-[0.68rem] leading-none',
             toolStatusToneClass[event.status],
           )}
         >
           {toolStatusLabel[event.status]}
         </span>
       </div>
-      <div className="truncate text-2xs text-foreground-muted">{displayMessage}</div>
+      <div className="truncate text-[0.72rem] leading-4 text-foreground-muted">{displayMessage}</div>
     </div>
   );
 };
@@ -654,16 +654,16 @@ const ToolTraceCardView = ({
 
   if (!canExpandToolTrace || !hasDetails) {
     return (
-      <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface px-3 py-2">
+      <article className="rounded-md border border-l-2 border-border border-l-accent/80 bg-surface px-2.5 py-1.5">
         <ToolTraceSummary event={event} />
       </article>
     );
   }
 
   return (
-    <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface">
+    <article className="rounded-md border border-l-2 border-border border-l-accent/80 bg-surface">
       <details className="group/trace">
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 hover:bg-surface-hover">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 hover:bg-surface-hover">
           <ToolTraceSummary event={event} />
           <span className="text-2xs text-foreground-muted group-open/trace:hidden">展开</span>
           <span className="hidden text-2xs text-foreground-muted group-open/trace:inline">收起</span>
@@ -690,17 +690,17 @@ const ToolTraceGroupCardView = ({
   const summary = (
     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <strong className="truncate text-sm font-medium">{displayTool} x {event.items.length}</strong>
+        <strong className="truncate text-xs font-medium">{displayTool} x {event.items.length}</strong>
         <span
           className={cn(
-            'rounded-full px-2 py-0.5 text-2xs',
+            'rounded-full px-1.5 py-0.5 text-[0.68rem] leading-none',
             toolStatusToneClass[event.status],
           )}
         >
           {toolStatusLabel[event.status]}
         </span>
       </div>
-      <div className="truncate text-2xs text-foreground-muted">
+      <div className="truncate text-[0.72rem] leading-4 text-foreground-muted">
         {latestMessage ? `最近：${latestMessage}` : `${event.items.length} 条连续工具记录已合并`}
       </div>
     </div>
@@ -708,21 +708,21 @@ const ToolTraceGroupCardView = ({
 
   if (!canExpandToolTrace) {
     return (
-      <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface px-3 py-2">
+      <article className="rounded-md border border-l-2 border-border border-l-accent/80 bg-surface px-2.5 py-1.5">
         {summary}
       </article>
     );
   }
 
   return (
-    <article className="rounded-md border border-l-[3px] border-border border-l-accent bg-surface">
+    <article className="rounded-md border border-l-2 border-border border-l-accent/80 bg-surface">
       <details className="group/trace-group">
-        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 hover:bg-surface-hover">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 hover:bg-surface-hover">
           {summary}
           <span className="text-2xs text-foreground-muted group-open/trace-group:hidden">展开</span>
           <span className="hidden text-2xs text-foreground-muted group-open/trace-group:inline">收起</span>
         </summary>
-        <div className="flex flex-col gap-2 border-t border-border bg-background px-2 py-2">
+        <div className="flex flex-col gap-1.5 border-t border-border bg-background px-1.5 py-1.5">
           {event.items.map((item, index) => (
             <div key={item.id} className="flex flex-col gap-1">
               <div className="px-1 text-2xs text-foreground-muted">第 {index + 1} 次</div>

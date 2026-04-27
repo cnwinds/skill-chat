@@ -41,7 +41,7 @@ export const ChatHeader = ({
 
     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
       <div className="flex min-w-0 items-center gap-1.5">
-        <h1 className="min-w-0 text-sm font-medium text-foreground">
+        <h1 className="min-w-0 text-base font-semibold text-foreground">
           {onTitleClick ? (
             <button
               type="button"

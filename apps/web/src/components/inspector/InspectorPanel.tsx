@@ -76,7 +76,7 @@ export const InspectorPanel = ({
       </div>
 
       {inspectorTab === 'files' ? (
-        <ScrollArea className="h-full px-4 pb-4 pt-3">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-4 pt-3">
           {isWechat ? (
             <div className="mb-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-foreground-muted">
               微信内若下载受限，请点击文件后在系统浏览器中打开或使用桌面端下载。
@@ -88,7 +88,7 @@ export const InspectorPanel = ({
             </div>
           ) : null}
           {buckets.map((bucket) => (
-            <section key={bucket} className="mb-4 last:mb-0">
+            <section key={bucket} className="mb-4 min-w-0 max-w-full last:mb-0">
               <h3 className="mb-1.5 text-xs font-medium uppercase tracking-wide text-foreground-muted">
                 {bucketLabels[bucket]}
               </h3>
@@ -97,11 +97,11 @@ export const InspectorPanel = ({
                   暂无文件
                 </div>
               ) : (
-                <div className="flex flex-col gap-1.5">
+                <div className="flex min-w-0 max-w-full flex-col gap-1.5">
                   {(groupedFiles[bucket] ?? []).map((file) => (
                     <article
                       key={file.id}
-                      className="flex min-w-0 flex-col gap-1.5 overflow-hidden rounded-md border border-border bg-surface px-3 py-2"
+                      className="flex w-full min-w-0 max-w-full flex-col gap-1.5 overflow-hidden rounded-md border border-border bg-surface px-3 py-2"
                     >
                       <div className="flex min-w-0 flex-col gap-0.5">
                         <div className="flex min-w-0 items-center gap-1.5 text-sm">
@@ -114,7 +114,7 @@ export const InspectorPanel = ({
                           {file.mimeType ?? 'application/octet-stream'} · {formatBytes(file.size)}
                         </div>
                       </div>
-                      <div className="flex w-full flex-wrap justify-end gap-0.5">
+                      <div className="flex w-full min-w-0 max-w-full flex-wrap justify-end gap-0.5 overflow-hidden">
                         {file.mimeType?.startsWith('image/') ? (
                           <Button
                             variant="ghost"
@@ -172,7 +172,7 @@ export const InspectorPanel = ({
               )}
             </section>
           ))}
-        </ScrollArea>
+        </div>
       ) : (
         <ScrollArea className="h-full px-4 pb-4 pt-3">
           <div
