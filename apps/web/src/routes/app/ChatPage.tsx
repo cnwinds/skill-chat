@@ -194,7 +194,6 @@ interface ChatComposerPanelProps {
   hasUploadingAttachments: boolean;
   placeholder: string;
   bottomInsetPx: number;
-  showTopBorder: boolean;
 }
 
 const ChatComposerPanel = memo(forwardRef<HTMLTextAreaElement, ChatComposerPanelProps>(
@@ -213,7 +212,6 @@ const ChatComposerPanel = memo(forwardRef<HTMLTextAreaElement, ChatComposerPanel
     hasUploadingAttachments,
     placeholder,
     bottomInsetPx,
-    showTopBorder,
   }, ref) {
     const draft = useUiStore((state) => (activeSessionId ? state.drafts[activeSessionId] ?? '' : ''));
     const setDraft = useUiStore((state) => state.setDraft);
@@ -261,7 +259,6 @@ const ChatComposerPanel = memo(forwardRef<HTMLTextAreaElement, ChatComposerPanel
         hasUploadingAttachments={hasUploadingAttachments}
         placeholder={placeholder}
         bottomInsetPx={bottomInsetPx}
-        showTopBorder={showTopBorder}
       />
     );
   },
@@ -1130,7 +1127,6 @@ export const ChatPage = () => {
             hasUploadingAttachments={hasUploadingAttachments}
             placeholder={isTurnRunning ? '继续补充信息，系统会按顺序处理' : '给 SkillChat 发送消息'}
             bottomInsetPx={keyboardInset}
-            showTopBorder={!hasFollowUpQueue}
           />
         </>
       ) : (

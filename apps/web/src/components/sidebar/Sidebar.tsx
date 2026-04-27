@@ -207,7 +207,7 @@ export const Sidebar = ({
         </div>
       </ScrollArea>
 
-      <div className="border-t border-border p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
+      <div className="p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
         <div className="flex items-center gap-2 rounded-xl bg-surface px-2.5 py-2">
           <UserCircle className="h-5 w-5 shrink-0 text-foreground-muted" />
           <div className="min-w-0 flex-1">

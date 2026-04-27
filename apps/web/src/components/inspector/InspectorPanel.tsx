@@ -101,14 +101,16 @@ export const InspectorPanel = ({
                   {(groupedFiles[bucket] ?? []).map((file) => (
                     <article
                       key={file.id}
-                      className="flex items-start justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2"
+                      className="flex min-w-0 items-start justify-between gap-2 rounded-md border border-border bg-surface px-3 py-2"
                     >
                       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <div className="flex items-center gap-1.5 text-sm">
+                        <div className="flex min-w-0 items-center gap-1.5 text-sm">
                           <FileImage className="h-3.5 w-3.5 shrink-0 text-foreground-muted" />
-                          <span className="truncate font-medium">{file.displayName}</span>
+                          <span className="min-w-0 truncate font-medium" title={file.displayName}>
+                            {file.displayName}
+                          </span>
                         </div>
-                        <div className="text-2xs text-foreground-muted">
+                        <div className="truncate text-2xs text-foreground-muted">
                           {file.mimeType ?? 'application/octet-stream'} · {formatBytes(file.size)}
                         </div>
                       </div>
