@@ -44,6 +44,8 @@ const testConfig = (): AppConfig => ({
   WEB_ORIGIN: 'http://localhost:5173',
   DATA_ROOT: 'D:/ai_projects/qizhi/.tmp/skillchat-data',
   SKILLS_ROOT: 'D:/ai_projects/qizhi/.tmp/skillchat-data/skills',
+  MARKET_BASE_URL: 'http://localhost:3100',
+  INSTALLED_SKILLS_ROOT: 'D:/ai_projects/qizhi/.tmp/skillchat-data/installed-skills',
   DB_PATH: 'D:/ai_projects/qizhi/.tmp/skillchat-data/skillchat.sqlite',
   CWD: '/workspace/qizhi',
   INLINE_JOBS: true,
@@ -137,6 +139,9 @@ const createService = (options: {
         }
         return skill;
       }),
+    } as never,
+    {
+      hasUserInstalled: vi.fn(() => true),
     } as never,
     {
       getFileContext: vi.fn().mockReturnValue(options.fileContext ?? []),

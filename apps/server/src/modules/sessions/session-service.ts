@@ -188,6 +188,30 @@ export class SessionService {
     return this.requireOwned(userId, sessionId);
   }
 
+  async deactivateSkillForUser(userId: string, skillName: string) {
+    const rows = this.db
+      .prepare('SELECT id, title, active_skills, created_at, updated_at, last_message_at, user_id FROM sessions WHERE user_id = ?')
+      .all(userId) as SessionRow[];
+    const now = new Date().toISOString();
+
+    for (const row of rows) {
+      const currentActiveSkills = parseActiveSkills(row.active_skills);
+      const nextActiveSkills = currentActiveSkills.filter((activeSkill) => activeSkill !== skillName);
+      if (nextActiveSkills.length === currentActiveSkills.length) {
+        continue;
+      }
+
+      this.db
+        .prepare('UPDATE sessions SET active_skills = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+        .run(JSON.stringify(nextActiveSkills), now, row.id, userId);
+
+      await this.patchMeta(userId, row.id, (meta) => {
+        meta.updatedAt = now;
+        meta.activeSkills = nextActiveSkills;
+      });
+    }
+  }
+
   async delete(userId: string, sessionId: string) {
     this.requireOwned(userId, sessionId);
 

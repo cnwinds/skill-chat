@@ -12,6 +12,8 @@ const createConfig = (root: string, overrides: Partial<AppConfig> = {}): AppConf
   WEB_ORIGIN: 'http://localhost:5173',
   DATA_ROOT: root,
   SKILLS_ROOT: path.join(root, 'skills'),
+  MARKET_BASE_URL: 'http://localhost:3100',
+  INSTALLED_SKILLS_ROOT: path.join(root, 'installed-skills'),
   DB_PATH: path.join(root, 'skillchat.sqlite'),
   CWD: root,
   INLINE_JOBS: true,

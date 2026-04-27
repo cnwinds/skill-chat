@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import path from 'node:path';
 import type { SessionFileContext } from '@skillchat/shared';
 import type { RunnerManager } from '../../core/runner/runner-manager.js';
 import type { RegisteredSkill } from '../skills/skill-registry.js';
@@ -50,6 +51,58 @@ const createToolOutputPayload = (result: ExecutedAssistantToolResult) => JSON.st
     downloadUrl: file.downloadUrl,
   })),
 });
+
+const normalizeWorkspaceToolPath = (value: string) =>
+  value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+
+const resolveEnabledSkillScriptPath = (scriptPath: string, availableSkills: RegisteredSkill[]) => {
+  const normalized = normalizeWorkspaceToolPath(scriptPath);
+  if (!normalized.startsWith('skills/')) {
+    return scriptPath;
+  }
+
+  const matchedSkill = [...availableSkills]
+    .sort((left, right) => right.name.length - left.name.length)
+    .find((skill) => {
+      const prefix = `skills/${skill.name}`;
+      return normalized === prefix || normalized.startsWith(`${prefix}/`);
+    });
+
+  if (!matchedSkill) {
+    throw new Error(`当前会话未启用 Skill 脚本路径：${normalized}`);
+  }
+
+  const prefix = `skills/${matchedSkill.name}`;
+  const relativePath = normalized === prefix ? '' : normalized.slice(prefix.length + 1);
+  if (!relativePath.startsWith('scripts/')) {
+    throw new Error(`只能执行已启用 Skill 的 scripts/ 下脚本：${normalized}`);
+  }
+
+  if (
+    matchedSkill.source === 'installed'
+    && (
+      !matchedSkill.manifest?.permissions.scripts
+      || matchedSkill.manifest.runtime.type === 'none'
+    )
+  ) {
+    throw new Error(`Skill does not allow script execution: ${matchedSkill.name}`);
+  }
+
+  if (matchedSkill.source === 'installed' && matchedSkill.manifest) {
+    const allowedEntrypoints = new Set(
+      matchedSkill.manifest.runtime.entrypoints.map((entrypoint) => normalizeWorkspaceToolPath(entrypoint.path)),
+    );
+    if (!allowedEntrypoints.has(relativePath)) {
+      throw new Error(`Skill script is not declared as a runtime entrypoint: ${normalized}`);
+    }
+  }
+
+  if (matchedSkill.source !== 'installed') {
+    return scriptPath;
+  }
+
+  return path.join(matchedSkill.directory, relativePath);
+};
 
 export class ToolCallRuntime {
   constructor(
@@ -154,7 +207,7 @@ export class ToolCallRuntime {
         await this.runnerManager.execute({
           userId: args.userId,
           sessionId: args.sessionId,
-          scriptPath: parsed.path,
+          scriptPath: resolveEnabledSkillScriptPath(parsed.path, args.availableSkills),
           argv: parsed.args,
           cwdRoot: parsed.cwdRoot,
           cwdPath: parsed.cwdPath,

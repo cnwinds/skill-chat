@@ -313,6 +313,42 @@ const normalizeWorkspaceToolPath = (value?: string) => value
   ? value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
   : '';
 
+const matchSkillVirtualPath = (
+  requestedPath: string | undefined,
+  availableSkills: RegisteredSkill[],
+) => {
+  const normalizedPath = normalizeWorkspaceToolPath(requestedPath);
+  if (normalizedPath === 'skills') {
+    return {
+      kind: 'skills-root' as const,
+      normalizedPath,
+    };
+  }
+
+  const skill = [...availableSkills]
+    .sort((left, right) => right.name.length - left.name.length)
+    .find((item) => {
+      const prefix = `skills/${item.name}`;
+      return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
+    });
+
+  if (!skill) {
+    return null;
+  }
+
+  const prefix = `skills/${skill.name}`;
+  return {
+    kind: 'skill' as const,
+    skill,
+    normalizedPath,
+    relativePath: normalizedPath === prefix ? '' : normalizedPath.slice(prefix.length + 1),
+  };
+};
+
+const formatVirtualSkillEntries = (skills: RegisteredSkill[]) => skills
+  .map((skill) => `- skills/${skill.name}/ (${skill.source ?? 'legacy'}${skill.version ? `@${skill.version}` : ''})`)
+  .join('\n');
+
 const isWebSearchDisabled = (config: AppConfig) => config.WEB_SEARCH_MODE === 'disabled';
 
 export class AssistantToolService {
@@ -371,21 +407,20 @@ export class AssistantToolService {
       return;
     }
 
-    const segments = normalizedPath.split('/').filter(Boolean);
-    if (segments[0] !== 'skills') {
+    if (!normalizedPath.startsWith('skills')) {
       return;
     }
 
-    if (segments.length === 1) {
+    if (normalizedPath === 'skills') {
       if (availableSkills.length === 0) {
         throw new Error('当前会话未启用任何 Skill，不能访问 skills 目录');
       }
       return;
     }
 
-    const requestedSkillName = segments[1]!;
-    if (!availableSkills.some((item) => item.name === requestedSkillName)) {
-      throw new Error(`当前会话未启用 Skill：${requestedSkillName}`);
+    if (!matchSkillVirtualPath(normalizedPath, availableSkills)) {
+      const requestedSkillName = normalizedPath.split('/').filter(Boolean)[1] ?? normalizedPath;
+      throw new Error(`当前会话未启用 Skill：${requestedSkillName}（路径：${normalizedPath}）`);
     }
   }
 
@@ -986,6 +1021,51 @@ export class AssistantToolService {
     availableSkills: RegisteredSkill[],
   ): Promise<ExecutedAssistantToolResult> {
     const input = listWorkspacePathsSchema.parse(rawArguments);
+    const virtualSkillPath = input.root === 'workspace'
+      ? matchSkillVirtualPath(input.path, availableSkills)
+      : null;
+
+    if (virtualSkillPath?.kind === 'skills-root') {
+      return {
+        tool: 'list_workspace_paths',
+        arguments: input,
+        summary: `当前会话启用 ${availableSkills.length} 个 Skill`,
+        content: availableSkills.length > 0
+          ? `当前会话可用 Skill：\n${formatVirtualSkillEntries(availableSkills)}`
+          : '当前会话未启用任何 Skill。',
+        context: availableSkills.map((skill) => `skill:${skill.name}`).join('\n'),
+      };
+    }
+
+    if (virtualSkillPath?.kind === 'skill') {
+      const descriptor = {
+        root: 'workspace' as const,
+        absoluteRoot: virtualSkillPath.skill.directory,
+        label: `Skill ${virtualSkillPath.skill.name}`,
+      };
+      const listed = await listWorkspaceEntries({
+        descriptor,
+        requestedPath: virtualSkillPath.relativePath,
+        depth: input.depth,
+        offset: input.offset,
+        limit: input.limit,
+      });
+
+      return {
+        tool: 'list_workspace_paths',
+        arguments: input,
+        summary: `${descriptor.label} 命中 ${listed.entries.length} 项${listed.hasMore ? '（已分页）' : ''}`,
+        content: [
+          `Skill：${virtualSkillPath.skill.name}`,
+          virtualSkillPath.skill.version ? `版本：${virtualSkillPath.skill.version}` : '',
+          `虚拟路径：${virtualSkillPath.normalizedPath}`,
+          listed.hasMore ? `分页：offset=${input.offset}, limit=${input.limit}` : '',
+          listed.entries.length > 0 ? `目录内容：\n${formatListedWorkspaceEntries(listed.entries)}` : '目录为空。',
+        ].filter(Boolean).join('\n\n'),
+        context: listed.entries.map((entry) => `${entry.kind}:${entry.relativePath}`).join('\n'),
+      };
+    }
+
     this.assertWorkspaceSkillPathAccess(input.root as WorkspaceRootName, input.path, availableSkills);
     const descriptor = resolveWorkspaceRoot({
       config: this.config,
@@ -1027,6 +1107,70 @@ export class AssistantToolService {
     availableSkills: RegisteredSkill[],
   ): Promise<ExecutedAssistantToolResult> {
     const input = readWorkspacePathSliceSchema.parse(rawArguments);
+    const virtualSkillPath = input.root === 'workspace'
+      ? matchSkillVirtualPath(input.path, availableSkills)
+      : null;
+
+    if (virtualSkillPath?.kind === 'skills-root') {
+      throw new Error('目标路径是 Skill 根目录，请指定具体 Skill 文件路径');
+    }
+
+    if (virtualSkillPath?.kind === 'skill') {
+      const descriptor = {
+        root: 'workspace' as const,
+        absoluteRoot: virtualSkillPath.skill.directory,
+        label: `Skill ${virtualSkillPath.skill.name}`,
+      };
+      const absolutePath = resolveWorkspacePath(descriptor, virtualSkillPath.relativePath);
+      const stat = await fs.stat(absolutePath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') {
+          throw new Error(`路径不存在：${input.path}`);
+        }
+        throw error;
+      });
+
+      if (stat.isDirectory()) {
+        return {
+          tool: 'read_workspace_path_slice',
+          arguments: input,
+          summary: '目标路径是目录，无法直接读取',
+          content: `目标 ${input.path} 是目录，请先用 list_workspace_paths 查看其下内容。`,
+        };
+      }
+
+      if (!isTextLikePath(absolutePath)) {
+        return {
+          tool: 'read_workspace_path_slice',
+          arguments: input,
+          summary: `文件 ${input.path} 不支持直接文本读取`,
+          content: `路径 ${input.path} 不是可直接读取的文本文件，请改为读取文本类文件或通过 Skill 处理。`,
+        };
+      }
+
+      const slice = await readTextSlice({
+        filePath: absolutePath,
+        startLine: input.startLine,
+        endLine: input.endLine,
+        maxChars: input.maxChars,
+      });
+
+      return {
+        tool: 'read_workspace_path_slice',
+        arguments: input,
+        summary: `已读取 ${descriptor.label} / ${virtualSkillPath.relativePath || '.'}${slice.range ? `（${slice.range.startLine}-${slice.range.endLine} 行）` : ''}`,
+        content: [
+          `Skill：${virtualSkillPath.skill.name}`,
+          virtualSkillPath.skill.version ? `版本：${virtualSkillPath.skill.version}` : '',
+          `虚拟路径：${virtualSkillPath.normalizedPath}`,
+          slice.range ? `行范围：${slice.range.startLine}-${slice.range.endLine}` : '',
+          slice.truncated ? '说明：内容过长，已截断显示' : '',
+          '文件内容：',
+          slice.excerpt,
+        ].filter(Boolean).join('\n\n'),
+        context: slice.excerpt,
+      };
+    }
+
     this.assertWorkspaceSkillPathAccess(input.root as WorkspaceRootName, input.path, availableSkills);
     const descriptor = resolveWorkspaceRoot({
       config: this.config,

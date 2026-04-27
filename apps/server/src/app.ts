@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import Fastify from 'fastify';
 import { z } from 'zod';
+import { skillIdSchema, type SkillId } from '@qizhi/skill-spec';
 import {
   adminInviteCreateSchema,
   adminUserUpdateSchema,
@@ -27,6 +28,9 @@ import { ensureBaseDirectories } from './core/storage/fs-utils.js';
 import { MessageStore } from './core/storage/message-store.js';
 import { StreamHub } from './core/stream/stream-hub.js';
 import { SkillRegistry } from './modules/skills/skill-registry.js';
+import { InstalledSkillStore } from './modules/skills/installed-skill-store.js';
+import { MarketClient } from './modules/skills/market-client.js';
+import { SkillInstallService } from './modules/skills/skill-install-service.js';
 import { AuthService } from './modules/auth/auth-service.js';
 import { AuthSessionService } from './modules/auth/auth-session-service.js';
 import {
@@ -187,7 +191,6 @@ export const createApp = async (options: CreateAppOptions = {}) => {
 
   const skillRegistry = new SkillRegistry(config);
   await skillRegistry.load();
-  const knownSkillNames = new Set(skillRegistry.list().map((skill) => skill.name));
 
   const messageStore = new MessageStore(config);
   const streamHub = new StreamHub();
@@ -197,7 +200,14 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   systemSettingsService.initialize();
   const userSettingsService = new UserSettingsService(db);
   const adminService = new AdminService(db);
+  const installedSkillStore = new InstalledSkillStore(db);
+  const skillInstallService = new SkillInstallService(config, installedSkillStore, skillRegistry);
   const sessionService = new SessionService(db, config);
+  const getUserRegisteredSkills = (userId: string) => skillRegistry.listRegistered().filter((skill) => (
+    skill.source !== 'installed'
+    || installedSkillStore.hasUserInstalled(userId, skill.id ?? skill.name, skill.version)
+  ));
+  const getUserSkillNames = (userId: string) => new Set(getUserRegisteredSkills(userId).map((skill) => skill.name));
   const fileService = new FileService(db, config);
   const runnerManager = new RunnerManager(config, fileService);
   const assistantToolService = new AssistantToolService(config, fileService);
@@ -208,6 +218,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     messageStore,
     streamHub,
     skillRegistry,
+    installedSkillStore,
     fileService,
     sessionService,
     config,
@@ -460,7 +471,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   app.post('/api/sessions', { preHandler: app.authenticate }, async (request, reply) => {
     try {
       const input = createSessionSchema.parse(request.body ?? {});
-      const activeSkills = normalizeActiveSkills(input.activeSkills, knownSkillNames);
+      const activeSkills = normalizeActiveSkills(input.activeSkills, getUserSkillNames(request.user.sub));
       return await sessionService.create(request.user.sub, input.title, activeSkills);
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '创建会话失败') });
@@ -476,7 +487,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
         title: input.title,
         activeSkills: typeof input.activeSkills === 'undefined'
           ? undefined
-          : normalizeActiveSkills(input.activeSkills, knownSkillNames),
+          : normalizeActiveSkills(input.activeSkills, getUserSkillNames(request.user.sub)),
       });
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '更新会话失败') });
@@ -695,7 +706,94 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     }
   });
 
-  app.get('/api/skills', { preHandler: app.authenticate }, async () => skillRegistry.list());
+  app.get('/api/skills', { preHandler: app.authenticate }, async (request) => getUserRegisteredSkills(request.user.sub).map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    starterPrompts: [...(skill.starterPrompts ?? [])],
+  })));
+
+  app.get('/api/market/skills', { preHandler: app.authenticate }, async (_request, reply) => {
+    try {
+      return await new MarketClient(config.MARKET_BASE_URL).listSkills();
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取市场 Skill 失败') });
+    }
+  });
+
+  app.get('/api/market/skills/:publisher/:name', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      const params = z.object({ publisher: z.string().min(1), name: z.string().min(1) }).parse(request.params);
+      const query = z.object({ version: z.string().optional() }).parse(request.query ?? {});
+      const id = skillIdSchema.parse(`${params.publisher}/${params.name}`);
+      return await new MarketClient(config.MARKET_BASE_URL).getVersion(id, query.version);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取 Skill 详情失败') });
+    }
+  });
+
+  app.get('/api/skills/installed', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      return skillInstallService.listInstalled(request.user.sub);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取已安装 Skill 失败') });
+    }
+  });
+
+  app.post('/api/skills/install', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      return await skillInstallService.install(request.user.sub, request.body ?? {});
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '安装 Skill 失败') });
+    }
+  });
+
+  const parseSkillRouteId = (params: unknown): SkillId => {
+    const parsed = z.object({
+      publisher: z.string().min(1),
+      name: z.string().min(1),
+    }).parse(params);
+    return skillIdSchema.parse(`${parsed.publisher}/${parsed.name}`);
+  };
+
+  const uninstallInstalledSkill = async (userId: string, params: unknown, queryParams: unknown) => {
+    const id = parseSkillRouteId(params);
+    const query = z.object({ version: z.string().optional() }).parse(queryParams ?? {});
+    const record = skillInstallService.uninstall(userId, { id, version: query.version });
+    await sessionService.deactivateSkillForUser(userId, id);
+    return record;
+  };
+
+  app.get('/api/me/skills/installed', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      return skillInstallService.listInstalled(request.user.sub);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取已安装 Skill 失败') });
+    }
+  });
+
+  app.post('/api/me/skills/install', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      return await skillInstallService.install(request.user.sub, request.body ?? {});
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '安装 Skill 失败') });
+    }
+  });
+
+  app.delete('/api/skills/installed/:publisher/:name', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      return await uninstallInstalledSkill(request.user.sub, request.params, request.query);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '卸载 Skill 失败') });
+    }
+  });
+
+  app.delete('/api/me/skills/:publisher/:name', { preHandler: app.authenticate }, async (request, reply) => {
+    try {
+      return await uninstallInstalledSkill(request.user.sub, request.params, request.query);
+    } catch (error) {
+      return reply.code(errorStatus(error)).send({ message: errorMessage(error, '卸载 Skill 失败') });
+    }
+  });
 
   return app;
 };

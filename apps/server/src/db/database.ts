@@ -68,6 +68,41 @@ CREATE TABLE IF NOT EXISTS files (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS installed_skills (
+  id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  manifest_json TEXT NOT NULL,
+  install_path TEXT NOT NULL,
+  source_market_url TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('installed', 'disabled', 'failed')),
+  installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id, version)
+);
+
+CREATE TABLE IF NOT EXISTS skill_packages (
+  id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  manifest_json TEXT NOT NULL,
+  install_path TEXT NOT NULL,
+  source_market_url TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('installed', 'disabled', 'failed')),
+  installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id, version)
+);
+
+CREATE TABLE IF NOT EXISTS user_installed_skills (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('installed', 'disabled')),
+  installed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, id, version),
+  FOREIGN KEY (id, version) REFERENCES skill_packages(id, version) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_updated
   ON sessions(user_id, updated_at DESC);
 
@@ -82,6 +117,15 @@ CREATE INDEX IF NOT EXISTS idx_files_user_created
 
 CREATE INDEX IF NOT EXISTS idx_files_session_created
   ON files(session_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_installed_skills_status
+  ON installed_skills(status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_skill_packages_status
+  ON skill_packages(status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_user_installed_skills_user_status
+  ON user_installed_skills(user_id, status, updated_at DESC);
 `;
 
 export type AppDatabase = Database.Database;
@@ -104,4 +148,11 @@ export const migrateDatabase = (db: AppDatabase) => {
   if (!sessionColumns.some((column) => column.name === 'active_skills')) {
     db.exec("ALTER TABLE sessions ADD COLUMN active_skills TEXT NOT NULL DEFAULT '[]'");
   }
+  db.exec(`
+    INSERT OR IGNORE INTO skill_packages (
+      id, version, manifest_json, install_path, source_market_url, status, installed_at, updated_at
+    )
+    SELECT id, version, manifest_json, install_path, source_market_url, status, installed_at, updated_at
+    FROM installed_skills
+  `);
 };

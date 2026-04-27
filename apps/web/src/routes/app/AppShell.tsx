@@ -38,6 +38,8 @@ export const AppShell = () => {
   const { sessionId } = useParams();
   const activeSessionId = sessionId ?? null;
   const isSettingsView = location.pathname === '/app/settings';
+  const shouldAutoSelectSession =
+    location.pathname === '/app' || location.pathname.startsWith('/app/session/');
   const isDesktop = useIsDesktop();
 
   const user = useAuthStore((state) => state.user);
@@ -70,6 +72,13 @@ export const AppShell = () => {
       setInspectorOpen(false);
     }
   }, [isDesktop]);
+
+  useEffect(() => {
+    if (!isDesktop) {
+      setSidebarOpen(false);
+      setInspectorOpen(false);
+    }
+  }, [isDesktop, location.pathname]);
 
   const sessionsQuery = useQuery({
     queryKey: ['sessions'],
@@ -206,7 +215,7 @@ export const AppShell = () => {
   });
 
   useEffect(() => {
-    if (!sessionsQuery.isSuccess || isSettingsView) {
+    if (!sessionsQuery.isSuccess || !shouldAutoSelectSession) {
       return;
     }
 
@@ -222,7 +231,7 @@ export const AppShell = () => {
         navigate('/app', { replace: true });
       }
     }
-  }, [activeSessionId, isSettingsView, navigate, sessionsQuery.data, sessionsQuery.isSuccess]);
+  }, [activeSessionId, navigate, sessionsQuery.data, sessionsQuery.isSuccess, shouldAutoSelectSession]);
 
   useEffect(() => {
     if (!sessionsQuery.data) {
@@ -374,6 +383,10 @@ export const AppShell = () => {
     sessionActionPending: updateSessionMutation.isPending || deleteSessionMutation.isPending,
     onRenameSession: handleRenameSession,
     onDeleteSession: handleDeleteSession,
+    activeSkills,
+    hasActiveSession,
+    onToggleSkill: handleToggleSkill,
+    toggleSkillPending: updateSessionMutation.isPending,
   };
 
   const showInspector = !isSettingsView;

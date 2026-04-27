@@ -8,6 +8,8 @@ const createConfig = (): AppConfig => ({
   WEB_ORIGIN: 'http://localhost:5173',
   DATA_ROOT: '/tmp/skillchat-data',
   SKILLS_ROOT: '/tmp/skillchat-data/skills',
+  MARKET_BASE_URL: 'http://localhost:3100',
+  INSTALLED_SKILLS_ROOT: '/tmp/skillchat-data/installed-skills',
   DB_PATH: '/tmp/skillchat-data/skillchat.sqlite',
   CWD: '/workspace/qizhi',
   INLINE_JOBS: true,

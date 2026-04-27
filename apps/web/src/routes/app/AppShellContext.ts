@@ -13,6 +13,10 @@ export interface AppShellOutletValue {
   sessionActionPending: boolean;
   onRenameSession: (sessionId: string, title: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  activeSkills: string[];
+  hasActiveSession: boolean;
+  onToggleSkill: (skillName: string) => void;
+  toggleSkillPending: boolean;
 }
 
 export const useAppShellOutlet = () => useOutletContext<AppShellOutletValue>();

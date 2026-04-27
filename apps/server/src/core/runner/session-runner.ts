@@ -59,8 +59,21 @@ export class SessionRunner {
         : new DOMException('Turn interrupted', 'AbortError');
     }
 
-    const entryPath = path.resolve(this.config.CWD, args.scriptPath);
-    assertPathInside(this.config.CWD, entryPath);
+    const entryPath = path.isAbsolute(args.scriptPath)
+      ? path.resolve(args.scriptPath)
+      : path.resolve(this.config.CWD, args.scriptPath);
+    const allowedScriptRoots = [this.config.CWD, this.config.INSTALLED_SKILLS_ROOT];
+    const isAllowedScriptPath = allowedScriptRoots.some((root) => {
+      try {
+        assertPathInside(root, entryPath);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (!isAllowedScriptPath) {
+      throw new Error('脚本路径不在允许的工作区或已安装 Skill 目录内');
+    }
 
     const extension = path.extname(entryPath).toLowerCase();
     const venvPython = path.join(this.config.CWD, '.venv', 'bin', 'python');
@@ -158,6 +171,7 @@ export class SessionRunner {
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       let abortTimer: ReturnType<typeof setTimeout> | null = null;
+      let abortError: Error | DOMException | null = null;
 
       const finalize = (callback: () => void) => {
         if (settled) {
@@ -172,6 +186,10 @@ export class SessionRunner {
       };
 
       const onAbort = () => {
+        abortError = args.signal?.reason instanceof Error
+          ? args.signal.reason
+          : new DOMException('Turn interrupted', 'AbortError');
+
         if (child.exitCode === null) {
           child.kill('SIGTERM');
           abortTimer = setTimeout(() => {
@@ -180,14 +198,6 @@ export class SessionRunner {
             }
           }, 250);
         }
-
-        finalize(() => {
-          reject(
-            args.signal?.reason instanceof Error
-              ? args.signal.reason
-              : new DOMException('Turn interrupted', 'AbortError'),
-          );
-        });
       };
 
       child.once('error', (error) => {
@@ -195,11 +205,14 @@ export class SessionRunner {
       });
       child.once('close', (code) => {
         finalize(() => {
-          if (args.signal?.aborted) {
+          if (abortError || args.signal?.aborted) {
             reject(
-              args.signal.reason instanceof Error
-                ? args.signal.reason
-                : new DOMException('Turn interrupted', 'AbortError'),
+              abortError
+              ?? (
+                args.signal?.reason instanceof Error
+                  ? args.signal.reason
+                  : new DOMException('Turn interrupted', 'AbortError')
+              ),
             );
             return;
           }

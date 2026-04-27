@@ -2694,6 +2694,43 @@ describe('App routes', () => {
           ],
         });
       }
+      if (url === '/api/me/skills/installed') {
+        return jsonResponse({
+          body: [
+            {
+              id: 'zhangxuefeng-perspective',
+              version: '0.1.0',
+              installPath: 'skills/zhangxuefeng-perspective',
+              sourceMarketUrl: 'legacy',
+              status: 'installed',
+              installedAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              manifest: {
+                id: 'zhangxuefeng-perspective',
+                name: 'zhangxuefeng-perspective',
+                displayName: 'zhangxuefeng-perspective',
+                version: '0.1.0',
+                kind: 'instruction',
+                description: '张雪峰视角的专业和志愿分析',
+                author: { name: 'Official' },
+                tags: [],
+                categories: [],
+                permissions: {
+                  filesystem: [],
+                  network: false,
+                  scripts: false,
+                  secrets: [],
+                },
+                runtime: {
+                  type: 'none',
+                  entrypoints: [],
+                },
+                starterPrompts: [],
+              },
+            },
+          ],
+        });
+      }
 
       throw new Error(`Unhandled fetch: ${method} ${url}`);
     });
@@ -2721,8 +2758,137 @@ describe('App routes', () => {
     });
     expect(await screen.findByRole('heading', { name: '高校咨询' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Skill' }));
-    expect(await screen.findByText('当前会话 Skill 作用域')).toBeInTheDocument();
-    expect(screen.getByText('当前会话只允许使用这些 skills：zhangxuefeng-perspective。未启用的 skill 不会进入上下文，也不可调用。')).toBeInTheDocument();
+    expect(await screen.findByLabelText('搜索 Skill')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '浏览技能市场' })).toBeInTheDocument();
+  });
+
+  it('keeps the skill market route instead of auto-selecting the first session', async () => {
+    installFetchMock((url) => {
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Existing Chat',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/market/skills') {
+        return jsonResponse({ body: { skills: [] } });
+      }
+      if (url === '/api/me/skills/installed') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/market']);
+
+    expect(await screen.findByRole('heading', { level: 1, name: '技能市场' })).toBeInTheDocument();
+    expect(await screen.findByText('市场暂时没有可安装的 Skill。')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1, name: 'Existing Chat' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the skill detail route instead of auto-selecting the first session', async () => {
+    installFetchMock((url) => {
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Existing Chat',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/me/skills/installed') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/market/skills/official/pdf') {
+        return jsonResponse({
+          body: {
+            id: 'official/pdf',
+            version: '1.0.0',
+            packageUrl: 'https://example.test/official/pdf.tgz',
+            publishedAt: '2026-04-12T00:00:00.000Z',
+            manifest: {
+              id: 'official/pdf',
+              name: 'pdf',
+              displayName: 'PDF Skill',
+              version: '1.0.0',
+              kind: 'runtime',
+              description: '生成 PDF 文件',
+              author: { name: 'Official' },
+              tags: ['pdf'],
+              categories: ['document'],
+              permissions: {
+                filesystem: [],
+                network: false,
+                scripts: true,
+                secrets: [],
+              },
+              runtime: {
+                type: 'python',
+                entrypoints: [],
+              },
+              starterPrompts: [],
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unhandled fetch: ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/market/official/pdf']);
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'PDF Skill' })).toBeInTheDocument();
+    expect(screen.getByText('生成 PDF 文件')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1, name: 'Existing Chat' })).not.toBeInTheDocument();
   });
 
   it('keeps the newly created session active when created from an existing session', async () => {

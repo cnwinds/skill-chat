@@ -12,6 +12,8 @@ const createConfig = (rootDir: string): AppConfig => ({
   WEB_ORIGIN: 'http://localhost:5173',
   DATA_ROOT: path.join(rootDir, 'data'),
   SKILLS_ROOT: path.join(rootDir, 'skills'),
+  MARKET_BASE_URL: 'http://localhost:3100',
+  INSTALLED_SKILLS_ROOT: path.join(rootDir, 'data', 'installed-skills'),
   DB_PATH: path.join(rootDir, 'skillchat.sqlite'),
   CWD: rootDir,
   INLINE_JOBS: true,

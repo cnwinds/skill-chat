@@ -27,6 +27,87 @@ export class ApiError extends Error {
   }
 }
 
+export type SkillKind = 'instruction' | 'runtime' | 'hybrid';
+
+export interface SkillAuthor {
+  name: string;
+  url?: string;
+  email?: string;
+}
+
+export interface SkillManifestSummary {
+  id: string;
+  name: string;
+  displayName?: string;
+  version: string;
+  kind: SkillKind;
+  description: string;
+  author: SkillAuthor;
+  tags: string[];
+  categories: string[];
+  permissions: {
+    filesystem: string[];
+    network: boolean | { allowedHosts: string[] };
+    scripts: boolean;
+    secrets: string[];
+  };
+  runtime: {
+    type: 'none' | 'python' | 'node' | 'shell';
+    entrypoints: Array<{
+      name: string;
+      path: string;
+      description?: string;
+    }>;
+  };
+  starterPrompts: string[];
+  license?: string;
+  homepage?: string;
+  repository?: string;
+}
+
+export interface MarketSkillSummary {
+  id: string;
+  name: string;
+  displayName?: string;
+  latestVersion: string;
+  kind: SkillKind;
+  description: string;
+  author: SkillAuthor;
+  tags: string[];
+  categories: string[];
+  updatedAt: string;
+}
+
+export interface MarketSkillListResponse {
+  skills: MarketSkillSummary[];
+}
+
+export interface MarketSkillDetail {
+  id: string;
+  version: string;
+  manifest: SkillManifestSummary;
+  packageUrl: string;
+  checksumSha256?: string;
+  sizeBytes?: number;
+  publishedAt: string;
+}
+
+export interface InstalledSkillRecord {
+  id: string;
+  version: string;
+  manifest: SkillManifestSummary;
+  installPath: string;
+  sourceMarketUrl: string;
+  status: 'installed' | 'disabled' | 'failed';
+  installedAt: string;
+  updatedAt: string;
+}
+
+export interface SkillInstallRequest {
+  id: string;
+  version?: string;
+}
+
 const createHeaders = (headers: HeadersInit = {}, body?: BodyInit | null) => {
   const merged = new Headers(headers);
   if (typeof body === 'string' && !merged.has('Content-Type')) {
@@ -221,6 +302,46 @@ export const api = {
     }),
 
   listSkills: () => requestJson<SkillMetadata[]>('/api/skills'),
+
+  listMarketSkills: async () => {
+    const payload = await requestJson<MarketSkillListResponse>('/api/market/skills');
+    return payload.skills;
+  },
+
+  getMarketSkillDetail: (id: string, version?: string) => {
+    const [publisher, name] = id.split('/');
+    if (!publisher || !name) {
+      throw new Error(`Invalid skill id: ${id}`);
+    }
+    const query = version ? `?${new URLSearchParams({ version }).toString()}` : '';
+    return requestJson<MarketSkillDetail>(
+      `/api/market/skills/${encodeURIComponent(publisher)}/${encodeURIComponent(name)}${query}`,
+    );
+  },
+
+  listInstalledSkills: () => requestJson<InstalledSkillRecord[]>('/api/me/skills/installed'),
+
+  installSkill: (payload: SkillInstallRequest) =>
+    requestJson<InstalledSkillRecord>('/api/me/skills/install', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  uninstallSkill: (payload: SkillInstallRequest) => {
+    const [publisher, name] = payload.id.split('/');
+    if (!publisher || !name) {
+      throw new Error(`Invalid skill id: ${payload.id}`);
+    }
+    const query = payload.version
+      ? `?${new URLSearchParams({ version: payload.version }).toString()}`
+      : '';
+    return requestJson<InstalledSkillRecord>(
+      `/api/me/skills/${encodeURIComponent(publisher)}/${encodeURIComponent(name)}${query}`,
+      {
+        method: 'DELETE',
+      },
+    );
+  },
 
   getAdminSystemSettings: () => requestJson<SystemSettings>('/api/admin/system-settings'),
 

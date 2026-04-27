@@ -1,11 +1,17 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import matter from 'gray-matter';
+import { parseSkillManifest } from '@qizhi/skill-spec';
+import type { SkillManifest } from '@qizhi/skill-spec';
 import type { SkillMetadata } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
 
 export interface RegisteredSkill extends SkillMetadata {
   directory: string;
+  id?: string;
+  version?: string;
+  manifest?: SkillManifest;
+  source?: 'legacy' | 'installed';
   rawMarkdown?: string;
   markdown: string;
 }
@@ -32,7 +38,12 @@ export class SkillRegistry {
 
   async load() {
     this.skillMap.clear();
-    const entries = await fs.readdir(this.config.SKILLS_ROOT, { withFileTypes: true });
+    await this.loadLegacyRoot();
+    await this.loadInstalledRoot();
+  }
+
+  private async loadLegacyRoot() {
+    const entries = await this.readRootEntries(this.config.SKILLS_ROOT);
 
     for (const entry of entries) {
       if (!entry.isDirectory()) {
@@ -50,6 +61,7 @@ export class SkillRegistry {
         this.skillMap.set(metadata.name, {
           ...metadata,
           directory: skillDir,
+          source: 'legacy',
           rawMarkdown: raw.trim(),
           markdown: parsed.content.trim(),
         });
@@ -60,6 +72,78 @@ export class SkillRegistry {
         console.warn(`Skipping invalid skill at ${skillFile}:`, error);
         continue;
       }
+    }
+  }
+
+  private async loadInstalledRoot() {
+    const publishers = await this.readRootEntries(this.config.INSTALLED_SKILLS_ROOT);
+
+    for (const publisher of publishers) {
+      if (!publisher.isDirectory()) {
+        continue;
+      }
+      const publisherDir = path.join(this.config.INSTALLED_SKILLS_ROOT, publisher.name);
+      const skills = await this.readRootEntries(publisherDir);
+
+      for (const skill of skills) {
+        if (!skill.isDirectory()) {
+          continue;
+        }
+        const skillDir = path.join(publisherDir, skill.name);
+        const versions = await this.readRootEntries(skillDir);
+
+        for (const version of versions) {
+          if (!version.isDirectory()) {
+            continue;
+          }
+          const versionDir = path.join(skillDir, version.name);
+          await this.loadInstalledSkill(versionDir);
+        }
+      }
+    }
+  }
+
+  private async loadInstalledSkill(skillDir: string) {
+    const skillFile = path.join(skillDir, 'SKILL.md');
+    const manifestFile = path.join(skillDir, 'skill.json');
+
+    try {
+      const [raw, manifestRaw] = await Promise.all([
+        fs.readFile(skillFile, 'utf8'),
+        fs.readFile(manifestFile, 'utf8'),
+      ]);
+      const manifest = parseSkillManifest(JSON.parse(manifestRaw));
+      const parsed = matter(raw);
+      const name = manifest.id;
+
+      this.skillMap.set(name, {
+        name,
+        id: manifest.id,
+        version: manifest.version,
+        manifest,
+        description: manifest.description,
+        starterPrompts: [...manifest.starterPrompts],
+        directory: skillDir,
+        source: 'installed',
+        rawMarkdown: raw.trim(),
+        markdown: parsed.content.trim(),
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      console.warn(`Skipping invalid installed skill at ${skillDir}:`, error);
+    }
+  }
+
+  private async readRootEntries(root: string) {
+    try {
+      return await fs.readdir(root, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return [];
+      }
+      throw error;
     }
   }
 

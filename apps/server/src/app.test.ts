@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import sharp from 'sharp';
+import * as tar from 'tar';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from './app.js';
@@ -409,6 +410,224 @@ describe('SkillChat server', () => {
         ]),
       }),
     ]));
+  });
+
+  it('installs a market skill package and reloads the registry for canonical ids', async () => {
+    const auth = await registerAndLogin(app, 'market_install_user');
+    const packageRoot = path.join(tempDir, 'market-package');
+    const packagePath = path.join(tempDir, 'official-pdf.tgz');
+    const manifest = {
+      id: 'official/pdf',
+      name: 'pdf',
+      version: '1.0.0',
+      kind: 'runtime',
+      description: 'Official PDF skill',
+      author: {
+        name: 'Official',
+      },
+      starterPrompts: ['Create a PDF'],
+    };
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(path.join(packageRoot, 'skill.json'), JSON.stringify(manifest, null, 2), 'utf8');
+    await fs.writeFile(path.join(packageRoot, 'SKILL.md'), '# Official PDF\n\nInstalled from market.\n', 'utf8');
+    await tar.c({
+      cwd: packageRoot,
+      file: packagePath,
+      gzip: true,
+    }, ['skill.json', 'SKILL.md']);
+    const packageBytes = await fs.readFile(packagePath);
+
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url === 'http://localhost:3100/api/v1/skills/official/pdf/versions/1.0.0/manifest') {
+        return Response.json(manifest);
+      }
+      if (url === 'http://localhost:3100/api/v1/skills/official/pdf/versions/1.0.0/package') {
+        return new Response(packageBytes, {
+          status: 200,
+          headers: {
+            'content-type': 'application/gzip',
+          },
+        });
+      }
+      if (url === 'http://localhost:3100/api/v1/skills') {
+        return Response.json({
+          skills: [{
+            id: 'official/pdf',
+            name: 'pdf',
+            latestVersion: '1.0.0',
+            kind: 'runtime',
+            description: 'Official PDF skill',
+            author: { name: 'Official' },
+            tags: [],
+            categories: [],
+            updatedAt: '2026-04-27T00:00:00.000Z',
+          }],
+        });
+      }
+      return originalFetch(input as RequestInfo | URL);
+    }));
+
+    const marketResponse = await app.inject({
+      method: 'GET',
+      url: '/api/market/skills',
+      headers: {
+        cookie: auth.cookie,
+      },
+    });
+    expect(marketResponse.statusCode).toBe(200);
+    expect(marketResponse.json()).toMatchObject({
+      skills: [expect.objectContaining({ id: 'official/pdf' })],
+    });
+
+    const installResponse = await app.inject({
+      method: 'POST',
+      url: '/api/skills/install',
+      headers: {
+        cookie: auth.cookie,
+      },
+      payload: {
+        id: 'official/pdf',
+        version: '1.0.0',
+      },
+    });
+    expect(installResponse.statusCode).toBe(200);
+    expect(installResponse.json()).toMatchObject({
+      id: 'official/pdf',
+      version: '1.0.0',
+      status: 'installed',
+    });
+
+    const installedResponse = await app.inject({
+      method: 'GET',
+      url: '/api/skills/installed',
+      headers: {
+        cookie: auth.cookie,
+      },
+    });
+    expect(installedResponse.statusCode).toBe(200);
+    expect(installedResponse.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'official/pdf', version: '1.0.0' }),
+    ]));
+
+    const session = await createSession(app, auth.cookie, 'market skill session', ['official/pdf']);
+    expect(session.activeSkills).toEqual(['official/pdf']);
+
+    const other = await registerAndLogin(app, 'market_other_user');
+    const otherInstalledResponse = await app.inject({
+      method: 'GET',
+      url: '/api/skills/installed',
+      headers: {
+        cookie: other.cookie,
+      },
+    });
+    expect(otherInstalledResponse.statusCode).toBe(200);
+    expect(otherInstalledResponse.json()).toEqual([]);
+
+    const otherSessionResponse = await app.inject({
+      method: 'POST',
+      url: '/api/sessions',
+      headers: {
+        cookie: other.cookie,
+      },
+      payload: {
+        title: 'other market skill session',
+        activeSkills: ['official/pdf'],
+      },
+    });
+    expect(otherSessionResponse.statusCode).toBe(400);
+
+    const uninstallResponse = await app.inject({
+      method: 'DELETE',
+      url: '/api/me/skills/official/pdf',
+      headers: {
+        cookie: auth.cookie,
+      },
+    });
+    expect(uninstallResponse.statusCode).toBe(200);
+    expect(uninstallResponse.json()).toMatchObject({
+      id: 'official/pdf',
+      version: '1.0.0',
+    });
+
+    const sessionsAfterUninstallResponse = await app.inject({
+      method: 'GET',
+      url: '/api/sessions',
+      headers: {
+        cookie: auth.cookie,
+      },
+    });
+    expect(sessionsAfterUninstallResponse.statusCode).toBe(200);
+    const sessionsAfterUninstall = sessionsAfterUninstallResponse.json() as Array<{ id: string; activeSkills: string[] }>;
+    expect(sessionsAfterUninstall.find((item) => item.id === session.id)?.activeSkills).toEqual([]);
+  });
+
+  it('returns market skill detail via GET /api/market/skills/:publisher/:name', async () => {
+    const auth = await registerAndLogin(app, 'market_detail_user');
+    const manifest = {
+      id: 'official/detail-skill',
+      name: 'detail-skill',
+      version: '2.0.0',
+      kind: 'instruction',
+      description: 'A detail skill for testing',
+      author: { name: 'Official' },
+      tags: ['test'],
+      categories: ['testing'],
+      starterPrompts: ['Start here'],
+      permissions: {
+        filesystem: [],
+        network: false,
+        scripts: false,
+        secrets: [],
+      },
+      runtime: { type: 'none', entrypoints: [] },
+    };
+
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url === 'http://localhost:3100/api/v1/skills/official/detail-skill/versions') {
+        return Response.json({
+          versions: [{
+            id: 'official/detail-skill',
+            version: '2.0.0',
+            manifest,
+            packageUrl: 'http://localhost:3100/api/v1/skills/official/detail-skill/versions/2.0.0/package',
+            publishedAt: '2026-04-27T00:00:00.000Z',
+          }],
+        });
+      }
+      return originalFetch(input as RequestInfo | URL);
+    }));
+
+    const detailResponse = await app.inject({
+      method: 'GET',
+      url: '/api/market/skills/official/detail-skill',
+      headers: { cookie: auth.cookie },
+    });
+    expect(detailResponse.statusCode).toBe(200);
+    expect(detailResponse.json()).toMatchObject({
+      id: 'official/detail-skill',
+      version: '2.0.0',
+      manifest: expect.objectContaining({ description: 'A detail skill for testing' }),
+    });
+  });
+
+  it('rejects unauthenticated GET /api/market/skills/:publisher/:name with 401', async () => {
+    const detailResponse = await app.inject({
+      method: 'GET',
+      url: '/api/market/skills/official/some-skill',
+    });
+    expect(detailResponse.statusCode).toBe(401);
   });
 
   it('exposes idle runtime snapshots and rejects explicit steer or interrupt without an active turn', async () => {

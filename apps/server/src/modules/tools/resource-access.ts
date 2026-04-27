@@ -214,6 +214,10 @@ export const resolveUserVisiblePath = (config: AppConfig, userId: string, absolu
     return path.relative(userRoot, absolutePath).replace(/\\/g, '/');
   }
 
+  if (absolutePath.startsWith(config.INSTALLED_SKILLS_ROOT)) {
+    return `installed-skills/${path.relative(config.INSTALLED_SKILLS_ROOT, absolutePath).replace(/\\/g, '/')}`;
+  }
+
   if (absolutePath.startsWith(config.CWD)) {
     return path.relative(config.CWD, absolutePath).replace(/\\/g, '/');
   }

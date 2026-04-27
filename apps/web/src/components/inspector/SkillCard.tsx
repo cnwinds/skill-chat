@@ -22,15 +22,17 @@ export const SkillCard = ({
   return (
     <article
       className={cn(
-        'group/sc relative flex flex-col gap-2 rounded-lg border bg-surface px-3 py-2.5 transition-colors',
+        'group/sc relative flex w-full min-w-0 max-w-full flex-col gap-1.5 overflow-hidden rounded-md border bg-surface px-2.5 py-2 transition-colors',
         selected
           ? 'border-accent/60 bg-accent/5'
           : 'border-border hover:border-border-strong hover:bg-surface-hover',
       )}
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex min-w-0 items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground">{skill.name}</div>
+          <div className="truncate text-sm font-medium text-foreground" title={skill.name}>
+            {skill.name}
+          </div>
         </div>
         {isToggleable ? (
           <button
@@ -60,7 +62,9 @@ export const SkillCard = ({
         )}
       </div>
 
-      <p className="text-xs leading-5 text-foreground-muted line-clamp-3">{skill.description}</p>
+      <p className="line-clamp-2 overflow-hidden break-words text-xs leading-5 text-foreground-muted">
+        {skill.description}
+      </p>
     </article>
   );
 };

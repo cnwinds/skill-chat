@@ -34,6 +34,7 @@ import { OpenAIHarness } from './openai-harness.js';
 import type { AppConfig } from '../../config/env.js';
 import { buildResponsesHistoryInput, shouldAutoCompactHistory } from './openai-harness-context.js';
 import { SessionContextStore } from './session-context-store.js';
+import type { InstalledSkillStore } from '../skills/installed-skill-store.js';
 
 type UserContext = {
   id: string;
@@ -56,6 +57,7 @@ export class ChatService {
     private readonly messageStore: MessageStore,
     private readonly streamHub: StreamHub,
     private readonly skillRegistry: SkillRegistry,
+    private readonly installedSkillStore: InstalledSkillStore,
     private readonly fileService: FileService,
     private readonly sessionService: SessionService,
     private readonly config: AppConfig,
@@ -252,7 +254,7 @@ export class ChatService {
     const { sessionId, history, contextState, files, execution, input, startingRound } = args;
     const { user } = execution;
     const session = this.sessionService.requireOwned(user.id, sessionId);
-    const availableSkills = this.resolveSessionSkills(session.activeSkills ?? []);
+    const availableSkills = this.resolveSessionSkills(user.id, session.activeSkills ?? []);
     const samplingStartedAt = Date.now();
     let latestReasoningSummary = '';
     let lastFlushedReasoningSummary = '';
@@ -574,10 +576,16 @@ export class ChatService {
     };
   }
 
-  private resolveSessionSkills(sessionSkillNames: string[]): RegisteredSkill[] {
+  private resolveSessionSkills(userId: string, sessionSkillNames: string[]): RegisteredSkill[] {
     return sessionSkillNames.flatMap((skillName) => {
       try {
         const skill = this.skillRegistry.get(skillName);
+        if (
+          skill.source === 'installed'
+          && !this.installedSkillStore.hasUserInstalled(userId, skill.id ?? skill.name, skill.version)
+        ) {
+          return [];
+        }
         return skill ? [skill] : [];
       } catch {
         return [];

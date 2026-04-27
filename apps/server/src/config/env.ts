@@ -9,6 +9,8 @@ const envSchema = z.object({
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
   DATA_ROOT: z.string().default('./data'),
   SKILLS_ROOT: z.string().default('./skills'),
+  MARKET_BASE_URL: z.string().url().default('http://localhost:3100'),
+  INSTALLED_SKILLS_ROOT: z.string().optional(),
   SESSION_EXPIRES_IN: z.string().default('7d'),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_API_KEY: z.string().optional().default(''),
@@ -38,6 +40,7 @@ export type AppConfig = z.infer<typeof envSchema> & {
   CWD: string;
   DATA_ROOT: string;
   SKILLS_ROOT: string;
+  INSTALLED_SKILLS_ROOT: string;
   DB_PATH: string;
   INLINE_JOBS: boolean;
 };
@@ -65,12 +68,14 @@ export const loadConfig = (cwd: string, overrides: ConfigOverrides = {}): AppCon
 
   const dataRoot = path.resolve(cwd, raw.DATA_ROOT);
   const skillsRoot = path.resolve(cwd, raw.SKILLS_ROOT);
+  const installedSkillsRoot = path.resolve(cwd, raw.INSTALLED_SKILLS_ROOT ?? path.join(dataRoot, 'installed-skills'));
 
   return {
     ...raw,
     CWD: cwd,
     DATA_ROOT: dataRoot,
     SKILLS_ROOT: skillsRoot,
+    INSTALLED_SKILLS_ROOT: installedSkillsRoot,
     DB_PATH: path.join(dataRoot, 'skillchat.sqlite'),
     INLINE_JOBS: overrides.INLINE_JOBS ?? false,
   };

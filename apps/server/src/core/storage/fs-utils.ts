@@ -17,6 +17,7 @@ import {
 
 export const ensureBaseDirectories = async (config: AppConfig) => {
   await fs.mkdir(config.DATA_ROOT, { recursive: true });
+  await fs.mkdir(config.INSTALLED_SKILLS_ROOT, { recursive: true });
   await fs.mkdir(getUsersRoot(config), { recursive: true });
 };
 

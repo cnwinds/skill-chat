@@ -11,6 +11,8 @@ const createConfig = (rootDir: string): AppConfig => ({
   WEB_ORIGIN: 'http://localhost:5173',
   DATA_ROOT: path.join(rootDir, 'data'),
   SKILLS_ROOT: path.join(rootDir, 'skills'),
+  MARKET_BASE_URL: 'http://localhost:3100',
+  INSTALLED_SKILLS_ROOT: path.join(rootDir, 'data', 'installed-skills'),
   DB_PATH: path.join(rootDir, 'skillchat.sqlite'),
   CWD: rootDir,
   INLINE_JOBS: true,
@@ -45,6 +47,7 @@ describe('SkillRegistry', () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-skill-registry-test-'));
     config = createConfig(tempDir);
     await fs.mkdir(config.SKILLS_ROOT, { recursive: true });
+    await fs.mkdir(config.INSTALLED_SKILLS_ROOT, { recursive: true });
   });
 
   afterEach(async () => {
@@ -94,6 +97,48 @@ describe('SkillRegistry', () => {
 
     expect(registry.get('zhangxuefeng-perspective')).toMatchObject({
       starterPrompts: ['扮演张雪峰', '帮我看志愿'],
+    });
+  });
+
+  it('loads installed skills by canonical id without breaking legacy names', async () => {
+    const legacyDir = path.join(config.SKILLS_ROOT, 'pdf');
+    await fs.mkdir(legacyDir, { recursive: true });
+    await fs.writeFile(path.join(legacyDir, 'SKILL.md'), [
+      '---',
+      'name: pdf',
+      'description: legacy pdf skill',
+      '---',
+      '',
+      '# PDF',
+    ].join('\n'), 'utf8');
+
+    const installedDir = path.join(config.INSTALLED_SKILLS_ROOT, 'official', 'pdf', '1.0.0');
+    await fs.mkdir(installedDir, { recursive: true });
+    await fs.writeFile(path.join(installedDir, 'skill.json'), JSON.stringify({
+      id: 'official/pdf',
+      name: 'pdf',
+      version: '1.0.0',
+      kind: 'runtime',
+      description: 'installed pdf skill',
+      author: {
+        name: 'Official',
+      },
+      starterPrompts: ['Create a PDF'],
+    }), 'utf8');
+    await fs.writeFile(path.join(installedDir, 'SKILL.md'), '# Official PDF\n', 'utf8');
+
+    const registry = new SkillRegistry(config);
+    await registry.load();
+
+    expect(registry.get('pdf')).toMatchObject({
+      name: 'pdf',
+      source: 'legacy',
+    });
+    expect(registry.get('official/pdf')).toMatchObject({
+      name: 'official/pdf',
+      version: '1.0.0',
+      source: 'installed',
+      starterPrompts: ['Create a PDF'],
     });
   });
 });

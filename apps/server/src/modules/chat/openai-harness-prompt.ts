@@ -32,7 +32,7 @@ const formatSkillsSection = (skills: RegisteredSkill[]) => {
   lines.push('### Available skills');
 
   for (const skill of skills) {
-    const skillPath = `${skill.directory.replace(/\\/g, '/').replace(/^.*\/skills\//, 'skills/')}/SKILL.md`;
+    const skillPath = `skills/${skill.name}/SKILL.md`;
     lines.push(`- ${skill.name}: ${skill.description} (file: ${skillPath})`);
   }
 

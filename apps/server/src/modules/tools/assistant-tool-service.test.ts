@@ -11,6 +11,8 @@ const createConfig = (dataRoot: string): AppConfig => ({
   WEB_ORIGIN: 'http://localhost:5173',
   DATA_ROOT: dataRoot,
   SKILLS_ROOT: path.join(dataRoot, 'skills'),
+  MARKET_BASE_URL: 'http://localhost:3100',
+  INSTALLED_SKILLS_ROOT: path.join(dataRoot, 'installed-skills'),
   DB_PATH: path.join(dataRoot, 'skillchat.sqlite'),
   CWD: dataRoot,
   INLINE_JOBS: true,
@@ -267,6 +269,73 @@ describe('AssistantToolService', () => {
 
     expect(read.summary).toContain('references/majors.md');
     expect(read.content).toContain('口腔医学');
+
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  });
+
+  it('maps installed canonical skill ids to virtual skill paths', async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'skillchat-installed-skill-read-'));
+    const config = createConfig(tempRoot);
+    const installedSkillDir = path.join(config.INSTALLED_SKILLS_ROOT, 'official', 'pdf', '0.1.0');
+    await fs.mkdir(installedSkillDir, { recursive: true });
+    await fs.writeFile(path.join(installedSkillDir, 'SKILL.md'), '# Installed PDF Skill', 'utf8');
+
+    const service = new AssistantToolService(
+      config,
+      {
+        getFileContext: () => [],
+        recordGeneratedFile: vi.fn(),
+      } as never,
+    );
+
+    const listed = await service.execute({
+      userId: 'u1',
+      sessionId: 's1',
+      availableSkills: [{
+        name: 'official/pdf',
+        id: 'official/pdf',
+        version: '0.1.0',
+        source: 'installed',
+        description: 'Installed PDF',
+        directory: installedSkillDir,
+        markdown: '# Installed PDF Skill',
+        starterPrompts: [],
+      }],
+      call: {
+        tool: 'list_workspace_paths',
+        arguments: {
+          root: 'workspace',
+          path: 'skills',
+        },
+      },
+    });
+
+    expect(listed.content).toContain('skills/official/pdf/');
+
+    const read = await service.execute({
+      userId: 'u1',
+      sessionId: 's1',
+      availableSkills: [{
+        name: 'official/pdf',
+        id: 'official/pdf',
+        version: '0.1.0',
+        source: 'installed',
+        description: 'Installed PDF',
+        directory: installedSkillDir,
+        markdown: '# Installed PDF Skill',
+        starterPrompts: [],
+      }],
+      call: {
+        tool: 'read_workspace_path_slice',
+        arguments: {
+          root: 'workspace',
+          path: 'skills/official/pdf/SKILL.md',
+        },
+      },
+    });
+
+    expect(read.summary).toContain('Skill official/pdf');
+    expect(read.content).toContain('# Installed PDF Skill');
 
     await fs.rm(tempRoot, { recursive: true, force: true });
   });
