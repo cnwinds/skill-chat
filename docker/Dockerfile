@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS deps
+FROM node:24.15.0-bookworm-slim AS deps
 
 WORKDIR /app
 
@@ -12,7 +12,6 @@ RUN sed -i "s|http://deb.debian.org/debian|${APT_MIRROR}|g; s|http://deb.debian.
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json tsconfig.base.json ./
-COPY scripts/ensure-native-deps.cjs scripts/ensure-native-deps.cjs
 COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/qizhi-skill-spec/package.json packages/qizhi-skill-spec/package.json
@@ -30,7 +29,7 @@ COPY packages ./packages
 
 RUN npm --workspace @skillchat/web run build
 
-FROM node:24-bookworm-slim AS api
+FROM node:24.15.0-bookworm-slim AS api
 
 WORKDIR /app
 
