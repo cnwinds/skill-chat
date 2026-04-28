@@ -16,11 +16,13 @@
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
+    "ensure:native": "node scripts/ensure-native-deps.cjs",
+    "postinstall": "node scripts/ensure-native-deps.cjs",
     "setup:python": "python3 -m venv .venv && .venv/bin/pip install -r skills/requirements.txt",
     "db:migrate": "npm --workspace @skillchat/server run db:migrate",
     "invite:create": "npm --workspace @skillchat/server run invite:create"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": "24.x"
   }
 }

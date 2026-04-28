@@ -4,13 +4,20 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "ensure:native": "node ../../scripts/ensure-native-deps.cjs",
+    "predev": "npm run ensure:native",
     "dev": "tsx watch src/index.ts",
+    "prestart": "npm run ensure:native",
     "start": "tsx src/index.ts",
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
+    "pretest": "npm run ensure:native",
     "test": "vitest run",
+    "preprobe:skill-502": "npm run ensure:native",
     "probe:skill-502": "tsx src/scripts/probe-skill-502.ts",
+    "predb:migrate": "npm run ensure:native",
     "db:migrate": "tsx src/scripts/migrate.ts",
+    "preinvite:create": "npm run ensure:native",
     "invite:create": "tsx src/scripts/create-invite.ts"
   },
   "dependencies": {
