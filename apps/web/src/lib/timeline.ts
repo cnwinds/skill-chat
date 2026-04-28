@@ -56,24 +56,6 @@ const isHiddenToolEvent = (event: Extract<StoredEvent, { kind: 'tool_call' | 'to
 
 const isThinkingEvent = (event: StoredEvent): event is ThinkingEvent => event.kind === 'thinking';
 
-const getWorkspaceReadCategory = (trace: ToolTraceDisplayEvent) => {
-  const path = typeof trace.arguments?.path === 'string' ? trace.arguments.path.replace(/\\/g, '/') : '';
-  if (/(^|\/)SKILL\.md$/i.test(path)) {
-    return 'skill';
-  }
-  if (/(^|\/)references\//i.test(path)) {
-    return 'reference';
-  }
-  return 'workspace';
-};
-
-const getToolTraceGroupKey = (trace: ToolTraceDisplayEvent) => {
-  if (trace.tool === 'read_workspace_path_slice') {
-    return `${trace.tool}:${getWorkspaceReadCategory(trace)}`;
-  }
-  return trace.tool;
-};
-
 const aggregateToolStatus = (items: ToolTraceDisplayEvent[]): ToolTraceStatus => {
   if (items.some((item) => item.status === 'failed')) {
     return 'failed';
@@ -88,7 +70,6 @@ const aggregateToolStatus = (items: ToolTraceDisplayEvent[]): ToolTraceStatus =>
 };
 
 const createToolTraceGroup = (
-  groupKey: string,
   items: ToolTraceDisplayEvent[],
 ): ToolTraceGroupDisplayEvent => {
   const firstItem = items[0]!;
@@ -97,7 +78,7 @@ const createToolTraceGroup = (
     kind: 'tool_trace_group',
     sessionId: firstItem.sessionId,
     createdAt: firstItem.createdAt,
-    groupKey,
+    groupKey: 'consecutive_tool_traces',
     tool: firstItem.tool,
     status: aggregateToolStatus(items),
     items,
@@ -106,16 +87,14 @@ const createToolTraceGroup = (
 
 const compactConsecutiveToolTraces = (items: TimelineItem[]): TimelineItem[] => {
   const compacted: TimelineItem[] = [];
-  let currentGroupKey: string | null = null;
   let currentGroup: ToolTraceDisplayEvent[] = [];
 
   const flushGroup = () => {
     if (currentGroup.length === 1) {
       compacted.push(currentGroup[0]!);
-    } else if (currentGroup.length > 1 && currentGroupKey) {
-      compacted.push(createToolTraceGroup(currentGroupKey, currentGroup));
+    } else if (currentGroup.length > 1) {
+      compacted.push(createToolTraceGroup(currentGroup));
     }
-    currentGroupKey = null;
     currentGroup = [];
   };
 
@@ -126,12 +105,6 @@ const compactConsecutiveToolTraces = (items: TimelineItem[]): TimelineItem[] => 
       continue;
     }
 
-    const groupKey = getToolTraceGroupKey(item);
-    if (currentGroupKey && currentGroupKey !== groupKey) {
-      flushGroup();
-    }
-
-    currentGroupKey = groupKey;
     currentGroup.push(item);
   }
 

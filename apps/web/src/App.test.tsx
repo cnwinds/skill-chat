@@ -300,7 +300,7 @@ describe('MessageItem', () => {
       kind: 'tool_trace_group',
       sessionId: 's1',
       createdAt: new Date().toISOString(),
-      groupKey: 'read_workspace_path_slice:skill',
+      groupKey: 'consecutive_tool_traces',
       tool: 'read_workspace_path_slice',
       status: 'success',
       items: [
@@ -330,10 +330,10 @@ describe('MessageItem', () => {
     };
 
     render(<MessageItem event={group} />);
-    expect(screen.getByText('读取 Skill x 2')).toBeInTheDocument();
-    expect(screen.getByText('最近：已读取 Skill 定义：another-perspective / SKILL.md')).toBeInTheDocument();
-    expect(screen.getByText('第 1 次')).toBeInTheDocument();
-    expect(screen.getByText('第 2 次')).toBeInTheDocument();
+    expect(screen.getByText('使用 2 次工具')).toBeInTheDocument();
+    expect(screen.getByText('读取 Skill 2 次')).toBeInTheDocument();
+    expect(screen.getByText('#1')).toBeInTheDocument();
+    expect(screen.getByText('#2')).toBeInTheDocument();
   });
 });
 

@@ -81,7 +81,7 @@ describe('buildTimelineItems', () => {
     });
   });
 
-  it('groups consecutive tool traces with the same low-frequency display category', () => {
+  it('groups consecutive tool traces before visible output into one compact block', () => {
     const events: StoredEvent[] = [
       {
         id: 'call_1',
@@ -121,6 +121,24 @@ describe('buildTimelineItems', () => {
         content: '# Another',
         createdAt: '2026-04-10T10:00:03.000Z',
       },
+      {
+        id: 'call_3',
+        sessionId: 's1',
+        kind: 'tool_call',
+        callId: 'tool_3',
+        skill: 'web_search',
+        arguments: { query: '金融专业就业' },
+        createdAt: '2026-04-10T10:00:04.000Z',
+      },
+      {
+        id: 'result_3',
+        sessionId: 's1',
+        kind: 'tool_result',
+        callId: 'tool_3',
+        skill: 'web_search',
+        message: '检索到 3 条网页结果',
+        createdAt: '2026-04-10T10:00:05.000Z',
+      },
     ];
 
     const timeline = buildTimelineItems(events);
@@ -128,11 +146,12 @@ describe('buildTimelineItems', () => {
     expect(timeline).toHaveLength(1);
     expect(timeline[0]).toMatchObject({
       kind: 'tool_trace_group',
-      groupKey: 'read_workspace_path_slice:skill',
+      groupKey: 'consecutive_tool_traces',
       status: 'success',
       items: [
         { kind: 'tool_trace', callId: 'tool_1' },
         { kind: 'tool_trace', callId: 'tool_2' },
+        { kind: 'tool_trace', callId: 'tool_3' },
       ],
     });
   });

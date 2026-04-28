@@ -1,7 +1,21 @@
 import { Children, isValidElement, useEffect, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AlertCircle, Check, Copy, Download, ExternalLink, ImagePlus, Loader2 } from 'lucide-react';
+import {
+  AlertCircle,
+  Check,
+  Copy,
+  Download,
+  ExternalLink,
+  FileText,
+  FolderOpen,
+  Globe,
+  ImagePlus,
+  Loader2,
+  Search,
+  Terminal,
+  Wrench,
+} from 'lucide-react';
 import type {
   AssistantMessageMeta,
   FileRecord,
@@ -42,20 +56,28 @@ const formatSkillPathLabel = (path: string) => {
 };
 
 const formatToolName = (tool: string, args?: Record<string, unknown>) => {
-  if (tool === 'web_search') {
-    return '搜索页面';
+  if (tool === 'read_workspace_path_slice') {
+    const path = typeof args?.path === 'string' ? args.path : '';
+    if (/(^|\/)SKILL\.md$/i.test(path)) {
+      return '读取 Skill';
+    }
+    if (/(^|\/)references\//i.test(path)) {
+      return '读取参考资料';
+    }
+    return '读取工作区文件';
   }
-  if (tool !== 'read_workspace_path_slice') {
-    return tool;
-  }
-  const path = typeof args?.path === 'string' ? args.path : '';
-  if (/(^|\/)SKILL\.md$/i.test(path)) {
-    return '读取 Skill';
-  }
-  if (/(^|\/)references\//i.test(path)) {
-    return '读取参考资料';
-  }
-  return '读取工作区文件';
+
+  const labels: Record<string, string> = {
+    web_search: '搜索页面',
+    web_fetch: '抓取网页',
+    list_files: '列出文件',
+    read_file: '读取文件',
+    list_workspace_paths: '列出目录',
+    write_artifact_file: '写入文件',
+    run_workspace_script: '运行脚本',
+  };
+
+  return labels[tool] ?? tool;
 };
 
 const formatToolMessage = (tool: string, message: string, args?: Record<string, unknown>) => {
@@ -91,6 +113,83 @@ const formatToolArguments = (tool: string, args?: Record<string, unknown>) => {
     formattedArgs.path = formatSkillPathLabel(formattedArgs.path);
   }
   return JSON.stringify(formattedArgs, null, 2);
+};
+
+const getTextArg = (args: Record<string, unknown> | undefined, key: string) => {
+  const value = args?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+};
+
+const isDefaultToolMessage = (message: string) =>
+  message === '开始调用工具' || message === '任务执行中' || message === '工具执行完成';
+
+const formatWorkspaceReadTarget = (args?: Record<string, unknown>) => {
+  const path = getTextArg(args, 'path');
+  if (!path) {
+    return '';
+  }
+  const label = formatSkillPathLabel(path);
+  if (/(^|\/)SKILL\.md$/i.test(path)) {
+    return `读取 Skill 定义：${label}`;
+  }
+  if (/(^|\/)references\//i.test(path)) {
+    return `读取参考资料：${label}`;
+  }
+  return `读取工作区文件：${label}`;
+};
+
+const formatToolWorkDescription = (event: ToolTraceDisplayEvent) => {
+  const formattedMessage = formatToolMessage(event.tool, event.message, event.arguments);
+  if (formattedMessage && !isDefaultToolMessage(formattedMessage)) {
+    return formattedMessage;
+  }
+
+  if (event.tool === 'web_search') {
+    return getTextArg(event.arguments, 'query')
+      ? `搜索：${getTextArg(event.arguments, 'query')}`
+      : formattedMessage;
+  }
+  if (event.tool === 'web_fetch') {
+    return getTextArg(event.arguments, 'url')
+      ? `抓取网页：${getTextArg(event.arguments, 'url')}`
+      : formattedMessage;
+  }
+  if (event.tool === 'read_file') {
+    const target = getTextArg(event.arguments, 'fileName') || getTextArg(event.arguments, 'fileId');
+    return target ? `读取文件：${target}` : formattedMessage;
+  }
+  if (event.tool === 'list_files') {
+    const bucket = getTextArg(event.arguments, 'bucket');
+    return bucket ? `列出文件：${bucket}` : '列出文件';
+  }
+  if (event.tool === 'list_workspace_paths') {
+    const path = getTextArg(event.arguments, 'path') || '.';
+    return `列出目录：${path}`;
+  }
+  if (event.tool === 'read_workspace_path_slice') {
+    return formatWorkspaceReadTarget(event.arguments) || formattedMessage;
+  }
+  if (event.tool === 'write_artifact_file') {
+    const fileName = getTextArg(event.arguments, 'fileName');
+    return fileName ? `写入文件：${fileName}` : formattedMessage;
+  }
+  if (event.tool === 'run_workspace_script') {
+    const path = getTextArg(event.arguments, 'path');
+    return path ? `运行脚本：${path}` : formattedMessage;
+  }
+
+  return formattedMessage || '调用工具';
+};
+
+const formatToolGroupCounts = (items: ToolTraceDisplayEvent[]) => {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const label = formatToolName(item.tool, item.arguments);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([label, count]) => `${label} ${count} 次`)
+    .join('、');
 };
 
 const toolStatusLabel: Record<ToolTraceDisplayEvent['status'], string> = {
@@ -588,6 +687,48 @@ const hasToolTraceDetails = (event: ToolTraceDisplayEvent) =>
       (typeof event.percent === 'number' && event.status === 'running'),
   );
 
+const getToolIcon = (tool: string) => {
+  if (tool === 'web_search') {
+    return Search;
+  }
+  if (tool === 'web_fetch') {
+    return Globe;
+  }
+  if (tool === 'read_file' || tool === 'read_workspace_path_slice') {
+    return FileText;
+  }
+  if (tool === 'list_files' || tool === 'list_workspace_paths') {
+    return FolderOpen;
+  }
+  if (tool === 'run_workspace_script') {
+    return Terminal;
+  }
+  if (tool === 'write_artifact_file') {
+    return Download;
+  }
+  return Wrench;
+};
+
+const ToolStatusBadge = ({ status }: { status: ToolTraceDisplayEvent['status'] }) => (
+  <span
+    className={cn(
+      'shrink-0 rounded-full px-1.5 py-0.5 text-[0.68rem] leading-none',
+      toolStatusToneClass[status],
+    )}
+  >
+    {toolStatusLabel[status]}
+  </span>
+);
+
+const ToolTraceIcon = ({ tool }: { tool: string }) => {
+  const Icon = getToolIcon(tool);
+  return (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-surface-hover text-foreground-muted">
+      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+    </span>
+  );
+};
+
 const ToolTraceDetails = ({ event }: { event: ToolTraceDisplayEvent }) => {
   const displayArguments = formatToolArguments(event.tool, event.arguments);
 
@@ -623,22 +764,18 @@ const ToolTraceDetails = ({ event }: { event: ToolTraceDisplayEvent }) => {
 
 const ToolTraceSummary = ({ event }: { event: ToolTraceDisplayEvent }) => {
   const displayTool = formatToolName(event.tool, event.arguments);
-  const displayMessage = formatToolMessage(event.tool, event.message, event.arguments);
+  const displayMessage = formatToolWorkDescription(event);
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-      <div className="flex items-center gap-1.5">
-        <strong className="truncate text-xs font-medium">{displayTool}</strong>
-        <span
-          className={cn(
-            'rounded-full px-1.5 py-0.5 text-[0.68rem] leading-none',
-            toolStatusToneClass[event.status],
-          )}
-        >
-          {toolStatusLabel[event.status]}
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <ToolTraceIcon tool={event.tool} />
+      <div className="flex min-w-0 flex-1 items-baseline gap-2">
+        <strong className="shrink-0 text-xs font-medium">{displayTool}</strong>
+        <span className="truncate text-[0.72rem] leading-4 text-foreground-muted">
+          {displayMessage}
         </span>
       </div>
-      <div className="truncate text-[0.72rem] leading-4 text-foreground-muted">{displayMessage}</div>
+      <ToolStatusBadge status={event.status} />
     </div>
   );
 };
@@ -674,6 +811,46 @@ const ToolTraceCardView = ({
   );
 };
 
+const ToolTraceGroupItemView = ({
+  event,
+  index,
+}: {
+  event: ToolTraceDisplayEvent;
+  index: number;
+}) => {
+  const hasDetails = hasToolTraceDetails(event);
+  const counter = `#${index + 1}`;
+
+  if (!hasDetails) {
+    return (
+      <div className="flex items-center gap-2 px-2.5 py-2">
+        <span className="w-6 shrink-0 text-right text-2xs tabular-nums text-foreground-muted">
+          {counter}
+        </span>
+        <ToolTraceSummary event={event} />
+      </div>
+    );
+  }
+
+  return (
+    <details className="group/trace-item">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-2 hover:bg-surface-hover">
+        <span className="w-6 shrink-0 text-right text-2xs tabular-nums text-foreground-muted">
+          {counter}
+        </span>
+        <ToolTraceSummary event={event} />
+        <span className="text-2xs text-foreground-muted group-open/trace-item:hidden">展开</span>
+        <span className="hidden text-2xs text-foreground-muted group-open/trace-item:inline">
+          收起
+        </span>
+      </summary>
+      <div className="pl-10">
+        <ToolTraceDetails event={event} />
+      </div>
+    </details>
+  );
+};
+
 const ToolTraceGroupCardView = ({
   event,
   canExpandToolTrace,
@@ -681,28 +858,19 @@ const ToolTraceGroupCardView = ({
   event: ToolTraceGroupDisplayEvent;
   canExpandToolTrace: boolean;
 }) => {
-  const firstItem = event.items[0];
-  const latestItem = event.items.at(-1);
-  const displayTool = firstItem ? formatToolName(event.tool, firstItem.arguments) : event.tool;
-  const latestMessage = latestItem
-    ? formatToolMessage(latestItem.tool, latestItem.message, latestItem.arguments)
-    : '';
+  const countSummary = formatToolGroupCounts(event.items);
   const summary = (
-    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <strong className="truncate text-xs font-medium">{displayTool} x {event.items.length}</strong>
-        <span
-          className={cn(
-            'rounded-full px-1.5 py-0.5 text-[0.68rem] leading-none',
-            toolStatusToneClass[event.status],
-          )}
-        >
-          {toolStatusLabel[event.status]}
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-surface-hover text-foreground-muted">
+        <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
+      </span>
+      <div className="flex min-w-0 flex-1 items-baseline gap-2">
+        <strong className="shrink-0 text-xs font-medium">使用 {event.items.length} 次工具</strong>
+        <span className="truncate text-[0.72rem] leading-4 text-foreground-muted">
+          {countSummary}
         </span>
       </div>
-      <div className="truncate text-[0.72rem] leading-4 text-foreground-muted">
-        {latestMessage ? `最近：${latestMessage}` : `${event.items.length} 条连续工具记录已合并`}
-      </div>
+      <ToolStatusBadge status={event.status} />
     </div>
   );
 
@@ -722,12 +890,9 @@ const ToolTraceGroupCardView = ({
           <span className="text-2xs text-foreground-muted group-open/trace-group:hidden">展开</span>
           <span className="hidden text-2xs text-foreground-muted group-open/trace-group:inline">收起</span>
         </summary>
-        <div className="flex flex-col gap-1.5 border-t border-border bg-background px-1.5 py-1.5">
+        <div className="divide-y divide-border border-t border-border bg-background">
           {event.items.map((item, index) => (
-            <div key={item.id} className="flex flex-col gap-1">
-              <div className="px-1 text-2xs text-foreground-muted">第 {index + 1} 次</div>
-              <ToolTraceCardView event={item} canExpandToolTrace />
-            </div>
+            <ToolTraceGroupItemView key={item.id} event={item} index={index} />
           ))}
         </div>
       </details>
