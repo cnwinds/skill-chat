@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Loader2,
   LogOut,
@@ -50,6 +50,56 @@ export interface SidebarProps {
   onLogout: () => void;
 }
 
+type SessionTimeGroup = {
+  label: string;
+  sessions: SessionSummary[];
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const startOfLocalDay = (date: Date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+
+const padMonth = (monthIndex: number) => String(monthIndex + 1).padStart(2, '0');
+
+const getSessionActivityDate = (session: SessionSummary) => {
+  const raw = session.lastMessageAt ?? session.updatedAt ?? session.createdAt;
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? new Date(session.createdAt) : date;
+};
+
+const getSessionGroupLabel = (session: SessionSummary, now = new Date()) => {
+  const date = getSessionActivityDate(session);
+  if (Number.isNaN(date.getTime())) {
+    return '其他';
+  }
+
+  const diffDays = Math.floor((startOfLocalDay(now) - startOfLocalDay(date)) / DAY_MS);
+  if (diffDays <= 0) {
+    return '今天';
+  }
+  if (diffDays < 7) {
+    return '7天内';
+  }
+
+  return `${date.getFullYear()}-${padMonth(date.getMonth())}`;
+};
+
+const groupSessionsByTime = (sessions: SessionSummary[]): SessionTimeGroup[] => {
+  const groups: SessionTimeGroup[] = [];
+  const now = new Date();
+  for (const session of sessions) {
+    const label = getSessionGroupLabel(session, now);
+    const current = groups[groups.length - 1];
+    if (current?.label === label) {
+      current.sessions.push(session);
+      continue;
+    }
+    groups.push({ label, sessions: [session] });
+  }
+  return groups;
+};
+
 export const Sidebar = ({
   sessions,
   visibleSessionCount,
@@ -69,7 +119,11 @@ export const Sidebar = ({
   onLoadMoreSessions,
   onLogout,
 }: SidebarProps) => {
-  const visible = sessions.slice(0, visibleSessionCount);
+  const visible = useMemo(
+    () => sessions.slice(0, visibleSessionCount),
+    [sessions, visibleSessionCount],
+  );
+  const groupedVisible = useMemo(() => groupSessionsByTime(visible), [visible]);
   const [renameTarget, setRenameTarget] = useState<SessionSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
@@ -112,83 +166,95 @@ export const Sidebar = ({
 
       <ScrollArea className="min-h-0 flex-1 px-2">
         <div className="flex flex-col gap-1 pb-3">
-          {visible.map((session) => {
-            const isActive = session.id === activeSessionId && !isSettingsView;
-            const isRunning = runningSessionIds.has(session.id);
-            return (
+          {groupedVisible.map((group, groupIndex) => (
+            <section key={group.label} aria-label={group.label} className="flex flex-col gap-1">
               <div
-                key={session.id}
                 className={cn(
-                  'group/session relative rounded-md transition-colors',
-                  isActive && 'bg-surface-hover',
-                  !isActive && 'hover:bg-surface-hover',
+                  'px-3 pb-1 text-2xs font-medium text-foreground-muted',
+                  groupIndex === 0 ? 'pt-1' : 'pt-3',
                 )}
               >
-                <button
-                  type="button"
-                  aria-label={`打开会话：${session.title}${isRunning ? '，回应中' : ''}`}
-                  onClick={() => onSelectSession(session.id)}
-                  onDoubleClick={() => setRenameTarget(session)}
-                  data-active={isActive ? 'true' : undefined}
-                  className={cn(
-                    'session-item flex w-full flex-col gap-0.5 rounded-md px-3 py-2 pr-9 text-left text-sm transition-colors',
-                    isActive && 'active',
-                  )}
-                >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {isRunning ? (
-                      <span
-                        aria-label="回应中"
-                        className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.12)]"
-                      />
-                    ) : null}
-                    <span className="truncate font-medium text-foreground">{session.title}</span>
-                    {isRunning ? (
-                      <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-2xs text-emerald-500">
-                        回应中
-                      </span>
-                    ) : null}
-                  </span>
-                  {session.activeSkills.length > 0 ? (
-                    <span className="truncate text-2xs text-foreground-muted">
-                      {session.activeSkills.join(' · ')}
-                    </span>
-                  ) : null}
-                </button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
+                {group.label}
+              </div>
+              {group.sessions.map((session) => {
+                const isActive = session.id === activeSessionId && !isSettingsView;
+                const isRunning = runningSessionIds.has(session.id);
+                return (
+                  <div
+                    key={session.id}
+                    className={cn(
+                      'group/session relative rounded-md transition-colors',
+                      isActive && 'bg-surface-hover',
+                      !isActive && 'hover:bg-surface-hover',
+                    )}
+                  >
                     <button
                       type="button"
-                      aria-label={`打开会话操作：${session.title}`}
-                      title="会话操作"
+                      aria-label={`打开会话：${session.title}${isRunning ? '，回应中' : ''}`}
+                      onClick={() => onSelectSession(session.id)}
+                      onDoubleClick={() => setRenameTarget(session)}
+                      data-active={isActive ? 'true' : undefined}
                       className={cn(
-                        'absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground-muted transition hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-                        'opacity-100 lg:opacity-0 lg:group-hover/session:opacity-100 lg:focus-visible:opacity-100',
-                        isActive && 'lg:opacity-100',
+                        'session-item flex w-full flex-col gap-0.5 rounded-md px-3 py-2 pr-9 text-left text-sm transition-colors',
+                        isActive && 'active',
                       )}
                     >
-                      <MoreHorizontal className="h-4 w-4" />
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        {isRunning ? (
+                          <span
+                            aria-label="回应中"
+                            className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.12)]"
+                          />
+                        ) : null}
+                        <span className="truncate font-medium text-foreground">{session.title}</span>
+                        {isRunning ? (
+                          <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-2xs text-emerald-500">
+                            回应中
+                          </span>
+                        ) : null}
+                      </span>
+                      {session.activeSkills.length > 0 ? (
+                        <span className="truncate text-2xs text-foreground-muted">
+                          {session.activeSkills.join(' · ')}
+                        </span>
+                      ) : null}
                     </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => setRenameTarget(session)}>
-                      <Pencil className="h-3.5 w-3.5" />
-                      修改标题
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      disabled={isRunning}
-                      onSelect={() => setDeleteTarget(session)}
-                      className="text-danger focus:text-danger"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      删除会话
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            );
-          })}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={`打开会话操作：${session.title}`}
+                          title="会话操作"
+                          className={cn(
+                            'absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-foreground-muted transition hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                            'opacity-100 lg:opacity-0 lg:group-hover/session:opacity-100 lg:focus-visible:opacity-100',
+                            isActive && 'lg:opacity-100',
+                          )}
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onSelect={() => setRenameTarget(session)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                          修改标题
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          disabled={isRunning}
+                          onSelect={() => setDeleteTarget(session)}
+                          className="text-danger focus:text-danger"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          删除会话
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                );
+              })}
+            </section>
+          ))}
 
           {hiddenSessionCount > 0 ? (
             <Button

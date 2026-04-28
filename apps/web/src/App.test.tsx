@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import type { FileEvent, TextMessageEvent, ThinkingEvent, ToolProgressEvent } from '@skillchat/shared';
+import type {
+  FileEvent,
+  SessionSummary,
+  TextMessageEvent,
+  ThinkingEvent,
+  ToolProgressEvent,
+  UserSummary,
+} from '@skillchat/shared';
 import { MessageItem } from './components/MessageItem';
 import { QuestionTimelineControl } from './components/chat/QuestionTimelineControl';
+import { Sidebar } from './components/sidebar/Sidebar';
 import type { ToolTraceDisplayEvent, ToolTraceGroupDisplayEvent } from './lib/timeline';
 
 describe('MessageItem', () => {
@@ -326,6 +334,80 @@ describe('MessageItem', () => {
     expect(screen.getByText('最近：已读取 Skill 定义：another-perspective / SKILL.md')).toBeInTheDocument();
     expect(screen.getByText('第 1 次')).toBeInTheDocument();
     expect(screen.getByText('第 2 次')).toBeInTheDocument();
+  });
+});
+
+describe('Sidebar', () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  const user: UserSummary = {
+    id: 'u1',
+    username: 'tester',
+    role: 'admin',
+  };
+
+  const makeSession = (input: Partial<SessionSummary> & Pick<SessionSummary, 'id' | 'title'>): SessionSummary => ({
+    createdAt: '2026-04-01T00:00:00.000Z',
+    updatedAt: '2026-04-01T00:00:00.000Z',
+    lastMessageAt: null,
+    activeSkills: [],
+    ...input,
+  });
+
+  it('groups visible sessions by recent activity time', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 3, 28, 12, 0, 0));
+
+    render(
+      <Sidebar
+        sessions={[
+          makeSession({
+            id: 'today',
+            title: '今天的会话',
+            createdAt: new Date(2026, 2, 20, 10).toISOString(),
+            updatedAt: new Date(2026, 2, 20, 10).toISOString(),
+            lastMessageAt: new Date(2026, 3, 28, 9).toISOString(),
+          }),
+          makeSession({
+            id: 'week',
+            title: '七天内的会话',
+            updatedAt: new Date(2026, 3, 25, 9).toISOString(),
+          }),
+          makeSession({
+            id: 'april',
+            title: '四月旧会话',
+            updatedAt: new Date(2026, 3, 10, 9).toISOString(),
+          }),
+          makeSession({
+            id: 'march',
+            title: '三月会话',
+            updatedAt: new Date(2026, 2, 20, 9).toISOString(),
+          }),
+        ]}
+        visibleSessionCount={4}
+        hiddenSessionCount={0}
+        activeSessionId={null}
+        runningSessionIds={new Set()}
+        isSettingsView={false}
+        showSettingsEntry
+        user={user}
+        onSelectSession={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onSelectSettings={vi.fn()}
+        onCreateSession={vi.fn()}
+        onLoadMoreSessions={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+
+    expect(within(screen.getByText('今天').closest('section')!).getByText('今天的会话')).toBeInTheDocument();
+    expect(within(screen.getByText('7天内').closest('section')!).getByText('七天内的会话')).toBeInTheDocument();
+    expect(within(screen.getByText('2026-04').closest('section')!).getByText('四月旧会话')).toBeInTheDocument();
+    expect(within(screen.getByText('2026-03').closest('section')!).getByText('三月会话')).toBeInTheDocument();
   });
 });
 
