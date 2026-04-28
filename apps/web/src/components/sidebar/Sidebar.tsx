@@ -149,7 +149,7 @@ export const Sidebar = ({
   };
 
   return (
-    <div className="flex h-full flex-col bg-background text-foreground">
+    <div className="flex h-full min-w-0 max-w-full flex-col overflow-hidden bg-background text-foreground">
       <div className="flex items-center justify-between gap-2 px-4 pb-2 pt-4">
         <h2 className="text-sm font-semibold tracking-wide text-foreground-muted">SkillChat</h2>
         <Button
@@ -164,10 +164,14 @@ export const Sidebar = ({
         </Button>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1 px-2">
-        <div className="flex flex-col gap-1 pb-3">
+      <ScrollArea className="min-h-0 min-w-0 flex-1 overflow-hidden px-2">
+        <div className="flex min-w-0 flex-col gap-1 pb-3">
           {groupedVisible.map((group, groupIndex) => (
-            <section key={group.label} aria-label={group.label} className="flex flex-col gap-1">
+            <section
+              key={group.label}
+              aria-label={group.label}
+              className="flex min-w-0 flex-col gap-1"
+            >
               <div
                 className={cn(
                   'px-3 pb-1 text-2xs font-medium text-foreground-muted',
@@ -183,7 +187,7 @@ export const Sidebar = ({
                   <div
                     key={session.id}
                     className={cn(
-                      'group/session relative rounded-md transition-colors',
+                      'group/session relative min-w-0 max-w-full overflow-hidden rounded-md transition-colors',
                       isActive && 'bg-surface-hover',
                       !isActive && 'hover:bg-surface-hover',
                     )}
@@ -195,18 +199,20 @@ export const Sidebar = ({
                       onDoubleClick={() => setRenameTarget(session)}
                       data-active={isActive ? 'true' : undefined}
                       className={cn(
-                        'session-item flex w-full flex-col gap-0.5 rounded-md px-3 py-2 pr-9 text-left text-sm transition-colors',
+                        'session-item flex w-full min-w-0 max-w-full flex-col gap-0.5 overflow-hidden rounded-md px-3 py-2 pr-9 text-left text-sm transition-colors',
                         isActive && 'active',
                       )}
                     >
-                      <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="flex w-full min-w-0 items-center gap-1.5 overflow-hidden">
                         {isRunning ? (
                           <span
                             aria-label="回应中"
                             className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.12)]"
                           />
                         ) : null}
-                        <span className="truncate font-medium text-foreground">{session.title}</span>
+                        <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                          {session.title}
+                        </span>
                         {isRunning ? (
                           <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-2xs text-emerald-500">
                             回应中
@@ -214,7 +220,7 @@ export const Sidebar = ({
                         ) : null}
                       </span>
                       {session.activeSkills.length > 0 ? (
-                        <span className="truncate text-2xs text-foreground-muted">
+                        <span className="block w-full min-w-0 truncate text-2xs text-foreground-muted">
                           {session.activeSkills.join(' · ')}
                         </span>
                       ) : null}

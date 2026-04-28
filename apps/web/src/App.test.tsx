@@ -409,6 +409,48 @@ describe('Sidebar', () => {
     expect(within(screen.getByText('2026-04').closest('section')!).getByText('四月旧会话')).toBeInTheDocument();
     expect(within(screen.getByText('2026-03').closest('section')!).getByText('三月会话')).toBeInTheDocument();
   });
+
+  it('constrains long session titles and skill labels inside the sidebar width', () => {
+    const longTitle = '扮演张雪峰，高二文科怎么选专业这个标题非常长';
+    const longSkills = [
+      'official/zhangxuefeng-perspective',
+      'official/pdf-export-assistant',
+      'official/very-long-skill-name',
+    ];
+    render(
+      <Sidebar
+        sessions={[
+          makeSession({
+            id: 'long',
+            title: longTitle,
+            activeSkills: longSkills,
+          }),
+        ]}
+        visibleSessionCount={1}
+        hiddenSessionCount={0}
+        activeSessionId={null}
+        runningSessionIds={new Set()}
+        isSettingsView={false}
+        showSettingsEntry
+        user={user}
+        onSelectSession={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onSelectSettings={vi.fn()}
+        onCreateSession={vi.fn()}
+        onLoadMoreSessions={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+
+    const sessionButton = screen.getByRole('button', { name: `打开会话：${longTitle}` });
+    const title = screen.getByText(longTitle);
+    const skills = screen.getByText(longSkills.join(' · '));
+
+    expect(sessionButton).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden');
+    expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate');
+    expect(skills).toHaveClass('block', 'w-full', 'min-w-0', 'truncate');
+  });
 });
 
 describe('QuestionTimelineControl', () => {
