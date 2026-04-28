@@ -11,7 +11,50 @@ import type {
 import { MessageItem } from './components/MessageItem';
 import { QuestionTimelineControl } from './components/chat/QuestionTimelineControl';
 import { Sidebar } from './components/sidebar/Sidebar';
+import { getQuestionAnchorOffset, getQuestionTargetScrollTop } from './lib/question-scroll';
 import type { ToolTraceDisplayEvent, ToolTraceGroupDisplayEvent } from './lib/timeline';
+
+describe('question scroll geometry', () => {
+  it('keeps selected questions on the upper reading anchor instead of the middle', () => {
+    expect(getQuestionAnchorOffset(800)).toBe(240);
+    expect(getQuestionAnchorOffset(240)).toBe(96);
+    expect(getQuestionAnchorOffset(120)).toBe(66);
+  });
+
+  it('aligns a clicked question to the same anchor used by active detection', () => {
+    expect(
+      getQuestionTargetScrollTop({
+        currentScrollTop: 500,
+        scrollHeight: 2400,
+        clientHeight: 800,
+        containerTop: 100,
+        questionTop: 700,
+      }),
+    ).toBe(860);
+  });
+
+  it('clamps clicked-question scrolling to the scrollable range', () => {
+    expect(
+      getQuestionTargetScrollTop({
+        currentScrollTop: 20,
+        scrollHeight: 900,
+        clientHeight: 800,
+        containerTop: 100,
+        questionTop: 120,
+      }),
+    ).toBe(0);
+
+    expect(
+      getQuestionTargetScrollTop({
+        currentScrollTop: 900,
+        scrollHeight: 1200,
+        clientHeight: 800,
+        containerTop: 100,
+        questionTop: 1000,
+      }),
+    ).toBe(400);
+  });
+});
 
 describe('MessageItem', () => {
   afterEach(() => {

@@ -26,6 +26,7 @@ import { buildRenderableTimeline, type TimelineItem } from '@/lib/timeline';
 import { ChatHeader } from '@/components/layout/ChatHeader';
 import { Composer } from '@/components/chat/Composer';
 import { FollowUpQueue } from '@/components/chat/FollowUpQueue';
+import { getQuestionAnchorOffset, getQuestionTargetScrollTop } from '@/lib/question-scroll';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -642,12 +643,20 @@ export const ChatPage = () => {
       return;
     }
 
+    const distanceFromBottom =
+      container.scrollHeight - (container.scrollTop + container.clientHeight);
+    const hasScrollableOverflow =
+      container.scrollHeight > container.clientHeight + SCROLL_BOTTOM_THRESHOLD_PX;
+    if (hasScrollableOverflow && distanceFromBottom <= SCROLL_BOTTOM_THRESHOLD_PX) {
+      const lastQuestion = questionTimeline.at(-1);
+      setActiveQuestionId((current) =>
+        current === lastQuestion?.id ? current : lastQuestion?.id ?? null,
+      );
+      return;
+    }
+
     const containerRect = container.getBoundingClientRect();
-    const anchorOffset = Math.min(
-      Math.max(containerRect.height * 0.3, 96),
-      containerRect.height * 0.55,
-    );
-    const anchorY = containerRect.top + anchorOffset;
+    const anchorY = containerRect.top + getQuestionAnchorOffset(containerRect.height);
     let nextActiveId: string | null = null;
 
     for (const question of questionTimeline) {
@@ -795,10 +804,26 @@ export const ChatPage = () => {
 
   const handleSelectQuestionFromTimeline = (eventId: string) => {
     const node = messageNodeRefs.current.get(eventId);
-    if (!node) {
+    const container = messageListRef.current;
+    if (!node || !container) {
       return;
     }
-    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    const containerRect = container.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    const nextScrollTop = getQuestionTargetScrollTop({
+      currentScrollTop: container.scrollTop,
+      scrollHeight: container.scrollHeight,
+      clientHeight: container.clientHeight,
+      containerTop: containerRect.top,
+      questionTop: nodeRect.top,
+    });
+
+    if (typeof container.scrollTo === 'function') {
+      container.scrollTo({ top: nextScrollTop, behavior: 'smooth' });
+    } else {
+      container.scrollTop = nextScrollTop;
+    }
     setHighlightedEventId(eventId);
     setActiveQuestionId(eventId);
     if (highlightTimerRef.current) {
