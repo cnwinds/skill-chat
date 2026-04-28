@@ -172,13 +172,17 @@ const toToolResultCandidate = (event: Extract<StoredEvent, { kind: 'tool_result'
   );
 };
 
-const toFileCandidate = (event: Extract<StoredEvent, { kind: 'file' }>) => createCandidate(
-  'assistant',
-  [
-    '上一轮生成了文件：',
-    `名称：${event.file.displayName}`,
-    `路径：${event.file.relativePath}`,
-  ].join('\n'),
+const toFileCandidate = (event: Extract<StoredEvent, { kind: 'file' }>) => (
+  event.file.visibility === 'hidden'
+    ? null
+    : createCandidate(
+      'assistant',
+      [
+        '上一轮生成了文件：',
+        `名称：${event.file.displayName}`,
+        `路径：${event.file.relativePath}`,
+      ].join('\n'),
+    )
 );
 
 const toErrorCandidate = (event: Extract<StoredEvent, { kind: 'error' }>) => createCandidate(

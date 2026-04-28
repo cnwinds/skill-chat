@@ -67,6 +67,7 @@ export class RunnerManager {
                   sessionId: args.sessionId,
                   absolutePath: normalizedPath,
                   displayName: artifact.label,
+                  visibility: artifact.visibility,
                 });
                 await args.onArtifact(record);
               },

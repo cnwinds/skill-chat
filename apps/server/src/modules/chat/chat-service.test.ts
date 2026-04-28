@@ -297,6 +297,46 @@ describe('ChatService harness-only flow', () => {
     ).toHaveLength(2);
   });
 
+  it('does not publish hidden intermediate artifacts as downloadable files', async () => {
+    const harnessRun = vi.fn(async ({ callbacks }: {
+      callbacks?: {
+        onArtifact?: (file: Record<string, unknown>) => Promise<void> | void;
+        onTextDelta?: (content: string) => Promise<void> | void;
+      };
+    }) => {
+      await callbacks?.onArtifact?.({
+        id: 'file_part_1',
+        userId: 'u1',
+        sessionId: 's1',
+        displayName: '[Content_Types].xml',
+        relativePath: 'sessions/s1/outputs/[Content_Types].xml',
+        mimeType: 'application/xml',
+        size: 512,
+        bucket: 'outputs',
+        source: 'generated',
+        visibility: 'hidden',
+        createdAt: new Date().toISOString(),
+        downloadUrl: '/api/files/file_part_1/download',
+      });
+      await callbacks?.onTextDelta?.('done');
+      return {
+        finalText: 'done',
+        roundsUsed: 1,
+      };
+    });
+
+    const { service, storedEvents, publish } = createService({ harnessRun });
+
+    await service.processMessage(
+      { id: 'u1', username: 'tester', role: 'member' },
+      's1',
+      'build a docx',
+    );
+
+    expect(storedEvents.map((event) => event.kind)).toEqual(['message', 'message']);
+    expect(publish.mock.calls.map(([, event]) => event.event)).not.toContain('file_ready');
+  });
+
   it('persists generated images from harness callbacks and publishes file_ready', async () => {
     const imageFile = {
       id: 'file_img_1',

@@ -355,6 +355,9 @@ export class ChatService {
             execution.throwIfAborted();
             execution.updatePhase('waiting_tool_result');
             execution.setCanSteer(false);
+            if (file.visibility === 'hidden') {
+              return;
+            }
             await this.emitStored(user.id, sessionId, {
               id: createEventId(),
               sessionId,

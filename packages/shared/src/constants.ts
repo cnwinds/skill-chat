@@ -24,6 +24,8 @@ export const FILE_BUCKETS = ['uploads', 'outputs', 'shared'] as const;
 
 export const FILE_SOURCES = ['upload', 'generated', 'shared'] as const;
 
+export const FILE_VISIBILITIES = ['visible', 'hidden'] as const;
+
 export const MESSAGE_KINDS = [
   'message',
   'thinking',

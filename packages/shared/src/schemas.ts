@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { FILE_BUCKETS, FILE_SOURCES, MESSAGE_KINDS, SSE_EVENT_NAMES } from './constants.js';
+import { FILE_BUCKETS, FILE_SOURCES, FILE_VISIBILITIES, MESSAGE_KINDS, SSE_EVENT_NAMES } from './constants.js';
 
 export const registerSchema = z.object({
   username: z.string()
@@ -139,6 +139,7 @@ export const turnParamsSchema = z.object({
 
 export const fileBucketSchema = z.enum(FILE_BUCKETS);
 export const fileSourceSchema = z.enum(FILE_SOURCES);
+export const fileVisibilitySchema = z.enum(FILE_VISIBILITIES);
 export const messageKindSchema = z.enum(MESSAGE_KINDS);
 export const sseEventSchema = z.enum(SSE_EVENT_NAMES);
 export const turnKindSchema = z.enum(['regular', 'review', 'compact', 'maintenance']);

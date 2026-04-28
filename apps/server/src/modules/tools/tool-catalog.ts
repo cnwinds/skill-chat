@@ -149,6 +149,11 @@ export const buildAssistantToolCatalog = (args: {
               content: { type: 'string', description: '要写入的文本内容' },
               mimeType: { type: 'string', description: '文件 MIME 类型，可选' },
               subdir: { type: 'string', description: 'outputs 下的子目录，可选' },
+              visibility: {
+                type: 'string',
+                enum: ['visible', 'hidden'],
+                description: 'Use visible only for final user-downloadable deliverables. Use hidden for intermediate, scratch, package-part, or validation files.',
+              },
             },
             required: ['fileName', 'content'],
           },

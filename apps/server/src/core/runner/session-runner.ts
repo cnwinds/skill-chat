@@ -2,6 +2,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import type { FileVisibility } from '@skillchat/shared';
 import type { AppConfig } from '../../config/env.js';
 import { assertPathInside, listFilesRecursively } from '../storage/fs-utils.js';
 import {
@@ -14,6 +15,7 @@ import {
 export interface RunnerArtifact {
   absolutePath: string;
   label?: string;
+  visibility?: FileVisibility;
 }
 
 export interface RunnerCallbacks {
@@ -125,6 +127,7 @@ export class SessionRunner {
           path?: string;
           label?: string;
           status?: string;
+          visibility?: string;
         };
 
         if (payload.type === 'progress') {
@@ -141,6 +144,9 @@ export class SessionRunner {
             await args.callbacks.onArtifact({
               absolutePath,
               label: payload.label,
+              visibility: payload.visibility === 'hidden' || payload.visibility === 'visible'
+                ? payload.visibility
+                : undefined,
             });
           }
           return;

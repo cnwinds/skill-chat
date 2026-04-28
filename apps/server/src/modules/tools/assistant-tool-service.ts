@@ -125,6 +125,7 @@ const writeArtifactFileSchema = z.object({
   content: z.string().min(1, 'content 不能为空'),
   mimeType: z.string().trim().optional(),
   subdir: z.string().trim().optional(),
+  visibility: z.enum(['visible', 'hidden']).optional(),
 });
 
 const decodeHtmlEntities = (input: string) =>
@@ -1243,6 +1244,7 @@ export class AssistantToolService {
       sessionId,
       absolutePath,
       displayName: fileName,
+      visibility: input.visibility,
     });
 
     return {
@@ -1251,11 +1253,15 @@ export class AssistantToolService {
         ...input,
         fileName,
       },
-      summary: `已写入产物 ${fileRecord.displayName}`,
+      summary: fileRecord.visibility === 'hidden'
+        ? `Wrote intermediate file ${fileRecord.displayName}`
+        : `已写入产物 ${fileRecord.displayName}`,
       content: [
         `文件名：${fileRecord.displayName}`,
         `相对路径：${fileRecord.relativePath}`,
-        `下载地址：${fileRecord.downloadUrl}`,
+        fileRecord.visibility === 'hidden'
+          ? 'Visibility: hidden intermediate file'
+          : `下载地址：${fileRecord.downloadUrl}`,
         '写入内容预览：',
         truncate(input.content, 2_000),
       ].join('\n\n'),

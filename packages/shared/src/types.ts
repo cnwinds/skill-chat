@@ -1,7 +1,8 @@
-import type { FILE_BUCKETS, FILE_SOURCES, MESSAGE_KINDS, SSE_EVENT_NAMES } from './constants.js';
+import type { FILE_BUCKETS, FILE_SOURCES, FILE_VISIBILITIES, MESSAGE_KINDS, SSE_EVENT_NAMES } from './constants.js';
 
 export type FileBucket = (typeof FILE_BUCKETS)[number];
 export type FileSource = (typeof FILE_SOURCES)[number];
+export type FileVisibility = (typeof FILE_VISIBILITIES)[number];
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
 export type SSEEventName = (typeof SSE_EVENT_NAMES)[number];
 
@@ -90,6 +91,7 @@ export interface FileRecord {
   size: number;
   bucket: FileBucket;
   source: FileSource;
+  visibility?: FileVisibility;
   createdAt: string;
   downloadUrl?: string;
   thumbnailUrl?: string;

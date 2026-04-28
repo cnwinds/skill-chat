@@ -3,7 +3,7 @@ import path from 'node:path';
 import mime from 'mime-types';
 import { nanoid } from 'nanoid';
 import sharp from 'sharp';
-import type { FileRecord, FileBucket, SessionFileContext } from '@skillchat/shared';
+import type { FileRecord, FileBucket, FileVisibility, SessionFileContext } from '@skillchat/shared';
 import type { MultipartFile } from '@fastify/multipart';
 import type { AppConfig } from '../../config/env.js';
 import type { AppDatabase } from '../../db/database.js';
@@ -26,6 +26,7 @@ type FileRow = {
   size: number;
   bucket: FileBucket;
   source: 'upload' | 'generated' | 'shared';
+  visibility?: FileVisibility;
   created_at: string;
 };
 
@@ -39,6 +40,7 @@ const toFileRecord = (row: FileRow): FileRecord => ({
   size: row.size,
   bucket: row.bucket,
   source: row.source,
+  visibility: row.visibility ?? 'visible',
   createdAt: row.created_at,
   downloadUrl: `/api/files/${row.id}/download`,
   ...(row.mime_type?.startsWith('image/')
@@ -51,6 +53,72 @@ const isImage = (file: Pick<FileRecord, 'mimeType'>) =>
 
 const isResizableImage = (file: Pick<FileRecord, 'mimeType'>) =>
   isImage(file) && file.mimeType !== 'image/svg+xml';
+
+const internalPathSegments = new Set([
+  'tmp',
+  'temp',
+  'scratch',
+  'work',
+  'working',
+  'intermediate',
+  'intermediates',
+  'parts',
+  '_rels',
+  'word',
+  'xl',
+  'ppt',
+  'docprops',
+  'customxml',
+]);
+
+const internalOoxmlPartNames = new Set([
+  '[content_types].xml',
+  'app.xml',
+  'comments.xml',
+  'core.xml',
+  'document.xml',
+  'endnotes.xml',
+  'fonttable.xml',
+  'footnotes.xml',
+  'numbering.xml',
+  'presentation.xml',
+  'settings.xml',
+  'sharedstrings.xml',
+  'styles.xml',
+  'theme1.xml',
+  'websettings.xml',
+  'workbook.xml',
+]);
+
+export const inferGeneratedFileVisibility = (args: {
+  absolutePath: string;
+  displayName?: string;
+}): FileVisibility => {
+  const normalizedPath = args.absolutePath.replace(/\\/g, '/').toLowerCase();
+  const pathSegments = normalizedPath.split('/').filter(Boolean);
+  const outputsIndex = pathSegments.lastIndexOf('outputs');
+  const artifactSegments = outputsIndex >= 0
+    ? pathSegments.slice(outputsIndex + 1, -1)
+    : pathSegments.slice(0, -1);
+  if (artifactSegments.some((segment) => internalPathSegments.has(segment))) {
+    return 'hidden';
+  }
+
+  const name = (args.displayName ?? path.basename(args.absolutePath)).toLowerCase();
+  if (
+    name.startsWith('~$') ||
+    name.endsWith('.tmp') ||
+    name.endsWith('.temp') ||
+    name.endsWith('.bak') ||
+    name.endsWith('.map') ||
+    name.endsWith('.rels') ||
+    internalOoxmlPartNames.has(name)
+  ) {
+    return 'hidden';
+  }
+
+  return 'visible';
+};
 
 const fileExists = async (filePath: string) => {
   try {
@@ -67,7 +135,7 @@ export class FileService {
     private readonly config: AppConfig,
   ) {}
 
-  list(userId: string, filters: { sessionId?: string; bucket?: FileBucket; type?: string } = {}): FileRecord[] {
+  list(userId: string, filters: { sessionId?: string; bucket?: FileBucket; type?: string; visibility?: FileVisibility | 'all' } = {}): FileRecord[] {
     const clauses = ['user_id = ?'];
     const params: unknown[] = [userId];
 
@@ -87,9 +155,14 @@ export class FileService {
       }
     }
 
+    if (filters.visibility !== 'all') {
+      clauses.push('visibility = ?');
+      params.push(filters.visibility ?? 'visible');
+    }
+
     const rows = this.db
       .prepare(
-        `SELECT id, user_id, session_id, display_name, relative_path, mime_type, size, bucket, source, created_at
+        `SELECT id, user_id, session_id, display_name, relative_path, mime_type, size, bucket, source, visibility, created_at
          FROM files
          WHERE ${clauses.join(' AND ')}
          ORDER BY created_at DESC`,
@@ -108,7 +181,7 @@ export class FileService {
   getById(userId: string, fileId: string): FileRecord {
     const row = this.db
       .prepare(
-        'SELECT id, user_id, session_id, display_name, relative_path, mime_type, size, bucket, source, created_at FROM files WHERE id = ? AND user_id = ?',
+        'SELECT id, user_id, session_id, display_name, relative_path, mime_type, size, bucket, source, visibility, created_at FROM files WHERE id = ? AND user_id = ?',
       )
       .get(fileId, userId) as FileRow | undefined;
 
@@ -146,6 +219,7 @@ export class FileService {
     sessionId: string;
     absolutePath: string;
     displayName?: string;
+    visibility?: FileVisibility;
   }): Promise<FileRecord> {
     return this.insertRecord({
       userId: args.userId,
@@ -155,6 +229,10 @@ export class FileService {
       mimeType: mime.lookup(args.absolutePath) || 'application/octet-stream',
       bucket: 'outputs',
       source: 'generated',
+      visibility: args.visibility ?? inferGeneratedFileVisibility({
+        absolutePath: args.absolutePath,
+        displayName: args.displayName,
+      }),
     });
   }
 
@@ -208,7 +286,7 @@ export class FileService {
       .prepare(
         `SELECT id, display_name, mime_type, size, bucket, relative_path
          FROM files
-         WHERE user_id = ? AND (session_id = ? OR bucket = 'shared')
+         WHERE user_id = ? AND (session_id = ? OR bucket = 'shared') AND visibility = 'visible'
          ORDER BY created_at DESC`,
       )
       .all(userId, sessionId) as Array<{
@@ -271,6 +349,7 @@ export class FileService {
     mimeType: string;
     bucket: FileBucket;
     source: 'upload' | 'generated' | 'shared';
+    visibility?: FileVisibility;
   }): Promise<FileRecord> {
     const userRoot = getUserRoot(this.config, args.userId);
     assertPathInside(userRoot, args.absolutePath);
@@ -283,8 +362,8 @@ export class FileService {
     this.db
       .prepare(
         `INSERT INTO files
-          (id, user_id, session_id, display_name, relative_path, mime_type, size, bucket, source, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, user_id, session_id, display_name, relative_path, mime_type, size, bucket, source, visibility, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -296,6 +375,7 @@ export class FileService {
         stat.size,
         args.bucket,
         args.source,
+        args.visibility ?? 'visible',
         now,
       );
 
@@ -309,6 +389,7 @@ export class FileService {
       size: stat.size,
       bucket: args.bucket,
       source: args.source,
+      visibility: args.visibility ?? 'visible',
       createdAt: now,
       downloadUrl: `/api/files/${id}/download`,
       ...(args.mimeType.startsWith('image/')

@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS files (
   size INTEGER NOT NULL,
   bucket TEXT NOT NULL CHECK(bucket IN ('uploads', 'outputs', 'shared')),
   source TEXT NOT NULL CHECK(source IN ('upload', 'generated', 'shared')),
+  visibility TEXT NOT NULL DEFAULT 'visible' CHECK(visibility IN ('visible', 'hidden')),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -147,6 +148,53 @@ export const migrateDatabase = (db: AppDatabase) => {
   const sessionColumns = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>;
   if (!sessionColumns.some((column) => column.name === 'active_skills')) {
     db.exec("ALTER TABLE sessions ADD COLUMN active_skills TEXT NOT NULL DEFAULT '[]'");
+  }
+  const fileColumns = db.prepare('PRAGMA table_info(files)').all() as Array<{ name: string }>;
+  const hasFileVisibility = fileColumns.some((column) => column.name === 'visibility');
+  if (!hasFileVisibility) {
+    db.exec("ALTER TABLE files ADD COLUMN visibility TEXT NOT NULL DEFAULT 'visible' CHECK(visibility IN ('visible', 'hidden'))");
+    db.exec(`
+      UPDATE files
+      SET visibility = 'hidden'
+      WHERE source = 'generated'
+        AND (
+          lower(display_name) IN (
+            '[content_types].xml',
+            'app.xml',
+            'comments.xml',
+            'core.xml',
+            'document.xml',
+            'endnotes.xml',
+            'fonttable.xml',
+            'footnotes.xml',
+            'numbering.xml',
+            'presentation.xml',
+            'settings.xml',
+            'sharedstrings.xml',
+            'styles.xml',
+            'theme1.xml',
+            'websettings.xml',
+            'workbook.xml'
+          )
+          OR lower(display_name) LIKE '%.rels'
+          OR lower(display_name) LIKE '%.tmp'
+          OR lower(display_name) LIKE '%.temp'
+          OR lower(display_name) LIKE '%.bak'
+          OR lower(display_name) LIKE '%.map'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/tmp/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/temp/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/scratch/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/intermediate/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/intermediates/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/parts/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/_rels/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/word/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/xl/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/ppt/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/docprops/%'
+          OR lower(replace(relative_path, char(92), '/')) LIKE '%/outputs/customxml/%'
+        )
+    `);
   }
   db.exec(`
     INSERT OR IGNORE INTO skill_packages (

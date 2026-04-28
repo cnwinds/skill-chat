@@ -1,4 +1,4 @@
-import type { StoredEvent, ThinkingEvent } from '@skillchat/shared';
+import type { FileRecord, StoredEvent, ThinkingEvent } from '@skillchat/shared';
 
 type ToolTraceStatus = 'queued' | 'running' | 'success' | 'failed';
 
@@ -55,6 +55,74 @@ const isHiddenToolEvent = (event: Extract<StoredEvent, { kind: 'tool_call' | 'to
   event.hidden === true;
 
 const isThinkingEvent = (event: StoredEvent): event is ThinkingEvent => event.kind === 'thinking';
+
+const internalGeneratedFileNames = new Set([
+  '[content_types].xml',
+  'app.xml',
+  'comments.xml',
+  'core.xml',
+  'document.xml',
+  'endnotes.xml',
+  'fonttable.xml',
+  'footnotes.xml',
+  'numbering.xml',
+  'presentation.xml',
+  'settings.xml',
+  'sharedstrings.xml',
+  'styles.xml',
+  'theme1.xml',
+  'websettings.xml',
+  'workbook.xml',
+]);
+
+const internalGeneratedPathSegments = new Set([
+  'tmp',
+  'temp',
+  'scratch',
+  'intermediate',
+  'intermediates',
+  'parts',
+  '_rels',
+  'word',
+  'xl',
+  'ppt',
+  'docprops',
+  'customxml',
+]);
+
+const isLikelyIntermediateGeneratedFile = (file: FileRecord) => {
+  if (file.source !== 'generated') {
+    return false;
+  }
+
+  const name = file.displayName.toLowerCase();
+  if (
+    name.endsWith('.rels') ||
+    name.endsWith('.tmp') ||
+    name.endsWith('.temp') ||
+    name.endsWith('.bak') ||
+    name.endsWith('.map') ||
+    internalGeneratedFileNames.has(name)
+  ) {
+    return true;
+  }
+
+  const normalizedPath = file.relativePath.replace(/\\/g, '/').toLowerCase();
+  const segments = normalizedPath.split('/').filter(Boolean);
+  const outputsIndex = segments.lastIndexOf('outputs');
+  const artifactSegments = outputsIndex >= 0
+    ? segments.slice(outputsIndex + 1, -1)
+    : [];
+  return artifactSegments.some((segment) => internalGeneratedPathSegments.has(segment));
+};
+
+const isHiddenFileEvent = (event: StoredEvent) => (
+  event.kind === 'file' &&
+  (
+    event.file.visibility === 'hidden' ||
+    (typeof event.file.visibility === 'undefined' && isLikelyIntermediateGeneratedFile(event.file))
+  )
+);
 
 const aggregateToolStatus = (items: ToolTraceDisplayEvent[]): ToolTraceStatus => {
   if (items.some((item) => item.status === 'failed')) {
@@ -145,6 +213,10 @@ export const buildTimelineItems = (events: StoredEvent[]): TimelineItem[] => {
   };
 
   for (const event of events) {
+    if (isHiddenFileEvent(event)) {
+      continue;
+    }
+
     if (!isToolEvent(event)) {
       items.push(event);
       continue;

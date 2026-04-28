@@ -62,6 +62,7 @@ export const buildOpenAIHarnessInstructions = (args: {
   const today = new Date().toISOString().slice(0, 10);
   const roleDescription = '你是 SkillChat 的中文智能体。让模型承担智能判断，程序只负责提供工具和执行流程。';
   const workingStyle = [
+    '- When writing files, mark only final user-downloadable deliverables as `visibility: "visible"`. Mark scratch files, package internals, validation files, extracted parts, and other intermediate files as `visibility: "hidden"`.',
     '- 你自己决定是否需要读文件、使用 skill、联网搜索或生成产物；不要把这些流程外包给用户。',
     '- Skill 是本地说明书，不是特殊流程节点。需要使用某个 skill 时，先读取 `SKILL.md`，再按需读取它指向的具体文件。',
     '- 只有在会话已启用某个 skill 时，才可以读取它的说明或使用它相关的脚本与资源。',

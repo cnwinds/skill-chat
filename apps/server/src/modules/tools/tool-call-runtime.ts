@@ -48,7 +48,8 @@ const createToolOutputPayload = (result: ExecutedAssistantToolResult) => JSON.st
     id: file.id,
     name: file.displayName,
     relativePath: file.relativePath,
-    downloadUrl: file.downloadUrl,
+    visibility: file.visibility ?? 'visible',
+    ...(file.visibility === 'hidden' ? {} : { downloadUrl: file.downloadUrl }),
   })),
 });
 

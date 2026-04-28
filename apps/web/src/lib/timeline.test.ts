@@ -245,6 +245,60 @@ describe('buildTimelineItems', () => {
     });
   });
 
+  it('skips hidden intermediate file events', () => {
+    const events: StoredEvent[] = [
+      {
+        id: 'file_hidden',
+        sessionId: 's1',
+        kind: 'file',
+        file: {
+          id: 'f_hidden',
+          userId: 'u1',
+          sessionId: 's1',
+          displayName: '[Content_Types].xml',
+          relativePath: 'sessions/s1/outputs/[Content_Types].xml',
+          mimeType: 'application/xml',
+          size: 512,
+          bucket: 'outputs',
+          source: 'generated',
+          createdAt: '2026-04-10T10:00:00.000Z',
+          downloadUrl: '/api/files/f_hidden/download',
+        },
+        createdAt: '2026-04-10T10:00:00.000Z',
+      },
+      {
+        id: 'file_visible',
+        sessionId: 's1',
+        kind: 'file',
+        file: {
+          id: 'f_visible',
+          userId: 'u1',
+          sessionId: 's1',
+          displayName: 'report.docx',
+          relativePath: 'sessions/s1/outputs/report.docx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          size: 4096,
+          bucket: 'outputs',
+          source: 'generated',
+          visibility: 'visible',
+          createdAt: '2026-04-10T10:00:01.000Z',
+          downloadUrl: '/api/files/f_visible/download',
+        },
+        createdAt: '2026-04-10T10:00:01.000Z',
+      },
+    ];
+
+    const timeline = buildTimelineItems(events);
+
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toMatchObject({
+      kind: 'file',
+      file: {
+        displayName: 'report.docx',
+      },
+    });
+  });
+
   it('keeps thinking out of the main timeline and exposes the latest thinking event separately', () => {
     const events: StoredEvent[] = [
       {
