@@ -3,6 +3,7 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   AlertCircle,
+  ChevronDown,
   Check,
   Copy,
   Download,
@@ -376,8 +377,7 @@ const ImageEventCard = ({
         <details className="group/image rounded-md border border-border bg-surface">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-1.5 text-2xs text-foreground-muted hover:bg-surface-hover">
             <span>图片信息</span>
-            <span className="group-open/image:hidden">展开</span>
-            <span className="hidden group-open/image:inline">收起</span>
+            <ChevronDown className="h-3.5 w-3.5 transition-transform group-open/image:rotate-180" />
           </summary>
           <div className="flex flex-col gap-2 border-t border-border px-2.5 py-2 text-xs">
             <div className="flex flex-wrap gap-1.5 text-2xs text-foreground-muted">
@@ -709,16 +709,22 @@ const getToolIcon = (tool: string) => {
   return Wrench;
 };
 
-const ToolStatusBadge = ({ status }: { status: ToolTraceDisplayEvent['status'] }) => (
-  <span
-    className={cn(
-      'shrink-0 rounded-full px-1.5 py-0.5 text-[0.68rem] leading-none',
-      toolStatusToneClass[status],
-    )}
-  >
-    {toolStatusLabel[status]}
-  </span>
-);
+const ToolStatusBadge = ({ status }: { status: ToolTraceDisplayEvent['status'] }) => {
+  if (status === 'success') {
+    return null;
+  }
+
+  return (
+    <span
+      className={cn(
+        'shrink-0 rounded-full px-1.5 py-0.5 text-[0.68rem] leading-none',
+        toolStatusToneClass[status],
+      )}
+    >
+      {toolStatusLabel[status]}
+    </span>
+  );
+};
 
 const ToolTraceIcon = ({ tool }: { tool: string }) => {
   const Icon = getToolIcon(tool);
@@ -802,8 +808,7 @@ const ToolTraceCardView = ({
       <details className="group/trace">
         <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 hover:bg-surface-hover">
           <ToolTraceSummary event={event} />
-          <span className="text-2xs text-foreground-muted group-open/trace:hidden">展开</span>
-          <span className="hidden text-2xs text-foreground-muted group-open/trace:inline">收起</span>
+          <ChevronDown className="h-3.5 w-3.5 text-foreground-muted transition-transform group-open/trace:rotate-180" />
         </summary>
         <ToolTraceDetails event={event} />
       </details>
@@ -839,10 +844,7 @@ const ToolTraceGroupItemView = ({
           {counter}
         </span>
         <ToolTraceSummary event={event} />
-        <span className="text-2xs text-foreground-muted group-open/trace-item:hidden">展开</span>
-        <span className="hidden text-2xs text-foreground-muted group-open/trace-item:inline">
-          收起
-        </span>
+        <ChevronDown className="h-3.5 w-3.5 text-foreground-muted transition-transform group-open/trace-item:rotate-180" />
       </summary>
       <div className="pl-10">
         <ToolTraceDetails event={event} />
@@ -887,8 +889,7 @@ const ToolTraceGroupCardView = ({
       <details className="group/trace-group">
         <summary className="flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 hover:bg-surface-hover">
           {summary}
-          <span className="text-2xs text-foreground-muted group-open/trace-group:hidden">展开</span>
-          <span className="hidden text-2xs text-foreground-muted group-open/trace-group:inline">收起</span>
+          <ChevronDown className="h-3.5 w-3.5 text-foreground-muted transition-transform group-open/trace-group:rotate-180" />
         </summary>
         <div className="divide-y divide-border border-t border-border bg-background">
           {event.items.map((item, index) => (
