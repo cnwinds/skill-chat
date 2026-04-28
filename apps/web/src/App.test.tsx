@@ -510,7 +510,7 @@ describe('QuestionTimelineControl', () => {
     expect(panel).toHaveAttribute('inert');
   });
 
-  it('opens from a rail tap on mobile and closes after selecting', () => {
+  it('selects a mobile question only after press, drag, and release', () => {
     const originalMatchMedia = window.matchMedia;
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: false,
@@ -536,14 +536,48 @@ describe('QuestionTimelineControl', () => {
       );
 
       const panel = screen.getByLabelText('问题定位列表，共 2 个提问');
-      fireEvent.click(screen.getByRole('button', {
+      const firstRailButton = screen.getByRole('button', {
         name: '展开问题定位列表：第 1 个提问，我应该怎么选择专业？',
-      }));
-      expect(panel).toHaveAttribute('aria-hidden', 'false');
+      });
 
-      fireEvent.click(screen.getByRole('button', {
+      fireEvent.pointerDown(firstRailButton, { pointerId: 1, clientY: 20 });
+      expect(panel).toHaveAttribute('aria-hidden', 'false');
+      expect(onSelectQuestion).not.toHaveBeenCalled();
+
+      const firstQuestion = screen.getByRole('button', {
+        name: '定位到第 1 个提问：我应该怎么选择专业？',
+      });
+      const secondQuestion = screen.getByRole('button', {
         name: '定位到第 2 个提问：法学和师范类哪个更适合普通家庭？',
+      });
+      firstQuestion.getBoundingClientRect = vi.fn(() => ({
+        x: 0,
+        y: 0,
+        top: 0,
+        right: 320,
+        bottom: 44,
+        left: 0,
+        width: 320,
+        height: 44,
+        toJSON: () => ({}),
       }));
+      secondQuestion.getBoundingClientRect = vi.fn(() => ({
+        x: 0,
+        y: 44,
+        top: 44,
+        right: 320,
+        bottom: 88,
+        left: 0,
+        width: 320,
+        height: 44,
+        toJSON: () => ({}),
+      }));
+
+      fireEvent.pointerMove(document, { pointerId: 1, clientY: 66 });
+      expect(secondQuestion).toHaveClass('bg-surface-hover');
+      expect(onSelectQuestion).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(document, { pointerId: 1, clientY: 66 });
       expect(onSelectQuestion).toHaveBeenCalledWith('q2');
       expect(panel).toHaveAttribute('aria-hidden', 'true');
     } finally {

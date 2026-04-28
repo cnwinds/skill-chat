@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FocusEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { FocusEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { cn } from '@/lib/cn';
 
@@ -36,7 +36,11 @@ export const QuestionTimelineControl = ({
   onSelectQuestion,
 }: QuestionTimelineControlProps) => {
   const [open, setOpen] = useState(false);
+  const [gestureActive, setGestureActive] = useState(false);
+  const [gestureQuestionId, setGestureQuestionId] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const questionRowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const gestureRef = useRef<{ pointerId: number; selectedId: string } | null>(null);
   const isDesktop = useIsDesktop();
   const displayQuestions = useMemo(
     () =>
@@ -46,6 +50,42 @@ export const QuestionTimelineControl = ({
       })),
     [questions],
   );
+  const visualActiveQuestionId = gestureQuestionId ?? activeQuestionId;
+
+  const bindQuestionRow = useCallback(
+    (questionId: string) => (node: HTMLButtonElement | null) => {
+      if (node) {
+        questionRowRefs.current.set(questionId, node);
+        return;
+      }
+      questionRowRefs.current.delete(questionId);
+    },
+    [],
+  );
+
+  const findQuestionIdByY = useCallback((clientY: number) => {
+    let nearest: { id: string; distance: number } | null = null;
+
+    for (const question of displayQuestions) {
+      const node = questionRowRefs.current.get(question.id);
+      if (!node) {
+        continue;
+      }
+
+      const rect = node.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) {
+        return question.id;
+      }
+
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.abs(clientY - centerY);
+      if (!nearest || distance < nearest.distance) {
+        nearest = { id: question.id, distance };
+      }
+    }
+
+    return nearest?.id ?? null;
+  }, [displayQuestions]);
 
   useEffect(() => {
     if (!open || isDesktop || typeof document === 'undefined') {
@@ -63,6 +103,64 @@ export const QuestionTimelineControl = ({
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [isDesktop, open]);
 
+  useEffect(() => {
+    if (!gestureActive || typeof document === 'undefined') {
+      return undefined;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const gesture = gestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      const nextId = findQuestionIdByY(event.clientY);
+      if (!nextId || nextId === gesture.selectedId) {
+        return;
+      }
+
+      gesture.selectedId = nextId;
+      setGestureQuestionId(nextId);
+    };
+
+    const finishGesture = (event: PointerEvent) => {
+      const gesture = gestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      const selectedId = gesture.selectedId;
+      gestureRef.current = null;
+      setGestureActive(false);
+      setGestureQuestionId(null);
+      setOpen(false);
+      onSelectQuestion(selectedId);
+    };
+
+    const cancelGesture = (event: PointerEvent) => {
+      const gesture = gestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) {
+        return;
+      }
+
+      gestureRef.current = null;
+      setGestureActive(false);
+      setGestureQuestionId(null);
+      setOpen(false);
+    };
+
+    document.addEventListener('pointermove', handlePointerMove, { passive: false });
+    document.addEventListener('pointerup', finishGesture, { passive: false });
+    document.addEventListener('pointercancel', cancelGesture);
+    return () => {
+      document.removeEventListener('pointermove', handlePointerMove);
+      document.removeEventListener('pointerup', finishGesture);
+      document.removeEventListener('pointercancel', cancelGesture);
+    };
+  }, [findQuestionIdByY, gestureActive, onSelectQuestion]);
+
   if (questions.length < 2) {
     return null;
   }
@@ -79,7 +177,25 @@ export const QuestionTimelineControl = ({
       onSelectQuestion(questionId);
       return;
     }
+  };
+
+  const handleRailPointerDown = (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    questionId: string,
+  ) => {
+    if (isDesktop) {
+      return;
+    }
+
+    event.preventDefault();
+    gestureRef.current = {
+      pointerId: event.pointerId,
+      selectedId: questionId,
+    };
+    setGestureActive(true);
+    setGestureQuestionId(questionId);
     setOpen(true);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
   const handleBlur = (event: FocusEvent<HTMLDivElement>) => {
@@ -127,16 +243,18 @@ export const QuestionTimelineControl = ({
       >
         <div className="min-h-0 overflow-y-auto">
           {displayQuestions.map((question) => {
-            const isActive = question.id === activeQuestionId;
+            const isCurrent = question.id === activeQuestionId;
+            const isActive = question.id === visualActiveQuestionId;
             return (
               <button
                 key={question.id}
+                ref={bindQuestionRow(question.id)}
                 type="button"
-                aria-current={isActive ? 'true' : undefined}
+                aria-current={isCurrent ? 'true' : undefined}
                 aria-label={`定位到第 ${question.index} 个提问：${question.label}`}
                 onClick={() => handleSelectQuestion(question.id)}
                 className={cn(
-                  'group/row grid w-full grid-cols-[minmax(0,1fr)_2rem] items-center gap-3 px-4 py-3 text-left transition-colors',
+                  'group/row grid w-full touch-none select-none grid-cols-[minmax(0,1fr)_2rem] items-center gap-3 px-4 py-3 text-left transition-colors',
                   'hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent',
                   isActive && 'bg-surface-hover',
                 )}
@@ -180,14 +298,15 @@ export const QuestionTimelineControl = ({
         )}
       >
         {displayQuestions.map((question) => {
-          const isActive = question.id === activeQuestionId;
+          const isActive = question.id === visualActiveQuestionId;
           return (
             <button
               key={question.id}
               type="button"
               aria-label={`展开问题定位列表：第 ${question.index} 个提问，${question.label}`}
+              onPointerDown={(event) => handleRailPointerDown(event, question.id)}
               onClick={() => handleRailClick(question.id)}
-              className="group/rail flex h-8 w-10 items-center justify-end rounded-md pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="group/rail flex h-8 w-10 touch-none select-none items-center justify-end rounded-md pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
               <span
                 className={cn(
