@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { FocusEvent, PointerEvent as ReactPointerEvent } from 'react';
 import { useIsDesktop } from '@/hooks/useMediaQuery';
 import { cn } from '@/lib/cn';
@@ -19,10 +19,14 @@ export interface QuestionTimelineControlProps {
 const DURATION = 'duration-[180ms]';
 const EASING = 'ease-[cubic-bezier(0.22,1,0.36,1)]';
 const PANEL_WIDTH = 'w-[min(360px,calc(100vw-1rem))]';
+const COLLAPSED_WIDTH = 'w-[var(--question-timeline-collapsed-width)]';
+const QUESTION_ROW_COLUMNS =
+  'grid-cols-[minmax(0,1fr)_var(--question-timeline-tick-slot-width)]';
 const ROW_HEIGHT_PX = 36;
 const MAX_CONTROL_HEIGHT_PX = 420;
 const MIN_CONTROL_HEIGHT_PX = ROW_HEIGHT_PX * 5;
 const CONTROL_VERTICAL_MARGIN_PX = 48;
+const CONTROL_VERTICAL_PADDING_PX = 4;
 const MIN_RAIL_SLOTS = 5;
 const MAX_RAIL_SLOTS = 11;
 
@@ -36,10 +40,29 @@ const truncateQuestion = (content: string) => {
   return `${normalized.slice(0, 44)}...`;
 };
 
+const measureScrollbarWidth = () => {
+  if (typeof document === 'undefined') {
+    return 0;
+  }
+
+  const probe = document.createElement('div');
+  probe.style.position = 'absolute';
+  probe.style.top = '-9999px';
+  probe.style.width = '100px';
+  probe.style.height = '100px';
+  probe.style.overflow = 'scroll';
+  probe.style.pointerEvents = 'none';
+  probe.style.opacity = '0';
+  document.body.appendChild(probe);
+  const width = Math.max(0, probe.offsetWidth - probe.clientWidth);
+  document.body.removeChild(probe);
+  return width;
+};
+
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
 
-const getVisibleRailQuestions = <T extends { id: string }>({
+const getViewportStartIndex = <T extends { id: string }>({
   activeId,
   maxSlots,
   questions,
@@ -50,30 +73,18 @@ const getVisibleRailQuestions = <T extends { id: string }>({
 }) => {
   const total = questions.length;
   if (total <= maxSlots) {
-    return {
-      hasHiddenBefore: false,
-      hasHiddenAfter: false,
-      visibleQuestions: questions,
-    };
+    return 0;
   }
 
-  const activeIndex = Math.max(
-    0,
-    questions.findIndex((question) => activeId !== null && question.id === activeId),
+  const activeIndex = questions.findIndex(
+    (question) => activeId !== null && question.id === activeId,
   );
-  const questionCapacity = Math.max(1, maxSlots - 2);
-  const start = clamp(
-    activeIndex - Math.floor(questionCapacity / 2),
-    0,
-    total - questionCapacity,
-  );
-  const end = start + questionCapacity;
+  if (activeIndex < 0) {
+    return 0;
+  }
 
-  return {
-    hasHiddenBefore: start > 0,
-    hasHiddenAfter: end < total,
-    visibleQuestions: questions.slice(start, end),
-  };
+  const middleOffset = Math.floor((maxSlots - 1) / 2);
+  return clamp(activeIndex - middleOffset, 0, total - maxSlots);
 };
 
 export const QuestionTimelineControl = ({
@@ -85,6 +96,7 @@ export const QuestionTimelineControl = ({
   const [gestureActive, setGestureActive] = useState(false);
   const [gestureQuestionId, setGestureQuestionId] = useState<string | null>(null);
   const [controlHeightPx, setControlHeightPx] = useState(MAX_CONTROL_HEIGHT_PX);
+  const [scrollbarWidthPx, setScrollbarWidthPx] = useState(() => measureScrollbarWidth());
   const [panelScrollState, setPanelScrollState] = useState({
     canScrollDown: false,
     canScrollUp: false,
@@ -98,7 +110,9 @@ export const QuestionTimelineControl = ({
     () =>
       questions.map((question) => ({
         ...question,
-        label: truncateQuestion(question.content) || `第 ${question.index} 个提问`,
+        label:
+          truncateQuestion(question.content) ||
+          `\u7b2c ${question.index} \u4e2a\u63d0\u95ee`,
       })),
     [questions],
   );
@@ -108,19 +122,31 @@ export const QuestionTimelineControl = ({
     MIN_RAIL_SLOTS,
     MAX_RAIL_SLOTS,
   );
-  const {
-    hasHiddenBefore: railHasHiddenBefore,
-    hasHiddenAfter: railHasHiddenAfter,
-    visibleQuestions: railQuestions,
-  } = useMemo(
+  const visibleSlotCount = Math.min(displayQuestions.length, railSlots);
+  const hasScrollableOverflow = displayQuestions.length > visibleSlotCount;
+  const scrollbarCompensationPx = open && hasScrollableOverflow ? scrollbarWidthPx : 0;
+  const controlVisibleHeightPx =
+    visibleSlotCount * ROW_HEIGHT_PX + CONTROL_VERTICAL_PADDING_PX * 2;
+  const panelAlignedFirstIndex = useMemo(
     () =>
-      getVisibleRailQuestions({
+      getViewportStartIndex({
         activeId: visualActiveQuestionId,
-        maxSlots: railSlots,
+        maxSlots: visibleSlotCount,
         questions: displayQuestions,
       }),
-    [displayQuestions, railSlots, visualActiveQuestionId],
+    [displayQuestions, visibleSlotCount, visualActiveQuestionId],
   );
+
+  useEffect(() => {
+    const refreshScrollbarWidth = () => {
+      const nextWidth = measureScrollbarWidth();
+      setScrollbarWidthPx((current) => (current === nextWidth ? current : nextWidth));
+    };
+
+    refreshScrollbarWidth();
+    window.addEventListener('resize', refreshScrollbarWidth);
+    return () => window.removeEventListener('resize', refreshScrollbarWidth);
+  }, []);
 
   const bindQuestionRow = useCallback(
     (questionId: string) => (node: HTMLButtonElement | null) => {
@@ -159,8 +185,12 @@ export const QuestionTimelineControl = ({
 
   const updatePanelScrollState = useCallback(() => {
     const node = panelScrollRef.current;
-    if (!node) {
-      setPanelScrollState({ canScrollDown: false, canScrollUp: false });
+    if (!node || !open) {
+      setPanelScrollState((current) =>
+        current.canScrollDown || current.canScrollUp
+          ? { canScrollDown: false, canScrollUp: false }
+          : current,
+      );
       return;
     }
 
@@ -171,7 +201,7 @@ export const QuestionTimelineControl = ({
         ? current
         : { canScrollDown, canScrollUp },
     );
-  }, []);
+  }, [open]);
 
   useEffect(() => {
     const measureControlHeight = () => {
@@ -220,29 +250,23 @@ export const QuestionTimelineControl = ({
     return () => document.removeEventListener('pointerdown', handlePointerDown);
   }, [isDesktop, open]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
+  useLayoutEffect(() => {
+    const scrollNode = panelScrollRef.current;
+    if (scrollNode) {
+      const maxScrollTop = Math.max(0, scrollNode.scrollHeight - scrollNode.clientHeight);
+      const nextScrollTop = clamp(panelAlignedFirstIndex * ROW_HEIGHT_PX, 0, maxScrollTop);
+      if (Math.abs(scrollNode.scrollTop - nextScrollTop) > 1) {
+        scrollNode.scrollTop = nextScrollTop;
+      }
     }
 
-    const activeRow = visualActiveQuestionId
-      ? questionRowRefs.current.get(visualActiveQuestionId)
-      : null;
-    if (typeof activeRow?.scrollIntoView === 'function') {
-      activeRow.scrollIntoView({ block: 'nearest' });
-    }
-
-    if (typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(updatePanelScrollState);
-      return;
-    }
-    window.setTimeout(updatePanelScrollState, 0);
+    updatePanelScrollState();
   }, [
-    controlHeightPx,
+    controlVisibleHeightPx,
     displayQuestions.length,
     open,
+    panelAlignedFirstIndex,
     updatePanelScrollState,
-    visualActiveQuestionId,
   ]);
 
   useEffect(() => {
@@ -314,14 +338,14 @@ export const QuestionTimelineControl = ({
     }
   };
 
-  const handleRailClick = (questionId: string) => {
-    if (isDesktop) {
-      onSelectQuestion(questionId);
+  const handleQuestionClick = (questionId: string) => {
+    if (!isDesktop && !open) {
       return;
     }
+    handleSelectQuestion(questionId);
   };
 
-  const handleRailPointerDown = (
+  const handleQuestionPointerDown = (
     event: ReactPointerEvent<HTMLButtonElement>,
     questionId: string,
   ) => {
@@ -350,8 +374,8 @@ export const QuestionTimelineControl = ({
     <div
       ref={rootRef}
       role="navigation"
-      aria-label={`提问定位，共 ${questions.length} 个提问`}
-      className="absolute right-2 top-1/2 z-30 -translate-y-1/2 lg:right-5"
+      aria-label={`\u63d0\u95ee\u5b9a\u4f4d\uff0c\u5171 ${questions.length} \u4e2a\u63d0\u95ee`}
+      className="question-timeline-control absolute right-2 top-1/2 z-30 -translate-y-1/2 lg:right-5"
       onMouseEnter={() => {
         if (isDesktop) {
           setOpen(true);
@@ -371,58 +395,75 @@ export const QuestionTimelineControl = ({
       }}
     >
       <aside
-        aria-label={`问题定位列表，共 ${questions.length} 个提问`}
-        aria-hidden={!open}
-        inert={!open}
+        aria-label={`\u95ee\u9898\u5b9a\u4f4d\u5217\u8868\uff0c\u5171 ${questions.length} \u4e2a\u63d0\u95ee`}
+        data-state={open ? 'open' : 'collapsed'}
         className={cn(
-          'pointer-events-auto absolute right-0 top-1/2 flex -translate-y-1/2 flex-col overflow-hidden rounded-[14px] border border-border bg-surface/95 py-2 shadow-xl backdrop-blur',
-          'transition-[opacity,transform] motion-reduce:transition-none',
-          PANEL_WIDTH,
+          'relative flex flex-col overflow-hidden rounded-[14px] border py-1 backdrop-blur transition-[width,background-color,border-color,box-shadow] motion-reduce:transition-none',
           DURATION,
           EASING,
-          open ? 'translate-x-0 opacity-100' : 'pointer-events-none translate-x-3 opacity-0',
+          open
+            ? 'border-border bg-surface/95 shadow-xl'
+            : 'border-transparent bg-transparent shadow-none',
+          open ? PANEL_WIDTH : COLLAPSED_WIDTH,
         )}
-        style={{ maxHeight: controlHeightPx }}
+        style={{ height: controlVisibleHeightPx }}
       >
         <div
           className={cn(
             'pointer-events-none absolute left-4 right-4 top-0 z-10 h-px bg-foreground-muted/25 transition-opacity',
-            panelScrollState.canScrollUp ? 'opacity-100' : 'opacity-0',
+            open && panelScrollState.canScrollUp ? 'opacity-100' : 'opacity-0',
           )}
         />
         <div
           ref={panelScrollRef}
-          className="min-h-0 overflow-y-auto overscroll-contain pr-1"
+          className={cn(
+            'question-timeline-scroll min-h-0 flex-1 overflow-x-hidden overscroll-contain',
+            open ? 'overflow-y-auto' : 'overflow-y-hidden',
+          )}
           onScroll={updatePanelScrollState}
         >
           {displayQuestions.map((question) => {
             const isCurrent = question.id === activeQuestionId;
             const isActive = question.id === visualActiveQuestionId;
+
             return (
               <button
                 key={question.id}
                 ref={bindQuestionRow(question.id)}
                 type="button"
                 aria-current={isCurrent ? 'true' : undefined}
-                aria-label={`定位到第 ${question.index} 个提问：${question.label}`}
-                onClick={() => handleSelectQuestion(question.id)}
+                aria-label={`\u5b9a\u4f4d\u5230\u7b2c ${question.index} \u4e2a\u63d0\u95ee\uff1a${question.label}`}
+                onPointerDown={(event) => handleQuestionPointerDown(event, question.id)}
+                onClick={() => handleQuestionClick(question.id)}
                 className={cn(
-                  'group/row grid h-9 w-full touch-none select-none grid-cols-[minmax(0,1fr)_2.5rem] items-center gap-3 px-4 text-left transition-colors',
-                  'hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent',
-                  isActive && 'bg-surface-hover',
+                  'group/question grid h-9 w-full touch-none select-none items-center rounded-md text-left transition-[background-color,padding,gap] motion-reduce:transition-none',
+                  QUESTION_ROW_COLUMNS,
+                  open ? 'gap-3 pl-4 pr-1' : 'gap-0 pl-0 pr-0',
+                  open &&
+                    'hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent',
+                  !open && 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                  open && isActive && 'bg-surface-hover',
                 )}
               >
                 <span
                   className={cn(
-                    'min-w-0 truncate text-sm leading-5 transition-colors',
+                    'min-w-0 truncate text-sm leading-5 transition-[opacity,transform,color] motion-reduce:transition-none',
+                    open ? 'translate-x-0 opacity-100' : '-translate-x-1 opacity-0',
                     isActive
                       ? 'text-foreground'
-                      : 'text-foreground-muted group-hover/row:text-foreground',
+                      : 'text-foreground-muted group-hover/question:text-foreground',
                   )}
                 >
                   {question.label}
                 </span>
-                <span className="flex h-full w-10 items-center justify-end">
+                <span
+                  className="question-timeline-tick-slot flex h-full items-center justify-end"
+                  style={
+                    open && scrollbarCompensationPx > 0
+                      ? { transform: `translateX(${scrollbarCompensationPx}px)` }
+                      : undefined
+                  }
+                >
                   <span
                     className={cn(
                       'h-[3px] rounded-full transition-[width,opacity,background-color,box-shadow] motion-reduce:transition-none',
@@ -430,7 +471,7 @@ export const QuestionTimelineControl = ({
                       EASING,
                       isActive
                         ? 'w-5 bg-[#4f7df6] opacity-100 shadow-[0_0_12px_rgba(79,125,246,0.35)] dark:bg-[#6ea0ff]'
-                        : 'w-3 bg-foreground-muted opacity-45 group-hover/row:w-5 group-hover/row:opacity-75',
+                        : 'w-3 bg-foreground-muted opacity-45 group-hover/question:w-5 group-hover/question:opacity-75',
                     )}
                   />
                 </span>
@@ -441,57 +482,10 @@ export const QuestionTimelineControl = ({
         <div
           className={cn(
             'pointer-events-none absolute bottom-0 left-4 right-4 z-10 h-px bg-foreground-muted/25 transition-opacity',
-            panelScrollState.canScrollDown ? 'opacity-100' : 'opacity-0',
+            open && panelScrollState.canScrollDown ? 'opacity-100' : 'opacity-0',
           )}
         />
       </aside>
-
-      <div
-        aria-hidden={open}
-        inert={open}
-        className={cn(
-          'pointer-events-auto flex flex-col items-end overflow-hidden rounded-full px-1 py-1 transition-opacity motion-reduce:transition-none',
-          DURATION,
-          EASING,
-          open ? 'pointer-events-none opacity-0' : 'opacity-100',
-        )}
-        style={{ maxHeight: controlHeightPx }}
-      >
-        {railHasHiddenBefore ? (
-          <span className="flex h-9 w-10 items-center justify-end pr-1" aria-hidden="true">
-            <span className="h-[3px] w-2 rounded-full bg-foreground-muted/25" />
-          </span>
-        ) : null}
-        {railQuestions.map((question) => {
-          const isActive = question.id === visualActiveQuestionId;
-          return (
-            <button
-              key={question.id}
-              type="button"
-              aria-label={`展开问题定位列表：第 ${question.index} 个提问，${question.label}`}
-              onPointerDown={(event) => handleRailPointerDown(event, question.id)}
-              onClick={() => handleRailClick(question.id)}
-              className="group/rail flex h-9 w-10 shrink-0 touch-none select-none items-center justify-end rounded-md pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            >
-              <span
-                className={cn(
-                  'h-[3px] rounded-full transition-[width,opacity,background-color,box-shadow] motion-reduce:transition-none',
-                  DURATION,
-                  EASING,
-                  isActive
-                    ? 'w-5 bg-[#4f7df6] opacity-100 shadow-[0_0_12px_rgba(79,125,246,0.35)] dark:bg-[#6ea0ff]'
-                    : 'w-3 bg-foreground-muted opacity-45 group-hover/rail:w-5 group-hover/rail:opacity-75',
-                )}
-              />
-            </button>
-          );
-        })}
-        {railHasHiddenAfter ? (
-          <span className="flex h-9 w-10 items-center justify-end pr-1" aria-hidden="true">
-            <span className="h-[3px] w-2 rounded-full bg-foreground-muted/25" />
-          </span>
-        ) : null}
-      </div>
     </div>
   );
 };

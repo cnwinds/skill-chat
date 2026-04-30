@@ -185,3 +185,40 @@
   border-radius: 0;
   background: transparent;
 }
+
+/* Keep the question timeline tick marks locked to one column before/after expansion.
+ * The same list stays mounted in both states; the tick slot reserves the visual column
+ * width while scrollbar compensation is handled in JS only when overflow really exists. */
+.question-timeline-control {
+  --question-timeline-scrollbar-size: 6px;
+  --question-timeline-tick-slot-width: calc(
+    2.5rem + var(--question-timeline-scrollbar-size) + 0.25rem
+  );
+  --question-timeline-collapsed-width: calc(var(--question-timeline-tick-slot-width) + 0.5rem);
+}
+
+.question-timeline-scroll {
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 45%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.question-timeline-scroll::-webkit-scrollbar {
+  width: var(--question-timeline-scrollbar-size);
+}
+
+.question-timeline-scroll::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 999px;
+}
+
+.question-timeline-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--text-muted) 65%, transparent);
+}
+
+.question-timeline-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.question-timeline-tick-slot {
+  padding-right: calc(0.25rem + var(--question-timeline-scrollbar-size));
+}

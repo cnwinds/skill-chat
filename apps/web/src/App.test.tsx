@@ -505,18 +505,25 @@ describe('QuestionTimelineControl', () => {
     {
       id: 'q1',
       index: 1,
-      content: '我应该怎么选择专业？',
+      content: '\u6211\u5e94\u8be5\u600e\u4e48\u9009\u62e9\u4e13\u4e1a\uff1f',
       createdAt: '2026-04-26T10:00:00.000Z',
     },
     {
       id: 'q2',
       index: 2,
-      content: '法学和师范类哪个更适合普通家庭？',
+      content: '\u6cd5\u5b66\u548c\u5e08\u8303\u7c7b\u54ea\u4e2a\u66f4\u9002\u5408\u666e\u901a\u5bb6\u5ead\uff1f',
       createdAt: '2026-04-26T10:05:00.000Z',
     },
   ];
 
-  it('expands the question rail on hover and selects a question', () => {
+  const panelLabel = '\u95ee\u9898\u5b9a\u4f4d\u5217\u8868\uff0c\u5171 2 \u4e2a\u63d0\u95ee';
+  const navigationLabel = '\u63d0\u95ee\u5b9a\u4f4d\uff0c\u5171 2 \u4e2a\u63d0\u95ee';
+  const firstQuestionLabel =
+    '\u5b9a\u4f4d\u5230\u7b2c 1 \u4e2a\u63d0\u95ee\uff1a\u6211\u5e94\u8be5\u600e\u4e48\u9009\u62e9\u4e13\u4e1a\uff1f';
+  const secondQuestionLabel =
+    '\u5b9a\u4f4d\u5230\u7b2c 2 \u4e2a\u63d0\u95ee\uff1a\u6cd5\u5b66\u548c\u5e08\u8303\u7c7b\u54ea\u4e2a\u66f4\u9002\u5408\u666e\u901a\u5bb6\u5ead\uff1f';
+
+  it('keeps the same question buttons mounted while expanding on hover', () => {
     const onSelectQuestion = vi.fn();
     render(
       <div className="relative h-96">
@@ -528,29 +535,25 @@ describe('QuestionTimelineControl', () => {
       </div>,
     );
 
-    const control = screen.getByRole('navigation', { name: '提问定位，共 2 个提问' });
-    const panel = screen.getByLabelText('问题定位列表，共 2 个提问');
-    expect(panel).toHaveAttribute('aria-hidden', 'true');
-    expect(panel).toHaveAttribute('inert');
-    expect(
-      screen.getByRole('button', { name: '展开问题定位列表：第 1 个提问，我应该怎么选择专业？' }),
-    ).toBeInTheDocument();
+    const control = screen.getByRole('navigation', { name: navigationLabel });
+    const panel = screen.getByLabelText(panelLabel);
+    const firstQuestion = screen.getByRole('button', { name: firstQuestionLabel });
+    const secondQuestion = screen.getByRole('button', { name: secondQuestionLabel });
+
+    expect(panel).toHaveAttribute('data-state', 'collapsed');
+    expect(within(panel).getAllByRole('button')).toHaveLength(2);
 
     fireEvent.mouseEnter(control);
-    expect(panel).toHaveAttribute('aria-hidden', 'false');
-    expect(panel).not.toHaveAttribute('inert');
+    expect(panel).toHaveAttribute('data-state', 'open');
+    expect(screen.getByRole('button', { name: firstQuestionLabel })).toBe(firstQuestion);
+    expect(screen.getByRole('button', { name: secondQuestionLabel })).toBe(secondQuestion);
+    expect(secondQuestion).toHaveAttribute('aria-current', 'true');
 
-    const activeQuestion = screen.getByRole('button', {
-      name: '定位到第 2 个提问：法学和师范类哪个更适合普通家庭？',
-    });
-    expect(activeQuestion).toHaveAttribute('aria-current', 'true');
-
-    fireEvent.click(activeQuestion);
+    fireEvent.click(secondQuestion);
     expect(onSelectQuestion).toHaveBeenCalledWith('q2');
 
     fireEvent.mouseLeave(control);
-    expect(panel).toHaveAttribute('aria-hidden', 'true');
-    expect(panel).toHaveAttribute('inert');
+    expect(panel).toHaveAttribute('data-state', 'collapsed');
   });
 
   it('selects a mobile question only after press, drag, and release', () => {
@@ -578,21 +581,14 @@ describe('QuestionTimelineControl', () => {
         </div>,
       );
 
-      const panel = screen.getByLabelText('问题定位列表，共 2 个提问');
-      const firstRailButton = screen.getByRole('button', {
-        name: '展开问题定位列表：第 1 个提问，我应该怎么选择专业？',
-      });
+      const panel = screen.getByLabelText(panelLabel);
+      const firstQuestion = screen.getByRole('button', { name: firstQuestionLabel });
+      const secondQuestion = screen.getByRole('button', { name: secondQuestionLabel });
 
-      fireEvent.pointerDown(firstRailButton, { pointerId: 1, clientY: 20 });
-      expect(panel).toHaveAttribute('aria-hidden', 'false');
+      fireEvent.pointerDown(firstQuestion, { pointerId: 1, clientY: 20 });
+      expect(panel).toHaveAttribute('data-state', 'open');
       expect(onSelectQuestion).not.toHaveBeenCalled();
 
-      const firstQuestion = screen.getByRole('button', {
-        name: '定位到第 1 个提问：我应该怎么选择专业？',
-      });
-      const secondQuestion = screen.getByRole('button', {
-        name: '定位到第 2 个提问：法学和师范类哪个更适合普通家庭？',
-      });
       firstQuestion.getBoundingClientRect = vi.fn(() => ({
         x: 0,
         y: 0,
@@ -622,7 +618,7 @@ describe('QuestionTimelineControl', () => {
 
       fireEvent.pointerUp(document, { pointerId: 1, clientY: 66 });
       expect(onSelectQuestion).toHaveBeenCalledWith('q2');
-      expect(panel).toHaveAttribute('aria-hidden', 'true');
+      expect(panel).toHaveAttribute('data-state', 'collapsed');
     } finally {
       window.matchMedia = originalMatchMedia;
     }
