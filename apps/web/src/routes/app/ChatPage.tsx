@@ -1,5 +1,14 @@
 import type { ClipboardEvent as ReactClipboardEvent } from 'react';
-import { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { Trash2 } from 'lucide-react';
@@ -358,6 +367,7 @@ export const ChatPage = () => {
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageNodeRefs = useRef(new Map<string, HTMLDivElement>());
   const restoredScrollSessionIdRef = useRef<string | null>(null);
+  const pendingScrollToBottomSessionIdRef = useRef<string | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
   const [highlightedEventId, setHighlightedEventId] = useState<string | null>(null);
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
@@ -545,6 +555,9 @@ export const ChatPage = () => {
       }
     },
     onError: (error, variables, context) => {
+      if (pendingScrollToBottomSessionIdRef.current === variables.sessionId) {
+        pendingScrollToBottomSessionIdRef.current = null;
+      }
       if (variables.sessionId && context?.previous && context.shouldOptimisticallyAppend) {
         queryClient.setQueryData(['messages', variables.sessionId], context.previous);
       }
@@ -750,6 +763,28 @@ export const ChatPage = () => {
     setSessionScrollState(sessionId, readScrollState(node));
   };
 
+  const scrollMessageListToBottom = useCallback(() => {
+    const node = messageListRef.current;
+    if (!node) {
+      return;
+    }
+
+    node.scrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
+    if (activeSessionId) {
+      setSessionScrollState(activeSessionId, readScrollState(node));
+    }
+    updateActiveQuestionFromScroll();
+  }, [activeSessionId, messageListRef, setSessionScrollState, updateActiveQuestionFromScroll]);
+
+  useLayoutEffect(() => {
+    if (pendingScrollToBottomSessionIdRef.current !== activeSessionId) {
+      return;
+    }
+
+    pendingScrollToBottomSessionIdRef.current = null;
+    scrollMessageListToBottom();
+  }, [activeSessionId, scrollMessageListToBottom, stream.followUpQueue.length, timeline.length]);
+
   useEffect(() => {
     if (
       !activeSessionId ||
@@ -947,6 +982,7 @@ export const ChatPage = () => {
     const attachmentIds = composerAttachments
       .filter((item) => item.status === 'uploaded' && typeof item.fileId === 'string')
       .map((item) => item.fileId as string);
+    pendingScrollToBottomSessionIdRef.current = activeSessionId;
     setPageError(null);
     sendMessageRef.current({
       sessionId: activeSessionId,

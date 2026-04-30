@@ -19,7 +19,7 @@ export const useAutoScrollToBottom = <T extends HTMLElement>(
     }
     const distanceFromBottom = target.scrollHeight - (target.scrollTop + target.clientHeight);
     if (distanceFromBottom <= thresholdPx) {
-      target.scrollTop = target.scrollHeight;
+      target.scrollTop = Math.max(0, target.scrollHeight - target.clientHeight);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);

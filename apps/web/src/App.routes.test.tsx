@@ -540,6 +540,123 @@ describe('App routes', () => {
     });
   });
 
+  it('scrolls the message list to the bottom after sending a new question', async () => {
+    installFetchMock((url, init) => {
+      const method = init?.method ?? 'GET';
+
+      if (url === '/api/me/settings') {
+        return jsonResponse({ body: { themeMode: 'dark' } });
+      }
+      if (url === '/api/sessions') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1',
+              title: 'Long Session',
+              createdAt: '2026-04-12T00:00:00.000Z',
+              updatedAt: '2026-04-12T00:00:00.000Z',
+              lastMessageAt: null,
+              activeSkills: [],
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages?limit=200') {
+        return jsonResponse({
+          body: [
+            {
+              id: 's1_user_1',
+              sessionId: 's1',
+              kind: 'message',
+              role: 'user',
+              type: 'text',
+              content: '很早之前的问题',
+              createdAt: '2026-04-12T00:00:01.000Z',
+            },
+            {
+              id: 's1_assistant_1',
+              sessionId: 's1',
+              kind: 'message',
+              role: 'assistant',
+              type: 'text',
+              content: '很长的历史回答',
+              createdAt: '2026-04-12T00:00:02.000Z',
+            },
+          ],
+        });
+      }
+      if (url === '/api/sessions/s1/messages' && method === 'POST') {
+        expect(init?.body).toBe(JSON.stringify({
+          content: '新的问题',
+          attachmentIds: [],
+          dispatch: 'new_turn',
+        }));
+        return jsonResponse({
+          body: {
+            accepted: true,
+            dispatch: 'turn_started',
+            messageId: 'input_start_1',
+            runId: 'turn_1',
+            turnId: 'turn_1',
+            inputId: 'input_start_1',
+            runtime: {
+              sessionId: 's1',
+              activeTurn: {
+                turnId: 'turn_1',
+                kind: 'regular',
+                status: 'running',
+                phase: 'sampling',
+                phaseStartedAt: '2026-04-12T00:00:03.000Z',
+                canSteer: true,
+                startedAt: '2026-04-12T00:00:03.000Z',
+                round: 1,
+              },
+              followUpQueue: [],
+              recovery: null,
+            },
+          },
+        });
+      }
+      if (url === '/api/sessions/s1/runtime') {
+        return jsonResponse({
+          body: {
+            sessionId: 's1',
+            activeTurn: null,
+            followUpQueue: [],
+            recovery: null,
+          },
+        });
+      }
+      if (url === '/api/files?sessionId=s1') {
+        return jsonResponse({ body: [] });
+      }
+      if (url === '/api/skills') {
+        return jsonResponse({ body: [] });
+      }
+
+      throw new Error(`Unhandled fetch: ${method} ${url}`);
+    });
+
+    useAuthStore.setState({ user: memberUser, ready: true });
+    renderApp(['/app/session/s1']);
+
+    expect(await screen.findByText('很早之前的问题')).toBeInTheDocument();
+    const messageList = document.querySelector('.message-list') as HTMLDivElement;
+    Object.defineProperty(messageList, 'scrollHeight', { configurable: true, value: 1800 });
+    Object.defineProperty(messageList, 'clientHeight', { configurable: true, value: 500 });
+    messageList.scrollTop = 160;
+    fireEvent.scroll(messageList);
+
+    const textarea = screen.getByLabelText('聊天输入框');
+    fireEvent.change(textarea, { target: { value: '新的问题' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送' }));
+
+    await waitFor(() => {
+      expect(messageList).toHaveTextContent('新的问题');
+      expect(messageList.scrollTop).toBe(1300);
+    });
+  });
+
   it('removes a queued follow-up item when the user clicks cancel', async () => {
     let removedInputId: string | null = null;
 
