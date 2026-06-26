@@ -174,8 +174,24 @@ const normalizeActiveSkills = (input: string[] | undefined, knownSkills: Set<str
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+const parseWebOrigins = (raw: string): Set<string> => {
+  return new Set(raw.split(',').map(s => s.trim()).filter(Boolean));
+};
+
+let _webOriginsCache: Set<string> | null = null;
+let _webOriginsCacheKey: string | null = null;
+
+const getWebOrigins = (config: AppConfig): Set<string> => {
+  if (_webOriginsCacheKey === config.WEB_ORIGIN && _webOriginsCache) {
+    return _webOriginsCache;
+  }
+  _webOriginsCache = parseWebOrigins(config.WEB_ORIGIN);
+  _webOriginsCacheKey = config.WEB_ORIGIN;
+  return _webOriginsCache;
+};
+
 const isTrustedBrowserOrigin = (config: AppConfig, origin: string | undefined) =>
-  !origin || origin === config.WEB_ORIGIN;
+  !origin || getWebOrigins(config).has(origin);
 
 export const createApp = async (options: CreateAppOptions = {}) => {
   const cwd = options.cwd ?? getProjectRoot();

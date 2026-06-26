@@ -6,7 +6,7 @@ import { z } from 'zod';
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
-  WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
+  WEB_ORIGIN: z.string().default('http://localhost:5173'),
   DATA_ROOT: z.string().default('./data'),
   SKILLS_ROOT: z.string().default('./skills'),
   MARKET_BASE_URL: z.string().url().default('http://localhost:3100'),
