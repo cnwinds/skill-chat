@@ -23,7 +23,9 @@ ARG HARNESSKIT_VERSION=0.1.0
 
 RUN node scripts/sync-harness-deps.mjs registry --version=${HARNESSKIT_VERSION}
 
+# @skillchat/* is published to registry.npmjs.org; npmmirror may not mirror scoped org packages yet.
 RUN npm config set registry "${NPM_REGISTRY}" \
+  && npm config set @skillchat:registry https://registry.npmjs.org \
   && npm install
 
 FROM deps AS web-builder

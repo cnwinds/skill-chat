@@ -1,4 +1,3 @@
-import type { UIEvent as ReactUIEvent } from 'react';
 import {
   forwardRef,
   memo,
