@@ -151,7 +151,54 @@ export const SystemTab = ({ setPageError }: SystemTabProps) => {
             </select>
           </label>
           <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-foreground-muted">LLM Max Output Tokens</span>
+            <span className="text-xs text-foreground-muted">OpenAI Native 搜索</span>
+            <select
+              className="h-9 rounded-md border border-border bg-surface px-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+              value={systemDraft.modelConfig.openaiNativeWebSearch}
+              onChange={(event) =>
+                updateSystemDraft((current) => ({
+                  ...current,
+                  modelConfig: {
+                    ...current.modelConfig,
+                    openaiNativeWebSearch: event.target
+                      .value as SystemSettings['modelConfig']['openaiNativeWebSearch'],
+                  },
+                }))
+              }
+            >
+              <option value="auto">auto（官方端点自动开启）</option>
+              <option value="on">on（强制开启）</option>
+              <option value="off">off（关闭，使用 Tavily 等三方）</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-xs text-foreground-muted">OpenAI Native 生图</span>
+            <select
+              className="h-9 rounded-md border border-border bg-surface px-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+              value={systemDraft.modelConfig.openaiNativeImageGeneration}
+              onChange={(event) =>
+                updateSystemDraft((current) => ({
+                  ...current,
+                  modelConfig: {
+                    ...current.modelConfig,
+                    openaiNativeImageGeneration: event.target
+                      .value as SystemSettings['modelConfig']['openaiNativeImageGeneration'],
+                  },
+                }))
+              }
+            >
+              <option value="auto">auto（官方端点自动开启）</option>
+              <option value="on">on（强制开启）</option>
+              <option value="off">off（关闭，使用三方生图 Provider）</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm md:col-span-2">
+            <span className="text-2xs text-foreground-muted">
+              Native 能力走 OpenAI Responses 内置搜索/生图，复用上方 API Key。auto 时仅
+              api.openai.com 自动开启；中转站请设为 on（需中继支持）或 off 并配置三方 Provider。
+            </span>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
             <Input
               type="number"
               min={1}

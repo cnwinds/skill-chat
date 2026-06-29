@@ -1,0 +1,23 @@
+{
+  "registryVersion": "0.1.0",
+  "targets": {
+    "apps/server/package.json": [
+      "@harnesskit/core",
+      "@harnesskit/harness",
+      "@harnesskit/server"
+    ],
+    "apps/web/package.json": [
+      "@harnesskit/react"
+    ],
+    "packages/shared/package.json": [
+      "@harnesskit/protocol"
+    ]
+  },
+  "local": {
+    "@harnesskit/core": "file:../../../harness-kit/packages/core",
+    "@harnesskit/harness": "file:../../../harness-kit/packages/harness",
+    "@harnesskit/server": "file:../../../harness-kit/packages/server",
+    "@harnesskit/react": "file:../../../harness-kit/packages/react",
+    "@harnesskit/protocol": "file:../../../harness-kit/packages/protocol"
+  }
+}

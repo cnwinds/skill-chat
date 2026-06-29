@@ -1,7 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { ImageLightbox } from './ImageLightbox';
-import { imagePreviewActions } from '@/hooks/useImagePreview';
+import { imagePreviewActions } from '@/lib/harness-ui';
+import {
+  clearHarnessChatTestContext,
+  defaultHarnessChatTestContext,
+  setHarnessChatTestContext,
+} from '@/lib/harness-stream';
 
 const createRect = (width: number, height: number, left = 0, top = 0): DOMRect => ({
   x: left,
@@ -16,8 +21,13 @@ const createRect = (width: number, height: number, left = 0, top = 0): DOMRect =
 } as DOMRect);
 
 describe('ImageLightbox', () => {
+  beforeEach(() => {
+    setHarnessChatTestContext(defaultHarnessChatTestContext());
+  });
+
   afterEach(() => {
     imagePreviewActions.close();
+    clearHarnessChatTestContext();
     cleanup();
   });
 

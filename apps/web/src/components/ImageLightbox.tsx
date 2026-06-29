@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Download, X } from 'lucide-react';
-import { useImagePreview, useImagePreviewActions } from '@/hooks/useImagePreview';
-import { useFilePreviewUrl } from '@/hooks/useFilePreviewUrl';
+import { useImagePreview, useImagePreviewActions, useFilePreviewUrl } from '@/lib/harness-ui';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/utils';

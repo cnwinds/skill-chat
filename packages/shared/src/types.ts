@@ -36,6 +36,8 @@ export interface SystemStatus {
   registrationRequiresInviteCode: boolean;
 }
 
+export type NativeToolsPolicy = 'auto' | 'on' | 'off';
+
 export interface SystemSettings {
   registrationRequiresInviteCode: boolean;
   enableAssistantTools: boolean;
@@ -44,6 +46,8 @@ export interface SystemSettings {
     openaiApiKey: string;
     openaiModel: string;
     openaiReasoningEffort: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+    openaiNativeWebSearch: NativeToolsPolicy;
+    openaiNativeImageGeneration: NativeToolsPolicy;
     llmMaxOutputTokens: number;
     toolMaxOutputTokens: number;
   };
@@ -90,7 +94,7 @@ export interface FileRecord {
   mimeType: string | null;
   size: number;
   bucket: FileBucket;
-  source: FileSource;
+  source?: FileSource;
   visibility?: FileVisibility;
   createdAt: string;
   downloadUrl?: string;
@@ -165,9 +169,9 @@ export interface ImageMessageEvent extends StoredEventBase {
   kind: 'image';
   file: FileRecord;
   operation: 'generate' | 'edit';
-  provider: 'openai';
+  provider: 'openai' | string;
   model: string;
-  source: 'responses_tool' | 'images_generate_api' | 'images_edit_api';
+  source?: 'responses_tool' | 'images_generate_api' | 'images_edit_api';
   prompt: string;
   revisedPrompt?: string;
   inputFileIds?: string[];

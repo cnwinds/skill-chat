@@ -1,4 +1,4 @@
-import type { ClipboardEvent as ReactClipboardEvent } from 'react';
+import type { UIEvent as ReactUIEvent } from 'react';
 import {
   forwardRef,
   memo,
@@ -19,22 +19,25 @@ import type {
   ThinkingEvent,
 } from '@skillchat/shared';
 import { ApiError, api } from '@/lib/api';
-import { MessageItem } from '@/components/MessageItem';
 import { useAuthStore } from '@/stores/auth-store';
+import { useSessionStream, useStreamUiStore } from '@/lib/harness-stream';
 import { useUiStore } from '@/stores/ui-store';
-import { useSessionStream } from '@/hooks/useSessionStream';
 import {
+  MessageItem,
+  Composer,
+  FollowUpQueue,
+  QuestionTimelineControl,
   composerAttachmentsActions,
   createComposerAttachmentId,
-  type ComposerAttachment,
   useComposerAttachments,
-} from '@/hooks/useComposerAttachments';
-import { useKeyboardInset } from '@/hooks/useKeyboardInset';
-import { useAutoScrollToBottom } from '@/hooks/useAutoScrollToBottom';
-import { buildRenderableTimeline, type TimelineItem } from '@/lib/timeline';
+  useKeyboardInset,
+  useAutoScrollToBottom,
+  buildRenderableTimeline,
+  type ComposerAttachment,
+  type TimelineItem,
+  type QuestionTimelineEntry,
+} from '@/lib/harness-ui';
 import { ChatHeader } from '@/components/layout/ChatHeader';
-import { Composer } from '@/components/chat/Composer';
-import { FollowUpQueue } from '@/components/chat/FollowUpQueue';
 import { getQuestionAnchorOffset, getQuestionTargetScrollTop } from '@/lib/question-scroll';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,10 +49,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  QuestionTimelineControl,
-  type QuestionTimelineEntry,
-} from '@/components/chat/QuestionTimelineControl';
 import { cn } from '@/lib/cn';
 import { useAppShellOutlet } from './AppShellContext';
 
@@ -64,6 +63,15 @@ const normalizeAttachmentFile = (file: File, index: number) => {
     type: file.type || 'application/octet-stream',
     lastModified: Date.now(),
   });
+};
+
+const createAttachmentPreviewUrl = (file: File) =>
+  (file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined);
+
+const revokeAttachmentPreview = (attachment: { previewUrl?: string }) => {
+  if (attachment.previewUrl?.startsWith('blob:')) {
+    URL.revokeObjectURL(attachment.previewUrl);
+  }
 };
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 48;
@@ -171,7 +179,7 @@ const TimelineEventList = memo(({
         key={event.id}
         ref={bindMessageNode(event.id)}
         className={cn(
-          'scroll-mt-6 rounded-2xl transition-[box-shadow,background-color] duration-300',
+          'min-w-0 scroll-mt-6 rounded-2xl transition-[box-shadow,background-color] duration-300',
           highlightedEventId === event.id &&
             'bg-accent/5 shadow-[0_0_0_2px_var(--accent)]',
         )}
@@ -192,7 +200,6 @@ TimelineEventList.displayName = 'TimelineEventList';
 interface ChatComposerPanelProps {
   activeSessionId: string | null;
   onSubmit: (content: string) => void;
-  onPaste: (event: ReactClipboardEvent<HTMLTextAreaElement>) => void;
   attachments: ComposerAttachment[];
   onRemoveAttachment: (localId: string) => void;
   onSelectFiles: (files: File[]) => void;
@@ -202,6 +209,7 @@ interface ChatComposerPanelProps {
   sendPending: boolean;
   disabled: boolean;
   hasUploadingAttachments: boolean;
+  hasAttachments: boolean;
   placeholder: string;
   bottomInsetPx: number;
 }
@@ -210,7 +218,6 @@ const ChatComposerPanel = memo(forwardRef<HTMLTextAreaElement, ChatComposerPanel
   function ChatComposerPanel({
     activeSessionId,
     onSubmit,
-    onPaste,
     attachments,
     onRemoveAttachment,
     onSelectFiles,
@@ -220,6 +227,7 @@ const ChatComposerPanel = memo(forwardRef<HTMLTextAreaElement, ChatComposerPanel
     sendPending,
     disabled,
     hasUploadingAttachments,
+    hasAttachments,
     placeholder,
     bottomInsetPx,
   }, ref) {
@@ -257,7 +265,6 @@ const ChatComposerPanel = memo(forwardRef<HTMLTextAreaElement, ChatComposerPanel
         value={draft}
         onValueChange={(value) => activeSessionId && setDraft(activeSessionId, value)}
         onSend={handleSend}
-        onPaste={onPaste}
         attachments={attachments}
         onRemoveAttachment={onRemoveAttachment}
         onSelectFiles={onSelectFiles}
@@ -267,6 +274,7 @@ const ChatComposerPanel = memo(forwardRef<HTMLTextAreaElement, ChatComposerPanel
         sendPending={sendPending}
         disabled={disabled}
         hasUploadingAttachments={hasUploadingAttachments}
+        hasAttachments={hasAttachments}
         placeholder={placeholder}
         bottomInsetPx={bottomInsetPx}
       />
@@ -358,10 +366,10 @@ export const ChatPage = () => {
   } = useAppShellOutlet();
 
   const setDraft = useUiStore((state) => state.setDraft);
-  const clearActiveTurn = useUiStore((state) => state.clearActiveTurn);
-  const clearStreamContent = useUiStore((state) => state.clearStreamContent);
-  const hydrateRuntime = useUiStore((state) => state.hydrateRuntime);
-  const confirmRemovedFollowUpInput = useUiStore((state) => state.confirmRemovedFollowUpInput);
+  const clearActiveTurn = useStreamUiStore((state) => state.clearActiveTurn);
+  const clearStreamContent = useStreamUiStore((state) => state.clearStreamContent);
+  const hydrateRuntime = useStreamUiStore((state) => state.hydrateRuntime);
+  const confirmRemovedFollowUpInput = useStreamUiStore((state) => state.confirmRemovedFollowUpInput);
   const setSessionScrollState = useUiStore((state) => state.setSessionScrollState);
 
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -454,11 +462,11 @@ export const ChatPage = () => {
       ? `当前会话已启用：${activeSkillEntries.map((skill) => skill.name).join(' · ')}`
       : null;
 
-  useEffect(() => {
-    if (activeSessionId && runtimeQuery.data && runtimeQuery.isFetchedAfterMount) {
+  useLayoutEffect(() => {
+    if (activeSessionId && runtimeQuery.data) {
       hydrateRuntime(activeSessionId, runtimeQuery.data);
     }
-  }, [activeSessionId, hydrateRuntime, runtimeQuery.data, runtimeQuery.isFetchedAfterMount]);
+  }, [activeSessionId, hydrateRuntime, runtimeQuery.data]);
 
   useEffect(() => {
     if (
@@ -884,16 +892,16 @@ export const ChatPage = () => {
     for (const [index, rawFile] of files.entries()) {
       const file = normalizeAttachmentFile(rawFile, index);
       const localId = createComposerAttachmentId();
-      updateAttachments(activeSessionId, (current) => [
-        ...current,
-        {
-          localId,
-          displayName: file.name,
-          mimeType: file.type || null,
-          size: file.size,
-          status: 'uploading',
-        },
-      ]);
+      const previewUrl = createAttachmentPreviewUrl(file);
+      const pending = {
+        localId,
+        displayName: file.name,
+        mimeType: file.type || null,
+        size: file.size,
+        status: 'uploading' as const,
+        previewUrl,
+      };
+      updateAttachments(activeSessionId, (current) => [...current, pending]);
 
       try {
         const record = await uploadFileRef.current({
@@ -915,30 +923,13 @@ export const ChatPage = () => {
           ),
         );
       } catch {
+        revokeAttachmentPreview(pending);
         updateAttachments(activeSessionId, (current) =>
           current.filter((item) => item.localId !== localId),
         );
       }
     }
   }, [activeSessionId, setPageError, updateAttachments]);
-
-  const handleComposerPaste = useCallback((event: ReactClipboardEvent<HTMLTextAreaElement>) => {
-    const pastedImagesFromItems = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => Boolean(file));
-    const pastedImages =
-      pastedImagesFromItems.length > 0
-        ? pastedImagesFromItems
-        : Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
-
-    if (pastedImages.length === 0) {
-      return;
-    }
-
-    event.preventDefault();
-    void uploadComposerFiles(pastedImages);
-  }, [uploadComposerFiles]);
 
   const handleRemoveComposerAttachment = useCallback((localId: string) => {
     if (!activeSessionId) {
@@ -1107,13 +1098,13 @@ export const ChatPage = () => {
 
       {hasActiveSession ? (
         <>
-          <section className="message-stage relative flex-1 overflow-hidden">
+          <section className="message-stage relative min-w-0 flex-1 overflow-hidden">
             <div
               ref={messageListRef}
-              className="message-list h-full overflow-y-auto"
+              className="message-list h-full min-w-0 overflow-x-hidden overflow-y-auto"
               onScroll={handleMessageListScroll}
             >
-              <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4 py-6">
+              <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-4 py-6">
                 {stream.recovery ? (
                   <div className="rounded-md border border-border bg-surface px-3 py-2 text-xs text-foreground-muted">
                     已从重启中恢复：之前的 {stream.recovery.previousTurnKind} turn （
@@ -1216,23 +1207,25 @@ export const ChatPage = () => {
               </div>
             </div>
           ) : null}
-          <ChatComposerPanel
-            ref={composerTextareaRef}
-            activeSessionId={activeSessionId}
-            onSubmit={handleSubmitDraft}
-            onPaste={handleComposerPaste}
-            attachments={composerAttachments}
-            onRemoveAttachment={handleRemoveComposerAttachment}
-            onSelectFiles={handleSelectComposerFiles}
-            isTurnRunning={isTurnRunning}
-            onInterrupt={handleInterruptTurn}
-            interruptPending={interruptMutation.isPending}
-            sendPending={sendMessageMutation.isPending}
-            disabled={!activeSessionId}
-            hasUploadingAttachments={hasUploadingAttachments}
-            placeholder={isTurnRunning ? '继续补充信息，系统会按顺序处理' : '给 SkillChat 发送消息'}
-            bottomInsetPx={keyboardInset}
-          />
+          <div className="border-t border-border bg-background">
+            <ChatComposerPanel
+              ref={composerTextareaRef}
+              activeSessionId={activeSessionId}
+              onSubmit={handleSubmitDraft}
+              attachments={composerAttachments}
+              onRemoveAttachment={handleRemoveComposerAttachment}
+              onSelectFiles={handleSelectComposerFiles}
+              isTurnRunning={isTurnRunning}
+              onInterrupt={handleInterruptTurn}
+              interruptPending={interruptMutation.isPending}
+              sendPending={sendMessageMutation.isPending}
+              disabled={!activeSessionId}
+              hasUploadingAttachments={hasUploadingAttachments}
+              hasAttachments={composerAttachments.length > 0}
+              placeholder={isTurnRunning ? '继续补充信息，系统会按顺序处理' : '给 SkillChat 发送消息'}
+              bottomInsetPx={keyboardInset}
+            />
+          </div>
         </>
       ) : (
         <section className="message-stage flex-1 overflow-hidden">

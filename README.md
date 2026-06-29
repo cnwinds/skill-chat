@@ -49,6 +49,33 @@ C:\projects\skill-chat
 - 聊天应用只负责安装、启用和运行 Skill，不要在本仓库新增市场契约字段。
 - 详细设计见 `docs/Three_Project_Split_Design.md`。下次改 Skill 相关功能前请先阅读该文档。
 
+## 0.2 HarnessKit 双仓库开发与发布
+
+SkillChat 的聊天 Harness 来自独立仓库 **HarnessKit**（`@harnesskit/*`）。
+
+- **开发**：与 `harness-kit` 并列放置，使用本地 `file:` 依赖，方便两边同时改 bug。
+- **上线**：将 HarnessKit 发布到 npm，SkillChat 与 Docker 构建使用固定版本号。
+
+本地推荐布局：
+
+```text
+ai_projects/
+├── harness-kit/
+└── skill-chat/    # 本仓库
+```
+
+常用命令：
+
+```bash
+npm run harness:local          # 切回本地 file: 联调（默认）
+npm run build:harness-kit      # 编译本地 harness-kit
+npm run harness:registry -- --version=0.1.0   # 上线前切 npm 依赖
+```
+
+**完整流程（开发、发 harness-kit、发 skill-chat、Docker）见：**
+
+- [`docs/Harness_Kit_Workflow.md`](docs/Harness_Kit_Workflow.md)
+
 ## 1. 环境要求
 
 - Node.js 24+
@@ -167,6 +194,8 @@ tail -f logs/dev-web.log
 
 ## 4. 正式环境部署（Docker Compose）
 
+**上线前请先阅读 [`docs/Harness_Kit_Workflow.md`](docs/Harness_Kit_Workflow.md)**：需将 `@harnesskit/*` 发布到 npm，并在 `docker/.env` 设置 `HARNESSKIT_VERSION`。
+
 如果你要在服务器上一键启动，仓库根目录已经提供：
 
 - `docker/compose.yml`
@@ -232,6 +261,7 @@ npm test
 
 ## 9. 主要文档
 
+- `docs/Harness_Kit_Workflow.md` — HarnessKit 双仓库开发 / npm 发布 / Docker 标准流程
 - `docs/SkillChat_PRD.md`
 - `docs/SkillChat_Design_Dev.md`
 - `docs/SkillChat_TODO.md`

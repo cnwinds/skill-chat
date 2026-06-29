@@ -24,6 +24,8 @@ const createConfig = (root: string, overrides: Partial<AppConfig> = {}): AppConf
   MODEL_CONTEXT_WINDOW_TOKENS: undefined,
   MODEL_AUTO_COMPACT_TOKEN_LIMIT: undefined,
   WEB_SEARCH_MODE: 'live',
+  OPENAI_NATIVE_WEB_SEARCH: 'auto',
+  OPENAI_NATIVE_IMAGE_GENERATION: 'auto',
   OPENAI_REASONING_EFFORT: 'medium',
   LLM_MAX_OUTPUT_TOKENS: 8192,
   TOOL_MAX_OUTPUT_TOKENS: 4096,

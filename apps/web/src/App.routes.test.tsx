@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { MemoryRouter } from 'react-router-dom';
@@ -7,6 +7,12 @@ import App from './App';
 import { useAuthStore } from './stores/auth-store';
 import { usePreferencesStore } from './stores/preferences-store';
 import { useUiStore } from './stores/ui-store';
+import {
+  setHarnessChatTestContext,
+  defaultHarnessChatTestContext,
+  clearHarnessChatTestContext,
+  useStreamUiStore,
+} from '@/lib/harness-stream';
 
 vi.mock('@microsoft/fetch-event-source', () => ({
   fetchEventSource: vi.fn(async () => undefined),
@@ -53,6 +59,8 @@ const systemSettings = {
     openaiApiKey: 'sk-test',
     openaiModel: 'gpt-5.2',
     openaiReasoningEffort: 'medium' as const,
+    openaiNativeWebSearch: 'auto' as const,
+    openaiNativeImageGeneration: 'auto' as const,
     llmMaxOutputTokens: 4096,
     toolMaxOutputTokens: 2048,
   },
@@ -72,7 +80,38 @@ const memberUser = {
   status: 'active' as const,
 };
 
+const syncHarnessTestContext = () => {
+  const auth = useAuthStore.getState();
+  setHarnessChatTestContext({
+    ...defaultHarnessChatTestContext(),
+    auth: {
+      user: auth.user
+        ? { id: auth.user.id, username: auth.user.username, role: auth.user.role }
+        : null,
+      ready: auth.ready,
+      onUnauthorized: () => useAuthStore.getState().setAnonymous(),
+    },
+    filesApi: {
+      fetchFileBlob: async (fileId: string) => {
+        const response = await fetch(`/api/files/${fileId}`);
+        if (!response.ok) {
+          throw new Error('文件下载失败');
+        }
+        return response.blob();
+      },
+      fetchFilePreviewBlob: async (file) => {
+        const response = await fetch(`/api/files/${file.id}/thumbnail`);
+        if (!response.ok) {
+          throw new Error('图片预览失败');
+        }
+        return response.blob();
+      },
+    },
+  });
+};
+
 const renderApp = (initialEntries: string[]) => {
+  syncHarnessTestContext();
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -118,15 +157,18 @@ const installFetchMock = (handler: (url: string, init?: RequestInit) => Response
 
 beforeEach(() => {
     document.documentElement.dataset.theme = 'dark';
+  vi.unstubAllGlobals();
+  clearHarnessChatTestContext();
   useAuthStore.setState({ user: null, ready: true });
+  syncHarnessTestContext();
   usePreferencesStore.setState({ themeMode: 'dark' });
   useUiStore.setState({
     activeSessionId: null,
     mobilePanel: null,
     drafts: {},
-    streams: {},
     sessionScrollStates: {},
   });
+  useStreamUiStore.setState({ streams: {} });
   fetchEventSourceMock.mockReset();
   fetchEventSourceMock.mockImplementation(async (_input, init) => {
     await init?.onopen?.(new Response(null, { status: 200 }));
@@ -135,8 +177,9 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  clearHarnessChatTestContext();
   vi.useRealTimers();
-  vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 describe('App routes', () => {
@@ -817,6 +860,8 @@ describe('App routes', () => {
       activeSessionId: 's1',
       mobilePanel: null,
       drafts: {},
+    });
+    useStreamUiStore.setState({
       streams: {
         s1: {
           pendingText: '',
@@ -834,6 +879,7 @@ describe('App routes', () => {
           activeTurnCanSteer: true,
           activeTurnRound: 1,
           reasoningSummary: '',
+          activeReasoningSegmentId: null,
           currentTurnTokenUsage: null,
           followUpQueue: [
             {
@@ -1111,1097 +1157,6 @@ describe('App routes', () => {
       expect(screen.queryByText('要删除的会话')).not.toBeInTheDocument();
     });
   });
-
-  it('restores active turn status and thinking when switching away and back to a running session', async () => {
-    installFetchMock((url) => {
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Session 1',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-            {
-              id: 's2',
-              title: 'Session 2',
-              createdAt: '2026-04-12T00:01:00.000Z',
-              updatedAt: '2026-04-12T00:01:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200' || url === '/api/sessions/s2/messages?limit=200') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/files?sessionId=s1' || url === '/api/files?sessionId=s2') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: {
-              turnId: 'turn_1',
-              kind: 'regular',
-              status: 'running',
-              phase: 'sampling',
-              phaseStartedAt: '2026-04-12T00:00:30.000Z',
-              canSteer: true,
-              startedAt: '2026-04-12T00:00:00.000Z',
-              round: 2,
-            },
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/sessions/s2/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's2',
-            activeTurn: null,
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-
-      throw new Error(`Unhandled fetch: ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
-    expect(screen.getByText(/Turn：1（1） · Round：2 · 总消耗 token：0 · sampling/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '打开会话：Session 2' }));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Session 2' })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: /^打开会话：Session 1/ }));
-
-    expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
-    expect(screen.getByText(/Turn：1（1） · Round：2 · 总消耗 token：0 · sampling/)).toBeInTheDocument();
-  });
-
-  it('shows reconnect progress in the thinking bubble while the stream reconnects and restores thinking after reconnect', async () => {
-    const firstConnection = createDeferred<void>();
-    const secondConnection = createDeferred<void>();
-    let firstHandlers: MockStreamHandlers | undefined;
-    let secondHandlers: MockStreamHandlers | undefined;
-    let streamCallCount = 0;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      streamCallCount += 1;
-      if (streamCallCount === 1) {
-        firstHandlers = init as MockStreamHandlers;
-        await firstHandlers.onopen?.(new Response(null, { status: 200 }));
-        return firstConnection.promise;
-      }
-
-      secondHandlers = init as MockStreamHandlers;
-      return secondConnection.promise;
-    });
-
-    installFetchMock((url) => {
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: {
-              turnId: 'turn_1',
-              kind: 'regular',
-              status: 'running',
-              phase: 'sampling',
-              phaseStartedAt: '2026-04-12T00:00:30.000Z',
-              canSteer: true,
-              startedAt: '2026-04-12T00:00:00.000Z',
-              round: 1,
-            },
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    expect(await screen.findByText(/思考中\(/)).toBeInTheDocument();
-
-    await act(async () => {
-      await firstHandlers?.onclose?.();
-      firstConnection.resolve();
-    });
-
-    await waitFor(() => {
-      expect(fetchEventSourceMock).toHaveBeenCalledTimes(2);
-      expect(screen.getByText(/重连中1\/5\(/)).toBeInTheDocument();
-    });
-
-    await act(async () => {
-      await secondHandlers?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText(/思考中\(/)).toBeInTheDocument();
-      expect(screen.queryByText(/重连中1\/5\(/)).not.toBeInTheDocument();
-    });
-
-    secondConnection.resolve();
-  });
-
-  it('keeps streaming text visible when a stale idle runtime snapshot resolves after the turn has started', async () => {
-    const runtimeResponse = createDeferred<Response>();
-    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
-      await init?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    installFetchMock((url, init) => {
-      const method = init?.method ?? 'GET';
-
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return runtimeResponse.promise;
-      }
-      if (url === '/api/sessions/s1/messages' && method === 'POST') {
-        return jsonResponse({
-          body: {
-            accepted: true,
-            dispatch: 'turn_started',
-            messageId: 'input_start_1',
-            runId: 'turn_1',
-            turnId: 'turn_1',
-            inputId: 'input_start_1',
-            runtime: {
-              sessionId: 's1',
-              activeTurn: {
-                turnId: 'turn_1',
-                kind: 'regular',
-                status: 'running',
-                phase: 'sampling',
-                phaseStartedAt: '2026-04-12T00:00:00.000Z',
-                canSteer: true,
-                startedAt: '2026-04-12T00:00:00.000Z',
-                round: 1,
-              },
-              followUpQueue: [],
-              recovery: null,
-            },
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${method} ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    const textarea = await screen.findByLabelText('聊天输入框');
-    fireEvent.change(textarea, {
-      target: { value: '帮我分析这个分数该怎么填志愿' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '发送' }));
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_delta_1',
-        event: 'text_delta',
-        data: JSON.stringify({
-          content: '先看你的分数段位，',
-        }),
-      });
-    });
-
-    expect(await screen.findByText('先看你的分数段位，')).toBeInTheDocument();
-
-    runtimeResponse.resolve(jsonResponse({
-      body: {
-        sessionId: 's1',
-        activeTurn: null,
-        followUpQueue: [],
-        recovery: null,
-      },
-    }));
-
-    await waitFor(() => {
-      expect(screen.getByText('先看你的分数段位，')).toBeInTheDocument();
-    });
-  });
-
-  it('clears a stale running state when the runtime is idle and the final assistant reply is already persisted', async () => {
-    const finalAssistantMessage = {
-      id: 'evt_assistant_1',
-      sessionId: 's1',
-      kind: 'message' as const,
-      role: 'assistant' as const,
-      type: 'text' as const,
-      content: 'Hi! 怎么帮你？',
-      createdAt: '2026-04-12T00:00:04.200Z',
-    };
-
-    installFetchMock((url, init) => {
-      const method = init?.method ?? 'GET';
-
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Recovered Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        return jsonResponse({ body: [finalAssistantMessage] });
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: null,
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${method} ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    useUiStore.setState({
-      activeSessionId: 's1',
-      mobilePanel: null,
-      drafts: {},
-      streams: {
-        s1: {
-          pendingText: finalAssistantMessage.content,
-          transientEvents: [],
-          status: 'open',
-          lastError: null,
-          reconnectAttempt: null,
-          reconnectLimit: null,
-          activeTurnId: 'turn_1',
-          activeTurnKind: 'regular',
-          activeTurnStatus: 'running',
-          activeTurnPhase: 'streaming_assistant',
-          activeTurnPhaseStartedAt: '2026-04-12T00:00:04.000Z',
-          activeTurnStartedAt: '2026-04-12T00:00:04.000Z',
-          activeTurnCanSteer: true,
-          activeTurnRound: 1,
-          reasoningSummary: '',
-          currentTurnTokenUsage: null,
-          followUpQueue: [],
-          removedFollowUpInputIds: [],
-          recovery: null,
-        },
-      },
-    });
-
-    renderApp(['/app/session/s1']);
-
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: '中断当前 turn' })).not.toBeInTheDocument();
-      expect(screen.queryByText('当前轮处理中')).not.toBeInTheDocument();
-    });
-  });
-
-  it('keeps the streaming assistant footer stable after turn completion and suppresses the duplicate final reply', async () => {
-    const finalAssistantMessage = {
-      id: 'evt_assistant_1',
-      sessionId: 's1',
-      kind: 'message' as const,
-      role: 'assistant' as const,
-      type: 'text' as const,
-      content: '最终建议',
-      createdAt: '2026-04-12T00:00:04.200Z',
-      meta: {
-        durationMs: 4200,
-        tokenUsage: {
-          inputTokens: 120,
-          outputTokens: 45,
-          totalTokens: 165,
-        },
-      },
-    };
-    const refetchMessages = createDeferred<Response>();
-    let messageRequestCount = 0;
-    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
-      await init?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    installFetchMock((url, init) => {
-      const method = init?.method ?? 'GET';
-
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        messageRequestCount += 1;
-        if (messageRequestCount === 1) {
-          return jsonResponse({ body: [] });
-        }
-        return refetchMessages.promise;
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: null,
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/sessions/s1/messages' && method === 'POST') {
-        return jsonResponse({
-          body: {
-            accepted: true,
-            dispatch: 'turn_started',
-            messageId: 'input_start_1',
-            runId: 'turn_1',
-            turnId: 'turn_1',
-            inputId: 'input_start_1',
-            runtime: {
-              sessionId: 's1',
-              activeTurn: {
-                turnId: 'turn_1',
-                kind: 'regular',
-                status: 'running',
-                phase: 'sampling',
-                phaseStartedAt: '2026-04-12T00:00:00.000Z',
-                canSteer: true,
-                startedAt: '2026-04-12T00:00:00.000Z',
-                round: 1,
-              },
-              followUpQueue: [],
-              recovery: null,
-            },
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${method} ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    const textarea = await screen.findByLabelText('聊天输入框');
-    fireEvent.change(textarea, {
-      target: { value: '帮我给个结论' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '发送' }));
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_delta_1',
-        event: 'text_delta',
-        data: JSON.stringify({
-          content: finalAssistantMessage.content,
-        }),
-      });
-      handleStreamMessage?.({
-        id: 'evt_token_1',
-        event: 'token_count',
-        data: JSON.stringify({
-          inputTokens: 120,
-          outputTokens: 45,
-          totalTokens: 165,
-        }),
-      });
-    });
-
-    expect(await screen.findByText(/165 \(120\/45\) tokens/)).toBeInTheDocument();
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_complete_1',
-        event: 'turn_completed',
-        data: JSON.stringify({
-          turnId: 'turn_1',
-          kind: 'regular',
-          status: 'completed',
-        }),
-      });
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText(/165 \(120\/45\) tokens/)).toBeInTheDocument();
-    });
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_done_1',
-        event: 'done',
-        data: JSON.stringify({}),
-      });
-    });
-
-    refetchMessages.resolve(jsonResponse({ body: [finalAssistantMessage] }));
-
-    await waitFor(() => {
-      expect(messageRequestCount).toBe(2);
-      expect(screen.getAllByText(finalAssistantMessage.content)).toHaveLength(1);
-      expect(screen.getAllByText(/165 \(120\/45\) tokens/)).toHaveLength(1);
-    });
-  });
-
-  it('stops showing the current turn as running when done arrives before turn_completed', async () => {
-    const finalAssistantMessage = {
-      id: 'evt_assistant_1',
-      sessionId: 's1',
-      kind: 'message' as const,
-      role: 'assistant' as const,
-      type: 'text' as const,
-      content: 'Hi! 怎么帮你？',
-      createdAt: '2026-04-12T00:00:04.200Z',
-    };
-    const refetchMessages = createDeferred<Response>();
-    let messageRequestCount = 0;
-    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
-      await init?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    installFetchMock((url, init) => {
-      const method = init?.method ?? 'GET';
-
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        messageRequestCount += 1;
-        if (messageRequestCount === 1) {
-          return jsonResponse({ body: [] });
-        }
-        return refetchMessages.promise;
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: null,
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/sessions/s1/messages' && method === 'POST') {
-        return jsonResponse({
-          body: {
-            accepted: true,
-            dispatch: 'turn_started',
-            messageId: 'input_start_1',
-            runId: 'turn_1',
-            turnId: 'turn_1',
-            inputId: 'input_start_1',
-            runtime: {
-              sessionId: 's1',
-              activeTurn: {
-                turnId: 'turn_1',
-                kind: 'regular',
-                status: 'running',
-                phase: 'sampling',
-                phaseStartedAt: '2026-04-12T00:00:00.000Z',
-                canSteer: true,
-                startedAt: '2026-04-12T00:00:00.000Z',
-                round: 1,
-              },
-              followUpQueue: [],
-              recovery: null,
-            },
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${method} ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    const textarea = await screen.findByLabelText('聊天输入框');
-    fireEvent.change(textarea, {
-      target: { value: 'hi' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '发送' }));
-
-    expect(await screen.findByRole('button', { name: '中断当前 turn' })).toBeInTheDocument();
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_delta_1',
-        event: 'text_delta',
-        data: JSON.stringify({
-          content: finalAssistantMessage.content,
-        }),
-      });
-      handleStreamMessage?.({
-        id: 'evt_done_1',
-        event: 'done',
-        data: JSON.stringify({}),
-      });
-    });
-
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: '中断当前 turn' })).not.toBeInTheDocument();
-      expect(screen.queryByText('当前轮处理中')).not.toBeInTheDocument();
-    });
-
-    refetchMessages.resolve(jsonResponse({ body: [finalAssistantMessage] }));
-
-    await waitFor(() => {
-      expect(messageRequestCount).toBe(2);
-      expect(screen.getByText(finalAssistantMessage.content)).toBeInTheDocument();
-    });
-  });
-
-  it('replaces the optimistic user message with the committed one instead of rendering both', async () => {
-    const committedMessage = {
-      id: 'evt_user_1',
-      sessionId: 's1',
-      kind: 'message' as const,
-      role: 'user' as const,
-      type: 'text' as const,
-      content: '帮我分析这个分数该怎么填志愿',
-      createdAt: '2026-04-12T00:00:01.000Z',
-    };
-    const refetchMessages = createDeferred<Response>();
-    let messageRequestCount = 0;
-    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
-      await init?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    installFetchMock((url, init) => {
-      const method = init?.method ?? 'GET';
-
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        messageRequestCount += 1;
-        if (messageRequestCount === 1) {
-          return jsonResponse({ body: [] });
-        }
-        return refetchMessages.promise;
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: null,
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/sessions/s1/messages' && method === 'POST') {
-        return jsonResponse({
-          body: {
-            accepted: true,
-            dispatch: 'turn_started',
-            messageId: 'input_start_1',
-            runId: 'turn_1',
-            turnId: 'turn_1',
-            inputId: 'input_start_1',
-            runtime: {
-              sessionId: 's1',
-              activeTurn: {
-                turnId: 'turn_1',
-                kind: 'regular',
-                status: 'running',
-                phase: 'sampling',
-                phaseStartedAt: '2026-04-12T00:00:00.000Z',
-                canSteer: true,
-                startedAt: '2026-04-12T00:00:00.000Z',
-                round: 1,
-              },
-              followUpQueue: [],
-              recovery: null,
-            },
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${method} ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    const textarea = await screen.findByLabelText('聊天输入框');
-    fireEvent.change(textarea, {
-      target: { value: committedMessage.content },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '发送' }));
-
-    await waitFor(() => {
-      expect(screen.getAllByText(committedMessage.content)).toHaveLength(1);
-    });
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_commit_1',
-        event: 'user_message_committed',
-        data: JSON.stringify({
-          turnId: 'turn_1',
-          inputId: 'input_start_1',
-          content: committedMessage.content,
-          createdAt: committedMessage.createdAt,
-        }),
-      });
-    });
-
-    await waitFor(() => {
-      expect(screen.getAllByText(committedMessage.content)).toHaveLength(1);
-    });
-
-    refetchMessages.resolve(jsonResponse({ body: [committedMessage] }));
-
-    await waitFor(() => {
-      expect(messageRequestCount).toBe(2);
-      expect(screen.getAllByText(committedMessage.content)).toHaveLength(1);
-    });
-  });
-
-  it('keeps steer-accepted guidance out of the chat stream until it is committed', async () => {
-    const followUpContent = '补充：优先讲就业和城市';
-    const committedMessage = {
-      id: 'evt_user_followup_1',
-      sessionId: 's1',
-      kind: 'message' as const,
-      role: 'user' as const,
-      type: 'text' as const,
-      content: followUpContent,
-      createdAt: '2026-04-12T00:00:03.000Z',
-    };
-    const refetchMessages = createDeferred<Response>();
-    let messageRequestCount = 0;
-    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
-      await init?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    installFetchMock((url, init) => {
-      const method = init?.method ?? 'GET';
-
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        messageRequestCount += 1;
-        if (messageRequestCount === 1) {
-          return jsonResponse({ body: [] });
-        }
-        return refetchMessages.promise;
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: {
-              turnId: 'turn_1',
-              kind: 'regular',
-              status: 'running',
-              phase: 'sampling',
-              phaseStartedAt: '2026-04-12T00:00:00.000Z',
-              canSteer: true,
-              startedAt: '2026-04-12T00:00:00.000Z',
-              round: 1,
-            },
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/sessions/s1/messages' && method === 'POST') {
-        expect(init?.body).toBe(JSON.stringify({
-          content: followUpContent,
-          attachmentIds: [],
-          dispatch: 'auto',
-          turnId: 'turn_1',
-        }));
-        return jsonResponse({
-          body: {
-            accepted: true,
-            dispatch: 'steer_accepted',
-            messageId: 'input_pending_1',
-            runId: 'turn_1',
-            turnId: 'turn_1',
-            inputId: 'input_pending_1',
-            runtime: {
-              sessionId: 's1',
-              activeTurn: {
-                turnId: 'turn_1',
-                kind: 'regular',
-                status: 'running',
-                phase: 'sampling',
-                phaseStartedAt: '2026-04-12T00:00:00.000Z',
-                canSteer: true,
-                startedAt: '2026-04-12T00:00:00.000Z',
-                round: 1,
-              },
-              followUpQueue: [
-                {
-                  inputId: 'input_pending_1',
-                  content: followUpContent,
-                  createdAt: '2026-04-12T00:00:02.000Z',
-                },
-              ],
-              recovery: null,
-            },
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${method} ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    const textarea = await screen.findByLabelText('聊天输入框');
-    fireEvent.change(textarea, {
-      target: { value: followUpContent },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '补充信息' }));
-
-    await waitFor(() => {
-      expect(screen.getByText(followUpContent)).toBeInTheDocument();
-    });
-    expect(document.querySelector('.message-list')).not.toHaveTextContent(followUpContent);
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_commit_followup_1',
-        event: 'user_message_committed',
-        data: JSON.stringify({
-          turnId: 'turn_1',
-          inputId: 'input_pending_1',
-          content: followUpContent,
-          createdAt: committedMessage.createdAt,
-        }),
-      });
-    });
-
-    await waitFor(() => {
-      expect(screen.getAllByText(followUpContent)).toHaveLength(1);
-    });
-
-    refetchMessages.resolve(jsonResponse({ body: [committedMessage] }));
-
-    await waitFor(() => {
-      expect(messageRequestCount).toBe(2);
-      expect(document.querySelector('.message-list')).toHaveTextContent(followUpContent);
-    });
-  });
-
-  it('renders committed assistant text before the inserted guidance it answered around', async () => {
-    const assistantSegment = {
-      id: 'evt_assistant_segment_1',
-      sessionId: 's1',
-      kind: 'message' as const,
-      role: 'assistant' as const,
-      type: 'text' as const,
-      content: '先答第一段。',
-      createdAt: '2026-04-12T00:00:02.000Z',
-      meta: {
-        turnId: 'turn_1',
-      },
-    };
-    const followUpMessage = {
-      id: 'evt_user_followup_1',
-      sessionId: 's1',
-      kind: 'message' as const,
-      role: 'user' as const,
-      type: 'text' as const,
-      content: '补充：把城市因素也加上',
-      createdAt: '2026-04-12T00:00:03.000Z',
-    };
-    let messageRequestCount = 0;
-    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
-      await init?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    installFetchMock((url) => {
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        messageRequestCount += 1;
-        return jsonResponse({
-          body: messageRequestCount === 1 ? [] : [assistantSegment, followUpMessage],
-        });
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: {
-              turnId: 'turn_1',
-              kind: 'regular',
-              status: 'running',
-              phase: 'streaming_assistant',
-              phaseStartedAt: '2026-04-12T00:00:00.000Z',
-              canSteer: true,
-              startedAt: '2026-04-12T00:00:00.000Z',
-              round: 1,
-            },
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    await screen.findByLabelText('聊天输入框');
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_delta_1',
-        event: 'text_delta',
-        data: JSON.stringify({ content: assistantSegment.content }),
-      });
-    });
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: assistantSegment.id,
-        event: 'assistant_message_committed',
-        data: JSON.stringify({ message: assistantSegment }),
-      });
-      handleStreamMessage?.({
-        id: 'evt_commit_followup_1',
-        event: 'user_message_committed',
-        data: JSON.stringify({
-          turnId: 'turn_1',
-          inputId: 'input_pending_1',
-          content: followUpMessage.content,
-          createdAt: followUpMessage.createdAt,
-        }),
-      });
-      handleStreamMessage?.({
-        id: 'evt_delta_2',
-        event: 'text_delta',
-        data: JSON.stringify({ content: '再结合补充继续。' }),
-      });
-    });
-
-    await waitFor(() => {
-      expect(messageRequestCount).toBeGreaterThanOrEqual(2);
-      expect(screen.getAllByText(assistantSegment.content)).toHaveLength(1);
-      expect(document.querySelector('.message-list')).toHaveTextContent('再结合补充继续。');
-    });
-
-    const listText = document.querySelector('.message-list')?.textContent ?? '';
-    expect(listText.indexOf(assistantSegment.content)).toBeLessThan(listText.indexOf(followUpMessage.content));
-    expect(listText.indexOf(followUpMessage.content)).toBeLessThan(listText.indexOf('再结合补充继续。'));
-  });
-
   it('uploads pasted images into the current session and shows them as composer attachments', async () => {
     let uploadCount = 0;
 
@@ -2282,8 +1237,7 @@ describe('App routes', () => {
     await waitFor(() => {
       expect(uploadCount).toBe(1);
     });
-    expect(await screen.findByText('clipboard-shot.png')).toBeInTheDocument();
-    expect(screen.getByText('图片附件 · 7 B')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '预览图片：clipboard-shot.png' })).toBeInTheDocument();
   });
 
   it('sends uploaded attachment ids with the next message', async () => {
@@ -2384,7 +1338,7 @@ describe('App routes', () => {
       },
     });
 
-    expect(await screen.findByText('图片附件 · 7 B')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '预览图片：clipboard-shot.png' })).toBeInTheDocument();
 
     fireEvent.change(textarea, {
       target: { value: '参考这张图继续修改' },
@@ -2399,7 +1353,11 @@ describe('App routes', () => {
       });
     });
     await waitFor(() => {
-      expect(screen.queryByText('图片附件 · 7 B')).not.toBeInTheDocument();
+      const composer = document.querySelector('footer.composer');
+      expect(composer).toBeTruthy();
+      expect(
+        within(composer as HTMLElement).queryByRole('button', { name: '预览图片：clipboard-shot.png' }),
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -2505,8 +1463,14 @@ describe('App routes', () => {
 
       fireEvent.click(screen.getByRole('button', { name: '继续编辑' }));
 
-      expect(await screen.findByText('图片附件 · 2.0 KB')).toBeInTheDocument();
-      expect(screen.getAllByText('generated-banner.png').length).toBeGreaterThan(1);
+      const composer = document.querySelector('footer.composer');
+      expect(composer).toBeTruthy();
+      await waitFor(() => {
+        expect(
+          within(composer as HTMLElement).getByRole('button', { name: '预览图片：generated-banner.png' }),
+        ).toBeInTheDocument();
+      });
+      expect(screen.getByText('generated-banner.png')).toBeInTheDocument();
     } finally {
       Object.defineProperty(URL, 'createObjectURL', {
         configurable: true,
@@ -3303,432 +2267,6 @@ describe('App routes', () => {
     await waitFor(() => {
       expect(interruptCount).toBe(1);
       expect(screen.queryByRole('button', { name: '中断当前 turn' })).not.toBeInTheDocument();
-    });
-  });
-
-  it('keeps the next turn streamed output visible after interrupting and immediately sending a follow-up', async () => {
-    let interruptCount = 0;
-    let sendCount = 0;
-    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
-      await init?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    installFetchMock((url, init) => {
-      const method = init?.method ?? 'GET';
-
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: {
-              turnId: 'turn_1',
-              kind: 'regular',
-              status: 'running',
-              phase: 'sampling',
-              phaseStartedAt: '2026-04-12T00:00:00.000Z',
-              canSteer: true,
-              startedAt: '2026-04-12T00:00:00.000Z',
-              round: 1,
-            },
-            followUpQueue: [],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/sessions/s1/turns/turn_1/interrupt' && method === 'POST') {
-        interruptCount += 1;
-        return jsonResponse({
-          body: {
-            accepted: true,
-            turnId: 'turn_1',
-            runtime: {
-              sessionId: 's1',
-              activeTurn: {
-                turnId: 'turn_1',
-                kind: 'regular',
-                status: 'interrupting',
-                phase: 'non_steerable',
-                phaseStartedAt: '2026-04-12T00:00:04.000Z',
-                canSteer: false,
-                startedAt: '2026-04-12T00:00:00.000Z',
-                round: 1,
-              },
-              followUpQueue: [],
-              recovery: null,
-            },
-          },
-        });
-      }
-      if (url === '/api/sessions/s1/messages' && method === 'POST') {
-        sendCount += 1;
-        expect(init?.body).toBe(JSON.stringify({
-          content: '继续第二轮',
-          attachmentIds: [],
-          dispatch: 'auto',
-          turnId: 'turn_1',
-        }));
-        return jsonResponse({
-          body: {
-            accepted: true,
-            dispatch: 'queued',
-            messageId: 'input_queue_1',
-            runId: 'queued_input_queue_1',
-            inputId: 'input_queue_1',
-            runtime: {
-              sessionId: 's1',
-              activeTurn: {
-                turnId: 'turn_1',
-                kind: 'regular',
-                status: 'interrupting',
-                phase: 'non_steerable',
-                phaseStartedAt: '2026-04-12T00:00:04.000Z',
-                canSteer: false,
-                startedAt: '2026-04-12T00:00:00.000Z',
-                round: 1,
-              },
-              followUpQueue: [
-                {
-                  inputId: 'input_queue_1',
-                  content: '继续第二轮',
-                  createdAt: '2026-04-12T00:00:05.000Z',
-                },
-              ],
-              recovery: null,
-            },
-          },
-        });
-      }
-
-      throw new Error(`Unhandled fetch: ${method} ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    expect(await screen.findByRole('button', { name: '中断当前 turn' })).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '中断当前 turn' }));
-    await waitFor(() => {
-      expect(interruptCount).toBe(1);
-    });
-
-    fireEvent.change(screen.getByPlaceholderText('继续补充信息，系统会按顺序处理'), {
-      target: { value: '继续第二轮' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: '补充信息' }));
-
-    await waitFor(() => {
-      expect(sendCount).toBe(1);
-      expect(screen.getByText('继续第二轮')).toBeInTheDocument();
-    });
-
-    vi.useFakeTimers();
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_turn_1_done',
-        event: 'turn_completed',
-        data: JSON.stringify({
-          turnId: 'turn_1',
-          kind: 'regular',
-          status: 'interrupted',
-        }),
-      });
-      handleStreamMessage?.({
-        id: 'evt_done_1',
-        event: 'done',
-        data: JSON.stringify({}),
-      });
-      handleStreamMessage?.({
-        id: 'evt_turn_2_started',
-        event: 'turn_started',
-        data: JSON.stringify({
-          turnId: 'turn_2',
-          kind: 'regular',
-          status: 'running',
-          phase: 'sampling',
-          phaseStartedAt: '2026-04-12T00:00:06.000Z',
-          canSteer: true,
-          startedAt: '2026-04-12T00:00:06.000Z',
-          round: 1,
-          followUpQueueCount: 0,
-        }),
-      });
-      handleStreamMessage?.({
-        id: 'evt_delta_2',
-        event: 'text_delta',
-        data: JSON.stringify({
-          content: '这是第二轮的流式输出',
-        }),
-      });
-    });
-
-    expect(screen.getByText('这是第二轮的流式输出')).toBeInTheDocument();
-
-    await act(async () => {
-      vi.advanceTimersByTime(200);
-    });
-
-    expect(screen.getByText('这是第二轮的流式输出')).toBeInTheDocument();
-  });
-
-  it('moves a steer input from the bottom preview into the chat stream only after commit confirmation', async () => {
-    const committedMessage = {
-      id: 'evt_user_1',
-      sessionId: 's1',
-      kind: 'message' as const,
-      role: 'user' as const,
-      type: 'text' as const,
-      content: '510分，年级排名199/400',
-      createdAt: '2026-04-12T00:00:01.000Z',
-    };
-    const refetchMessages = createDeferred<Response>();
-    let messageRequestCount = 0;
-    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
-      await init?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    installFetchMock((url) => {
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        messageRequestCount += 1;
-        if (messageRequestCount === 1) {
-          return jsonResponse({ body: [] });
-        }
-        return refetchMessages.promise;
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: {
-              turnId: 'turn_1',
-              kind: 'regular',
-              status: 'running',
-              phase: 'sampling',
-              phaseStartedAt: '2026-04-12T00:00:00.000Z',
-              canSteer: true,
-              startedAt: '2026-04-12T00:00:00.000Z',
-              round: 1,
-            },
-            followUpQueue: [
-              {
-                inputId: 'input_pending_1',
-                content: committedMessage.content,
-                createdAt: committedMessage.createdAt,
-              },
-            ],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    expect(await screen.findByText('待处理队列（按顺序处理）')).toBeInTheDocument();
-    const initialMessageList = document.querySelector('.message-list');
-    expect(initialMessageList).not.toHaveTextContent(committedMessage.content);
-    expect(document.querySelector('.runtime-preview-stack')).toHaveTextContent(committedMessage.content);
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_commit_1',
-        event: 'user_message_committed',
-        data: JSON.stringify({
-          turnId: 'turn_1',
-          inputId: 'input_pending_1',
-          content: committedMessage.content,
-          createdAt: committedMessage.createdAt,
-        }),
-      });
-    });
-
-    await waitFor(() => {
-      expect(document.querySelector('.runtime-preview-stack')).toBeNull();
-      expect(document.querySelector('.message-list')).toHaveTextContent(committedMessage.content);
-    });
-
-    refetchMessages.resolve(jsonResponse({ body: [committedMessage] }));
-
-    await waitFor(() => {
-      expect(messageRequestCount).toBe(2);
-      expect(screen.getByText(committedMessage.content)).toBeInTheDocument();
-    });
-  });
-
-  it('moves multiple queued inputs into the chat stream as one merged message after a single commit confirmation', async () => {
-    const mergedMessage = {
-      id: 'evt_user_merged',
-      sessionId: 's1',
-      kind: 'message' as const,
-      role: 'user' as const,
-      type: 'text' as const,
-      content: '想考公\n想留在上海',
-      createdAt: '2026-04-12T00:00:03.000Z',
-    };
-    const refetchMessages = createDeferred<Response>();
-    let messageRequestCount = 0;
-    let handleStreamMessage: ((event: { id?: string; event?: string; data?: string }) => void) | undefined;
-
-    fetchEventSourceMock.mockImplementation(async (_input, init) => {
-      handleStreamMessage = init?.onmessage as typeof handleStreamMessage;
-      await init?.onopen?.(new Response(null, { status: 200 }));
-    });
-
-    installFetchMock((url) => {
-      if (url === '/api/me/settings') {
-        return jsonResponse({ body: { themeMode: 'dark' } });
-      }
-      if (url === '/api/sessions') {
-        return jsonResponse({
-          body: [
-            {
-              id: 's1',
-              title: 'Streaming Session',
-              createdAt: '2026-04-12T00:00:00.000Z',
-              updatedAt: '2026-04-12T00:00:00.000Z',
-              lastMessageAt: null,
-              activeSkills: [],
-            },
-          ],
-        });
-      }
-      if (url === '/api/sessions/s1/messages?limit=200') {
-        messageRequestCount += 1;
-        if (messageRequestCount === 1) {
-          return jsonResponse({ body: [] });
-        }
-        return refetchMessages.promise;
-      }
-      if (url === '/api/sessions/s1/runtime') {
-        return jsonResponse({
-          body: {
-            sessionId: 's1',
-            activeTurn: {
-              turnId: 'turn_1',
-              kind: 'regular',
-              status: 'running',
-              phase: 'sampling',
-              phaseStartedAt: '2026-04-12T00:00:00.000Z',
-              canSteer: true,
-              startedAt: '2026-04-12T00:00:00.000Z',
-              round: 1,
-            },
-            followUpQueue: [
-              {
-                inputId: 'input_pending_1',
-                content: '想考公',
-                createdAt: '2026-04-12T00:00:01.000Z',
-              },
-              {
-                inputId: 'input_pending_2',
-                content: '想留在上海',
-                createdAt: '2026-04-12T00:00:02.000Z',
-              },
-            ],
-            recovery: null,
-          },
-        });
-      }
-      if (url === '/api/files?sessionId=s1') {
-        return jsonResponse({ body: [] });
-      }
-      if (url === '/api/skills') {
-        return jsonResponse({ body: [] });
-      }
-
-      throw new Error(`Unhandled fetch: ${url}`);
-    });
-
-    useAuthStore.setState({ user: memberUser, ready: true });
-    renderApp(['/app/session/s1']);
-
-    expect(await screen.findByText('待处理队列（按顺序处理）')).toBeInTheDocument();
-    expect(document.querySelector('.runtime-preview-stack')).toHaveTextContent('1 想考公');
-    expect(document.querySelector('.runtime-preview-stack')).toHaveTextContent('2 想留在上海');
-
-    await act(async () => {
-      handleStreamMessage?.({
-        id: 'evt_commit_merged',
-        event: 'user_message_committed',
-        data: JSON.stringify({
-          turnId: 'turn_1',
-          inputId: 'input_merged_1',
-          content: mergedMessage.content,
-          createdAt: mergedMessage.createdAt,
-          consumedInputIds: ['input_pending_1', 'input_pending_2'],
-        }),
-      });
-    });
-
-    await waitFor(() => {
-      expect(document.querySelector('.runtime-preview-stack')).toBeNull();
-      expect(document.querySelector('.message-list')).toHaveTextContent(/想考公\s*想留在上海/);
-    });
-
-    refetchMessages.resolve(jsonResponse({ body: [mergedMessage] }));
-
-    await waitFor(() => {
-      expect(messageRequestCount).toBe(2);
-      expect(document.querySelector('.message-list')).toHaveTextContent(/想考公\s*想留在上海/);
     });
   });
 });

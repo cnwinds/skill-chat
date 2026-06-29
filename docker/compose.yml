@@ -10,6 +10,7 @@ services:
         APT_MIRROR: ${APT_MIRROR:-http://mirrors.aliyun.com/debian}
         APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-http://mirrors.aliyun.com/debian-security}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        HARNESSKIT_VERSION: ${HARNESSKIT_VERSION:-0.1.0}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-pypi.tuna.tsinghua.edu.cn}
     restart: unless-stopped
@@ -39,6 +40,7 @@ services:
         APT_MIRROR: ${APT_MIRROR:-http://mirrors.aliyun.com/debian}
         APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-http://mirrors.aliyun.com/debian-security}
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        HARNESSKIT_VERSION: ${HARNESSKIT_VERSION:-0.1.0}
     restart: unless-stopped
     depends_on:
       api:

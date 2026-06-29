@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StoredEvent } from '@skillchat/shared';
-import { buildRenderableTimeline, buildTimelineItems } from './timeline';
+import { buildRenderableTimeline, buildTimelineItems } from '@/lib/harness-ui';
 
 describe('buildTimelineItems', () => {
   it('merges a single tool call flow into one compact timeline item', () => {

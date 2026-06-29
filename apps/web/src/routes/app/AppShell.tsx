@@ -8,11 +8,11 @@ import {
 } from '@skillchat/shared';
 import { ApiError, api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
+import { useStreamUiStore } from '@/lib/harness-stream';
 import { useUiStore } from '@/stores/ui-store';
 import { applyThemeMode, usePreferencesStore } from '@/stores/preferences-store';
 import { groupBy, isWechatBrowser } from '@/lib/utils';
-import { composerAttachmentsActions } from '@/hooks/useComposerAttachments';
-import { useIsDesktop } from '@/hooks/useMediaQuery';
+import { composerAttachmentsActions, useIsDesktop } from '@/lib/harness-ui';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { Toaster, toast } from '@/components/ui/toaster';
 import { Sidebar } from '@/components/sidebar/Sidebar';
@@ -45,7 +45,7 @@ export const AppShell = () => {
   const user = useAuthStore((state) => state.user);
   const setAnonymous = useAuthStore((state) => state.setAnonymous);
   const setActiveSessionId = useUiStore((state) => state.setActiveSessionId);
-  const streams = useUiStore((state) => state.streams);
+  const streams = useStreamUiStore((state) => state.streams);
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const setThemeMode = usePreferencesStore((state) => state.setThemeMode);
 
@@ -129,9 +129,9 @@ export const AppShell = () => {
         activeSessionId: null,
         mobilePanel: null,
         drafts: {},
-        streams: {},
         sessionScrollStates: {},
       });
+      useStreamUiStore.setState({ streams: {} });
       queryClient.clear();
       navigate('/login', { replace: true });
     },
@@ -178,14 +178,16 @@ export const AppShell = () => {
       queryClient.removeQueries({ queryKey: ['runtime', sessionIdToDelete] });
       queryClient.removeQueries({ queryKey: ['files', sessionIdToDelete] });
       useUiStore.setState((state) => {
-        const { [sessionIdToDelete]: _deletedStream, ...streamsRest } = state.streams;
         const { [sessionIdToDelete]: _deletedDraft, ...draftsRest } = state.drafts;
         const { [sessionIdToDelete]: _deletedScroll, ...scrollRest } = state.sessionScrollStates;
         return {
-          streams: streamsRest,
           drafts: draftsRest,
           sessionScrollStates: scrollRest,
         };
+      });
+      useStreamUiStore.setState((state) => {
+        const { [sessionIdToDelete]: _deletedStream, ...streamsRest } = state.streams;
+        return { streams: streamsRest };
       });
       await queryClient.invalidateQueries({ queryKey: ['sessions'] });
 

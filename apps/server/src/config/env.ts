@@ -18,6 +18,8 @@ const envSchema = z.object({
   MODEL_CONTEXT_WINDOW_TOKENS: z.coerce.number().int().positive().optional(),
   MODEL_AUTO_COMPACT_TOKEN_LIMIT: z.coerce.number().int().positive().optional(),
   WEB_SEARCH_MODE: z.enum(['disabled', 'cached', 'live']).default('live'),
+  OPENAI_NATIVE_WEB_SEARCH: z.enum(['auto', 'on', 'off']).default('auto'),
+  OPENAI_NATIVE_IMAGE_GENERATION: z.enum(['auto', 'on', 'off']).default('auto'),
   OPENAI_REASONING_EFFORT: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).default('xhigh'),
   LLM_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(10240),
   TOOL_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(4096),

@@ -11,7 +11,8 @@
     "test": "vitest run",
     "probe:skill-502": "tsx src/scripts/probe-skill-502.ts",
     "db:migrate": "tsx src/scripts/migrate.ts",
-    "invite:create": "tsx src/scripts/create-invite.ts"
+    "invite:create": "tsx src/scripts/create-invite.ts",
+    "admin:reset-password": "tsx src/scripts/reset-admin-password.ts"
   },
   "engines": {
     "node": "24.15.0"
@@ -20,6 +21,9 @@
     "@fastify/cors": "^11.1.0",
     "@fastify/jwt": "^10.0.0",
     "@fastify/multipart": "^9.2.1",
+    "@harnesskit/core": "file:../../../harness-kit/packages/core",
+    "@harnesskit/harness": "file:../../../harness-kit/packages/harness",
+    "@harnesskit/server": "file:../../../harness-kit/packages/server",
     "@qizhi/skill-spec": "*",
     "@skillchat/shared": "*",
     "bcryptjs": "^3.0.3",

@@ -21,6 +21,8 @@ const createConfig = (rootDir: string): AppConfig => ({
   OPENAI_API_KEY: '',
   OPENAI_MODEL: 'gpt-5.4',
   WEB_SEARCH_MODE: 'live',
+  OPENAI_NATIVE_WEB_SEARCH: 'auto',
+  OPENAI_NATIVE_IMAGE_GENERATION: 'auto',
   OPENAI_REASONING_EFFORT: 'medium',
   LLM_MAX_OUTPUT_TOKENS: 4096,
   TOOL_MAX_OUTPUT_TOKENS: 3072,

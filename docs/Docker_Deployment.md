@@ -34,10 +34,12 @@ PORT=3000
 WEB_PORT=7070
 WEB_ORIGIN=https://app.example.com
 SESSION_EXPIRES_IN=7d
+HARNESSKIT_VERSION=0.1.0
 ```
 
 说明：
 
+- `HARNESSKIT_VERSION` 必须与已发布到 npm 的 `@harnesskit/*` 版本一致；Docker 构建时会自动切换为 registry 依赖（见 `docs/Harness_Kit_Workflow.md`）
 - `WEB_ORIGIN` 必须与浏览器实际访问的前端 Origin 完全一致
 - `SESSION_EXPIRES_IN` 控制 session cookie 和服务端 `auth_sessions` 的过期时间
 - `WEB_PORT` 不是应用变量，而是 `docker compose` 的端口映射变量

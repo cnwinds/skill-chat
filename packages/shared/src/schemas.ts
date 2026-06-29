@@ -72,6 +72,8 @@ export const systemSettingsPatchSchema = z.object({
     openaiApiKey: z.string().optional(),
     openaiModel: z.string().min(1).optional(),
     openaiReasoningEffort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+    openaiNativeWebSearch: z.enum(['auto', 'on', 'off']).optional(),
+    openaiNativeImageGeneration: z.enum(['auto', 'on', 'off']).optional(),
     llmMaxOutputTokens: z.number().int().positive().optional(),
     toolMaxOutputTokens: z.number().int().positive().optional(),
   }).optional(),

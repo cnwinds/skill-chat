@@ -24,9 +24,11 @@ import {
 } from '@skillchat/shared';
 import { getProjectRoot, loadConfig, type AppConfig, type ConfigOverrides } from './config/env.js';
 import { createDatabase, migrateDatabase } from './db/database.js';
-import { ensureBaseDirectories } from './core/storage/fs-utils.js';
-import { MessageStore } from './core/storage/message-store.js';
-import { StreamHub } from './core/stream/stream-hub.js';
+import { ensureBaseDirectories, MessageStore, StreamHub } from '@harnesskit/core';
+import { SessionContextStore, createOpenAIHarnessStack } from '@harnesskit/harness';
+import { ChatOrchestrator } from '@harnesskit/server';
+import { syncHarnessConfig, toHarnessConfig } from './adapters/harness-config.js';
+import { toSkillRegistryLike } from './adapters/harness-adapters.js';
 import { SkillRegistry } from './modules/skills/skill-registry.js';
 import { InstalledSkillStore } from './modules/skills/installed-skill-store.js';
 import { MarketClient } from './modules/skills/market-client.js';
@@ -40,12 +42,6 @@ import {
 } from './modules/auth/session-cookie.js';
 import { SessionService } from './modules/sessions/session-service.js';
 import { FileService } from './modules/files/file-service.js';
-import { RunnerManager } from './core/runner/runner-manager.js';
-import { ChatService } from './modules/chat/chat-service.js';
-import { AssistantToolService } from './modules/tools/assistant-tool-service.js';
-import { OpenAIHarness } from './modules/chat/openai-harness.js';
-import { OpenAIImageService } from './modules/chat/openai-image-service.js';
-import { SessionContextStore } from './modules/chat/session-context-store.js';
 import { SystemSettingsService } from './modules/system/system-settings-service.js';
 import { UserSettingsService } from './modules/system/user-settings-service.js';
 import { AdminService } from './modules/admin/admin-service.js';
@@ -200,20 +196,21 @@ export const createApp = async (options: CreateAppOptions = {}) => {
     INLINE_JOBS: options.inlineJobs ?? options.configOverrides?.INLINE_JOBS ?? false,
   });
 
-  await ensureBaseDirectories(config);
+  const harnessConfig = toHarnessConfig(config);
+  await ensureBaseDirectories(harnessConfig);
 
   const db = createDatabase(config);
   migrateDatabase(db);
 
   const skillRegistry = new SkillRegistry(config);
   await skillRegistry.load();
-
-  const messageStore = new MessageStore(config);
+  const messageStore = new MessageStore(harnessConfig);
   const streamHub = new StreamHub();
   const authService = new AuthService(db, config);
   const authSessionService = new AuthSessionService(db, config);
   const systemSettingsService = new SystemSettingsService(db, config);
   systemSettingsService.initialize();
+  syncHarnessConfig(config, harnessConfig);
   const userSettingsService = new UserSettingsService(db);
   const adminService = new AdminService(db);
   const installedSkillStore = new InstalledSkillStore(db);
@@ -225,19 +222,16 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   ));
   const getUserSkillNames = (userId: string) => new Set(getUserRegisteredSkills(userId).map((skill) => skill.name));
   const fileService = new FileService(db, config);
-  const runnerManager = new RunnerManager(config, fileService);
-  const assistantToolService = new AssistantToolService(config, fileService);
-  const openAIImageService = new OpenAIImageService(config, fileService);
-  const openAIHarness = new OpenAIHarness(config, assistantToolService, runnerManager, openAIImageService);
-  const sessionContextStore = new SessionContextStore(config);
-  const chatService = new ChatService(
+  const { openAIHarness } = createOpenAIHarnessStack(harnessConfig, fileService);
+  const sessionContextStore = new SessionContextStore(harnessConfig);
+  const chatService = new ChatOrchestrator(
     messageStore,
     streamHub,
-    skillRegistry,
+    toSkillRegistryLike(skillRegistry),
     installedSkillStore,
     fileService,
     sessionService,
-    config,
+    harnessConfig,
     openAIHarness,
     sessionContextStore,
   );
@@ -425,7 +419,9 @@ export const createApp = async (options: CreateAppOptions = {}) => {
   app.patch('/api/admin/system-settings', { preHandler: [app.authenticate, ensureAdmin] }, async (request, reply) => {
     try {
       const input = systemSettingsPatchSchema.parse(request.body ?? {});
-      return systemSettingsService.updateSettings(input, request.user.sub);
+      const next = systemSettingsService.updateSettings(input, request.user.sub);
+      syncHarnessConfig(config, harnessConfig);
+      return next;
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '更新系统配置失败') });
     }
@@ -530,7 +526,7 @@ export const createApp = async (options: CreateAppOptions = {}) => {
       }).parse(request.query ?? {});
       sessionService.requireOwned(request.user.sub, params.id);
       const events = await messageStore.readEvents(request.user.sub, params.id, query);
-      return events.map((event) => sanitizeStoredEventForRole(event, request.user.role));
+      return events.map((event) => sanitizeStoredEventForRole(event as StoredEvent, request.user.role));
     } catch (error) {
       return reply.code(errorStatus(error)).send({ message: errorMessage(error, '获取消息失败') });
     }

@@ -24,7 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatBytes } from '@/lib/utils';
-import { imagePreviewActions } from '@/hooks/useImagePreview';
+import { imagePreviewActions } from '@/lib/harness-ui';
 
 export interface InspectorPanelProps {
   inspectorTab: 'files' | 'skills';

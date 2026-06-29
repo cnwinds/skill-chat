@@ -9,12 +9,14 @@
   "scripts": {
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"No tests for shared\""
+    "test": "vitest run"
   },
   "dependencies": {
+    "@harnesskit/protocol": "file:../../../harness-kit/packages/protocol",
     "zod": "^4.1.12"
   },
   "devDependencies": {
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.0.3"
   }
 }

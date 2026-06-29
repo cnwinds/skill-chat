@@ -13,6 +13,11 @@
   "scripts": {
     "dev:web": "npm --workspace @skillchat/web run dev",
     "dev:server": "npm --workspace @skillchat/server run dev",
+    "build:harness-kit": "npm run build --prefix ../harness-kit",
+    "harness:local": "node scripts/sync-harness-deps.mjs local",
+    "harness:registry": "node scripts/sync-harness-deps.mjs registry",
+    "predev:web": "npm run build:harness-kit",
+    "pretest": "npm run build:harness-kit",
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
@@ -22,5 +27,9 @@
   },
   "engines": {
     "node": "24.15.0"
+  },
+  "overrides": {
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
   }
 }

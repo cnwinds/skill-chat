@@ -3,7 +3,9 @@ import path from 'node:path';
 import type { StoredEvent, ToolResultEvent } from '@skillchat/shared';
 import { getProjectRoot, loadConfig } from '../config/env.js';
 import { SkillRegistry } from '../modules/skills/skill-registry.js';
-import { buildOpenAIHarnessInstructions, toResponsesHarnessInput } from '../modules/chat/openai-harness-prompt.js';
+import type { SkillDescriptor } from '@harnesskit/core';
+import { buildOpenAIHarnessInstructions, toResponsesHarnessInput } from '@harnesskit/harness';
+import { toHarnessConfig } from '../adapters/harness-config.js';
 
 type SessionMeta = {
   sessionId: string;
@@ -245,6 +247,7 @@ const main = async () => {
 
   const cwd = getProjectRoot();
   const config = loadConfig(cwd);
+  const harnessConfig = toHarnessConfig(config);
   if (!config.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY 未配置');
   }
@@ -255,15 +258,23 @@ const main = async () => {
 
   const skillRegistry = new SkillRegistry(config);
   await skillRegistry.load();
-  const availableSkills = (meta.activeSkills ?? [])
-    .map((skillName) => {
-      try {
-        return skillRegistry.get(skillName);
-      } catch {
-        return null;
-      }
-    })
-    .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill));
+  const availableSkills: SkillDescriptor[] = [];
+  for (const skillName of meta.activeSkills ?? []) {
+    try {
+      const skill = skillRegistry.get(skillName);
+      availableSkills.push({
+        id: skill.id ?? skill.name,
+        name: skill.name,
+        description: skill.description,
+        directory: skill.directory,
+        source: skill.source ?? 'legacy',
+        version: skill.version,
+        manifest: skill.manifest as Record<string, unknown> | undefined,
+      });
+    } catch {
+      // skip unknown skills
+    }
+  }
 
   const messageEvents = events.filter((event): event is Extract<StoredEvent, { kind: 'message' }> => event.kind === 'message');
   const currentMessage = [...messageEvents].reverse().find((event) => event.role === 'user')?.content;
@@ -287,13 +298,13 @@ const main = async () => {
   const localReadOnlyReplay = buildReplayItems(events.slice(firstReadToolIndex));
 
   const fullInstructions = buildOpenAIHarnessInstructions({
-    config,
+    config: harnessConfig,
     files: [],
     availableSkills,
   });
 
   const instructionsWithoutEnabledSkillPayload = buildOpenAIHarnessInstructions({
-    config,
+    config: harnessConfig,
     files: [],
     availableSkills: [],
   });

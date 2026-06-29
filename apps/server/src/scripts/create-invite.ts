@@ -1,11 +1,12 @@
 import { getProjectRoot, loadConfig } from '../config/env.js';
 import { createDatabase, migrateDatabase } from '../db/database.js';
-import { ensureBaseDirectories } from '../core/storage/fs-utils.js';
+import { ensureBaseDirectories } from '@harnesskit/core';
+import { toHarnessConfig } from '../adapters/harness-config.js';
 import { AuthService } from '../modules/auth/auth-service.js';
 
 const main = async () => {
   const config = loadConfig(getProjectRoot());
-  await ensureBaseDirectories(config);
+  await ensureBaseDirectories(toHarnessConfig(config));
   const db = createDatabase(config);
   migrateDatabase(db);
 

@@ -16,9 +16,15 @@ COPY apps/server/package.json apps/server/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/qizhi-skill-spec/package.json packages/qizhi-skill-spec/package.json
 COPY packages/shared/package.json packages/shared/package.json
+COPY config/harness-deps.manifest.json config/harness-deps.manifest.json
+COPY scripts/sync-harness-deps.mjs scripts/sync-harness-deps.mjs
+
+ARG HARNESSKIT_VERSION=0.1.0
+
+RUN node scripts/sync-harness-deps.mjs registry --version=${HARNESSKIT_VERSION}
 
 RUN npm config set registry "${NPM_REGISTRY}" \
-  && npm ci
+  && npm install
 
 FROM deps AS web-builder
 

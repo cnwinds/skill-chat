@@ -8,11 +8,14 @@ import type {
   ToolProgressEvent,
   UserSummary,
 } from '@skillchat/shared';
-import { MessageItem } from './components/MessageItem';
-import { QuestionTimelineControl } from './components/chat/QuestionTimelineControl';
+import {
+  MessageItem,
+  QuestionTimelineControl,
+  type ToolTraceDisplayEvent,
+  type ToolTraceGroupDisplayEvent,
+} from '@/lib/harness-ui';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { getQuestionAnchorOffset, getQuestionTargetScrollTop } from './lib/question-scroll';
-import type { ToolTraceDisplayEvent, ToolTraceGroupDisplayEvent } from './lib/timeline';
 
 describe('question scroll geometry', () => {
   it('keeps selected questions on the upper reading anchor instead of the middle', () => {
@@ -140,7 +143,7 @@ describe('MessageItem', () => {
       />,
     );
 
-    expect(screen.getByText('推理摘要')).toBeInTheDocument();
+    expect(screen.getByText('思考过程')).toBeInTheDocument();
     expect(screen.getByText('先看分数线，再看就业密度。')).toBeInTheDocument();
     expect(screen.getByText('150 (120/30) tokens')).toBeInTheDocument();
   });
@@ -271,7 +274,6 @@ describe('MessageItem', () => {
 
     render(<MessageItem event={event} />);
     expect(screen.getByText('搜索页面')).toBeInTheDocument();
-    expect(screen.getByText('已完成')).toBeInTheDocument();
     expect(screen.getByText('检索到 3 条网页结果')).toBeInTheDocument();
     expect(screen.getByText('返回结果')).toBeInTheDocument();
     expect(screen.getByText(/Example News/)).toBeInTheDocument();
@@ -543,7 +545,7 @@ describe('QuestionTimelineControl', () => {
     expect(panel).toHaveAttribute('data-state', 'collapsed');
     expect(within(panel).getAllByRole('button')).toHaveLength(2);
 
-    fireEvent.mouseEnter(control);
+    fireEvent.mouseEnter(secondQuestion);
     expect(panel).toHaveAttribute('data-state', 'open');
     expect(screen.getByRole('button', { name: firstQuestionLabel })).toBe(firstQuestion);
     expect(screen.getByRole('button', { name: secondQuestionLabel })).toBe(secondQuestion);

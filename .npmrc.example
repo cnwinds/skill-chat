@@ -1,0 +1,10 @@
+# Copy to project root as .npmrc when installing @harnesskit/* from a private registry.
+# Public npmjs.org can omit this file if packages are published publicly.
+
+# GitLab Package Registry example (replace with your group/project):
+# @harnesskit:registry=https://gitlab.com/api/v4/projects/<project-id>/packages/npm/
+# //gitlab.com/api/v4/projects/<project-id>/packages/npm/:_authToken=${GITLAB_NPM_TOKEN}
+
+# GitHub Packages example:
+# @harnesskit:registry=https://npm.pkg.github.com
+# //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}

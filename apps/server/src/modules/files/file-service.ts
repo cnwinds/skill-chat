@@ -240,24 +240,26 @@ export class FileService {
     userId: string;
     sessionId: string;
     displayName: string;
-    mimeType: string;
-    content: Buffer;
+    buffer: Buffer;
+    mimeType?: string | null;
+    visibility?: FileVisibility;
   }): Promise<FileRecord> {
     const outputsRoot = getSessionOutputsRoot(this.config, args.userId, args.sessionId);
     await fs.mkdir(outputsRoot, { recursive: true });
 
     const storedName = uniqueFileName(sanitizeFilename(args.displayName));
     const targetPath = path.join(outputsRoot, storedName);
-    await fs.writeFile(targetPath, args.content);
+    await fs.writeFile(targetPath, args.buffer);
 
     return this.insertRecord({
       userId: args.userId,
       sessionId: args.sessionId,
       displayName: sanitizeFilename(args.displayName),
       absolutePath: targetPath,
-      mimeType: args.mimeType,
+      mimeType: args.mimeType ?? 'application/octet-stream',
       bucket: 'outputs',
       source: 'generated',
+      visibility: args.visibility,
     });
   }
 

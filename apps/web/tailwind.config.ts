@@ -1,5 +1,11 @@
 import type { Config } from 'tailwindcss';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import typography from '@tailwindcss/typography';
+import harnessKitPreset from '@harnesskit/react/tailwind';
+
+const appRoot = fileURLToPath(new URL('.', import.meta.url));
+const harnessKitReactRoot = path.resolve(appRoot, '../../node_modules/@harnesskit/react');
 
 /* ---------------------------------------------------------------
  * Typeface stacks
@@ -62,8 +68,14 @@ const FONT_MONO = [
 ].join(', ');
 
 const config: Config = {
+  presets: [harnessKitPreset as Config],
   darkMode: ['class', '[data-theme="dark"]'],
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  content: [
+    './index.html',
+    './src/**/*.{ts,tsx}',
+    path.join(harnessKitReactRoot, 'src/**/*.{ts,tsx}'),
+    path.join(harnessKitReactRoot, 'dist/**/*.{js,mjs}'),
+  ],
   theme: {
     container: {
       center: true,

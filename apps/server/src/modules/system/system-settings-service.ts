@@ -1,4 +1,4 @@
-import type { SystemSettings, SystemStatus } from '@skillchat/shared';
+import type { NativeToolsPolicy, SystemSettings, SystemStatus } from '@skillchat/shared';
 import type { AppDatabase } from '../../db/database.js';
 import type { AppConfig } from '../../config/env.js';
 
@@ -14,6 +14,8 @@ const SYSTEM_SETTING_KEYS = {
   openaiApiKey: 'openai_api_key',
   openaiModel: 'openai_model',
   openaiReasoningEffort: 'openai_reasoning_effort',
+  openaiNativeWebSearch: 'openai_native_web_search',
+  openaiNativeImageGeneration: 'openai_native_image_generation',
   llmMaxOutputTokens: 'llm_max_output_tokens',
   toolMaxOutputTokens: 'tool_max_output_tokens',
 } as const;
@@ -46,6 +48,13 @@ const parseNumber = (value: string | undefined, fallback: number) => {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const parseNativeToolsPolicy = (value: string | undefined, fallback: NativeToolsPolicy): NativeToolsPolicy => {
+  if (value === 'auto' || value === 'on' || value === 'off') {
+    return value;
+  }
+  return fallback;
 };
 
 export class SystemSettingsService {
@@ -99,6 +108,14 @@ export class SystemSettingsService {
           (map.get(SYSTEM_SETTING_KEYS.openaiReasoningEffort) as SystemSettings['modelConfig']['openaiReasoningEffort'] | undefined)
           ?? (map.get('openai_reasoning_effort_reply') as SystemSettings['modelConfig']['openaiReasoningEffort'] | undefined)
           ?? this.config.OPENAI_REASONING_EFFORT,
+        openaiNativeWebSearch: parseNativeToolsPolicy(
+          map.get(SYSTEM_SETTING_KEYS.openaiNativeWebSearch),
+          this.config.OPENAI_NATIVE_WEB_SEARCH,
+        ),
+        openaiNativeImageGeneration: parseNativeToolsPolicy(
+          map.get(SYSTEM_SETTING_KEYS.openaiNativeImageGeneration),
+          this.config.OPENAI_NATIVE_IMAGE_GENERATION,
+        ),
         llmMaxOutputTokens: parseNumber(
           map.get(SYSTEM_SETTING_KEYS.llmMaxOutputTokens),
           this.config.LLM_MAX_OUTPUT_TOKENS,
@@ -141,6 +158,8 @@ export class SystemSettingsService {
       upsert.run(SYSTEM_SETTING_KEYS.openaiApiKey, next.modelConfig.openaiApiKey, now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.openaiModel, next.modelConfig.openaiModel, now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.openaiReasoningEffort, next.modelConfig.openaiReasoningEffort, now, updatedBy);
+      upsert.run(SYSTEM_SETTING_KEYS.openaiNativeWebSearch, next.modelConfig.openaiNativeWebSearch, now, updatedBy);
+      upsert.run(SYSTEM_SETTING_KEYS.openaiNativeImageGeneration, next.modelConfig.openaiNativeImageGeneration, now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.llmMaxOutputTokens, String(next.modelConfig.llmMaxOutputTokens), now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.toolMaxOutputTokens, String(next.modelConfig.toolMaxOutputTokens), now, updatedBy);
     })();
@@ -163,6 +182,8 @@ export class SystemSettingsService {
       upsert.run(SYSTEM_SETTING_KEYS.openaiApiKey, settings.modelConfig.openaiApiKey);
       upsert.run(SYSTEM_SETTING_KEYS.openaiModel, settings.modelConfig.openaiModel);
       upsert.run(SYSTEM_SETTING_KEYS.openaiReasoningEffort, settings.modelConfig.openaiReasoningEffort);
+      upsert.run(SYSTEM_SETTING_KEYS.openaiNativeWebSearch, settings.modelConfig.openaiNativeWebSearch);
+      upsert.run(SYSTEM_SETTING_KEYS.openaiNativeImageGeneration, settings.modelConfig.openaiNativeImageGeneration);
       upsert.run(SYSTEM_SETTING_KEYS.llmMaxOutputTokens, String(settings.modelConfig.llmMaxOutputTokens));
       upsert.run(SYSTEM_SETTING_KEYS.toolMaxOutputTokens, String(settings.modelConfig.toolMaxOutputTokens));
     })();
@@ -174,6 +195,8 @@ export class SystemSettingsService {
     this.config.OPENAI_API_KEY = settings.modelConfig.openaiApiKey;
     this.config.OPENAI_MODEL = settings.modelConfig.openaiModel;
     this.config.OPENAI_REASONING_EFFORT = settings.modelConfig.openaiReasoningEffort;
+    this.config.OPENAI_NATIVE_WEB_SEARCH = settings.modelConfig.openaiNativeWebSearch;
+    this.config.OPENAI_NATIVE_IMAGE_GENERATION = settings.modelConfig.openaiNativeImageGeneration;
     this.config.LLM_MAX_OUTPUT_TOKENS = settings.modelConfig.llmMaxOutputTokens;
     this.config.TOOL_MAX_OUTPUT_TOKENS = settings.modelConfig.toolMaxOutputTokens;
   }
