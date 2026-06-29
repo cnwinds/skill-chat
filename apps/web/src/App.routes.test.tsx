@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fetchEventSource } from '@microsoft/fetch-event-source';
@@ -59,10 +59,29 @@ const systemSettings = {
     openaiApiKey: 'sk-test',
     openaiModel: 'gpt-5.2',
     openaiReasoningEffort: 'medium' as const,
-    openaiNativeWebSearch: 'auto' as const,
-    openaiNativeImageGeneration: 'auto' as const,
     llmMaxOutputTokens: 4096,
     toolMaxOutputTokens: 2048,
+  },
+  webSearchConfig: {
+    mode: 'live' as const,
+    openaiNative: 'auto' as const,
+    providers: '',
+    tavilyApiKey: '',
+    serperApiKey: '',
+    braveSearchApiKey: '',
+  },
+  imageConfig: {
+    openaiNative: 'auto' as const,
+    providers: '',
+    openaiImageApiKey: '',
+    openaiImageBaseUrl: 'https://api.openai.com/v1',
+    openaiImageModel: 'gpt-image-2',
+    zhipuImageApiKey: '',
+    zhipuImageBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    zhipuImageModel: 'glm-image',
+    dashscopeImageApiKey: '',
+    dashscopeImageBaseUrl: 'https://dashscope.aliyuncs.com',
+    dashscopeImageModel: 'wan2.1-t2i-turbo',
   },
 };
 

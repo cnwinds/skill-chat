@@ -64,6 +64,8 @@ export const adminInviteCreateSchema = z.object({
   count: z.coerce.number().int().min(1, '至少创建 1 个邀请码').max(100, '单次最多创建 100 个邀请码').default(1),
 });
 
+const nativeToolsPolicySchema = z.enum(['auto', 'on', 'off']);
+
 export const systemSettingsPatchSchema = z.object({
   registrationRequiresInviteCode: z.boolean().optional(),
   enableAssistantTools: z.boolean().optional(),
@@ -72,10 +74,29 @@ export const systemSettingsPatchSchema = z.object({
     openaiApiKey: z.string().optional(),
     openaiModel: z.string().min(1).optional(),
     openaiReasoningEffort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
-    openaiNativeWebSearch: z.enum(['auto', 'on', 'off']).optional(),
-    openaiNativeImageGeneration: z.enum(['auto', 'on', 'off']).optional(),
     llmMaxOutputTokens: z.number().int().positive().optional(),
     toolMaxOutputTokens: z.number().int().positive().optional(),
+  }).optional(),
+  webSearchConfig: z.object({
+    mode: z.enum(['live', 'cached', 'disabled']).optional(),
+    openaiNative: nativeToolsPolicySchema.optional(),
+    providers: z.string().optional(),
+    tavilyApiKey: z.string().optional(),
+    serperApiKey: z.string().optional(),
+    braveSearchApiKey: z.string().optional(),
+  }).optional(),
+  imageConfig: z.object({
+    openaiNative: nativeToolsPolicySchema.optional(),
+    providers: z.string().optional(),
+    openaiImageApiKey: z.string().optional(),
+    openaiImageBaseUrl: z.string().url().optional(),
+    openaiImageModel: z.string().optional(),
+    zhipuImageApiKey: z.string().optional(),
+    zhipuImageBaseUrl: z.string().url().optional(),
+    zhipuImageModel: z.string().optional(),
+    dashscopeImageApiKey: z.string().optional(),
+    dashscopeImageBaseUrl: z.string().url().optional(),
+    dashscopeImageModel: z.string().optional(),
   }).optional(),
 }).refine((value) => Object.keys(value).length > 0, {
   message: '至少需要更新一个字段',

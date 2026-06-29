@@ -20,8 +20,22 @@ const createConfig = (overrides: Partial<AppConfig> = {}): AppConfig => ({
   MODEL_CONTEXT_WINDOW_TOKENS: undefined,
   MODEL_AUTO_COMPACT_TOKEN_LIMIT: undefined,
   WEB_SEARCH_MODE: 'live',
+  WEB_SEARCH_PROVIDERS: '',
   OPENAI_NATIVE_WEB_SEARCH: 'auto',
+  TAVILY_API_KEY: '',
+  SERPER_API_KEY: '',
+  BRAVE_SEARCH_API_KEY: '',
   OPENAI_NATIVE_IMAGE_GENERATION: 'auto',
+  IMAGE_PROVIDERS: '',
+  OPENAI_IMAGE_API_KEY: '',
+  OPENAI_IMAGE_BASE_URL: 'https://api.openai.com/v1',
+  OPENAI_IMAGE_MODEL: 'gpt-image-2',
+  ZHIPU_IMAGE_API_KEY: '',
+  ZHIPU_IMAGE_BASE_URL: 'https://open.bigmodel.cn/api/paas/v4',
+  ZHIPU_IMAGE_MODEL: 'glm-image',
+  DASHSCOPE_IMAGE_API_KEY: '',
+  DASHSCOPE_IMAGE_BASE_URL: 'https://dashscope.aliyuncs.com',
+  DASHSCOPE_IMAGE_MODEL: 'wan2.1-t2i-turbo',
   OPENAI_REASONING_EFFORT: 'medium',
   LLM_MAX_OUTPUT_TOKENS: 8192,
   TOOL_MAX_OUTPUT_TOKENS: 4096,
@@ -52,6 +66,9 @@ describe('syncHarnessConfig', () => {
     config.OPENAI_REASONING_EFFORT = 'low';
     config.OPENAI_NATIVE_WEB_SEARCH = 'off';
     config.OPENAI_NATIVE_IMAGE_GENERATION = 'on';
+    config.WEB_SEARCH_MODE = 'cached';
+    config.TAVILY_API_KEY = 'tvly-test';
+    config.OPENAI_IMAGE_API_KEY = 'img-test';
     config.LLM_MAX_OUTPUT_TOKENS = 2048;
     config.TOOL_MAX_OUTPUT_TOKENS = 1024;
     config.ENABLE_ASSISTANT_TOOLS = false;
@@ -64,6 +81,9 @@ describe('syncHarnessConfig', () => {
     expect(harnessConfig.OPENAI_REASONING_EFFORT).toBe('low');
     expect(harnessConfig.OPENAI_NATIVE_WEB_SEARCH).toBe('off');
     expect(harnessConfig.OPENAI_NATIVE_IMAGE_GENERATION).toBe('on');
+    expect(harnessConfig.WEB_SEARCH_MODE).toBe('cached');
+    expect(harnessConfig.TAVILY_API_KEY).toBe('tvly-test');
+    expect(harnessConfig.OPENAI_IMAGE_API_KEY).toBe('img-test');
     expect(harnessConfig.LLM_MAX_OUTPUT_TOKENS).toBe(2048);
     expect(harnessConfig.TOOL_MAX_OUTPUT_TOKENS).toBe(1024);
     expect(harnessConfig.ENABLE_ASSISTANT_TOOLS).toBe(false);

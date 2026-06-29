@@ -201,7 +201,21 @@ npm install
 
 ---
 
-## 7. 常见问题
+## 7. 管理后台：联网搜索与生图
+
+SkillChat 在 **设置 → 系统 → 运行配置** 中提供与 HarnessKit [ADVANCED.md](../harness-kit/docs/ADVANCED.md) 对齐的能力配置，分三块折叠面板：
+
+1. **聊天模型** — `OPENAI_*`、Reasoning、Token 上限  
+2. **联网搜索** — `WEB_SEARCH_MODE`、Native 策略、Tavily / Serper / Brave Key  
+3. **图片生成** — Native 策略、OpenAI Images / 智谱 / 百炼 三方通道  
+
+修改后点击「保存运行配置」即可热更新，无需重启服务。`.env` 中的同名变量仅作首次启动默认值。
+
+HarnessKit Demo（`npm run dev:demo`）通过 `examples/minimal-server/.env` 配置同等能力，详见 [examples/demo/README.md](../harness-kit/examples/demo/README.md)。
+
+---
+
+## 8. 常见问题
 
 **Q: Docker 构建报找不到 `@harnesskit/*`？**  
 A: 确认已 `npm run publish:packages`，且 `HARNESSKIT_VERSION` 与已发布版本一致；私有源需把 `.npmrc` 传入构建环境。

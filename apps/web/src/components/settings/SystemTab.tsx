@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SystemSettings } from '@skillchat/shared';
 import { ApiError, api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { RuntimeConfigSections } from '@/components/settings/RuntimeConfigSections';
 
 export interface SystemTabProps {
   setPageError: (value: string | null) => void;
@@ -37,12 +37,16 @@ export const SystemTab = ({ setPageError }: SystemTabProps) => {
     setSystemDraft((current) => (current ? updater(current) : current));
   };
 
-  const saveSystemDraft = () => {
+  const saveRuntimeConfig = () => {
     if (!systemDraft) {
       return;
     }
     setPageError(null);
-    updateSettingsMutation.mutate(systemDraft);
+    updateSettingsMutation.mutate({
+      modelConfig: systemDraft.modelConfig,
+      webSearchConfig: systemDraft.webSearchConfig,
+      imageConfig: systemDraft.imageConfig,
+    });
   };
 
   if (!systemDraft) {
@@ -88,161 +92,13 @@ export const SystemTab = ({ setPageError }: SystemTabProps) => {
       </article>
 
       <article className="md:col-span-2 flex flex-col gap-3 rounded-lg border border-border bg-surface p-3">
-        <strong className="text-sm">运行配置</strong>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-foreground-muted">OpenAI Base URL</span>
-            <Input
-              value={systemDraft.modelConfig.openaiBaseUrl}
-              onChange={(event) =>
-                updateSystemDraft((current) => ({
-                  ...current,
-                  modelConfig: { ...current.modelConfig, openaiBaseUrl: event.target.value },
-                }))
-              }
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-foreground-muted">OpenAI API Key</span>
-            <Input
-              type="password"
-              value={systemDraft.modelConfig.openaiApiKey}
-              onChange={(event) =>
-                updateSystemDraft((current) => ({
-                  ...current,
-                  modelConfig: { ...current.modelConfig, openaiApiKey: event.target.value },
-                }))
-              }
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-foreground-muted">OpenAI Model</span>
-            <Input
-              value={systemDraft.modelConfig.openaiModel}
-              onChange={(event) =>
-                updateSystemDraft((current) => ({
-                  ...current,
-                  modelConfig: { ...current.modelConfig, openaiModel: event.target.value },
-                }))
-              }
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-foreground-muted">Reasoning Effort</span>
-            <select
-              className="h-9 rounded-md border border-border bg-surface px-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-              value={systemDraft.modelConfig.openaiReasoningEffort}
-              onChange={(event) =>
-                updateSystemDraft((current) => ({
-                  ...current,
-                  modelConfig: {
-                    ...current.modelConfig,
-                    openaiReasoningEffort: event.target
-                      .value as SystemSettings['modelConfig']['openaiReasoningEffort'],
-                  },
-                }))
-              }
-            >
-              <option value="minimal">minimal</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-              <option value="xhigh">xhigh</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-foreground-muted">OpenAI Native 搜索</span>
-            <select
-              className="h-9 rounded-md border border-border bg-surface px-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-              value={systemDraft.modelConfig.openaiNativeWebSearch}
-              onChange={(event) =>
-                updateSystemDraft((current) => ({
-                  ...current,
-                  modelConfig: {
-                    ...current.modelConfig,
-                    openaiNativeWebSearch: event.target
-                      .value as SystemSettings['modelConfig']['openaiNativeWebSearch'],
-                  },
-                }))
-              }
-            >
-              <option value="auto">auto（官方端点自动开启）</option>
-              <option value="on">on（强制开启）</option>
-              <option value="off">off（关闭，使用 Tavily 等三方）</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-foreground-muted">OpenAI Native 生图</span>
-            <select
-              className="h-9 rounded-md border border-border bg-surface px-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-              value={systemDraft.modelConfig.openaiNativeImageGeneration}
-              onChange={(event) =>
-                updateSystemDraft((current) => ({
-                  ...current,
-                  modelConfig: {
-                    ...current.modelConfig,
-                    openaiNativeImageGeneration: event.target
-                      .value as SystemSettings['modelConfig']['openaiNativeImageGeneration'],
-                  },
-                }))
-              }
-            >
-              <option value="auto">auto（官方端点自动开启）</option>
-              <option value="on">on（强制开启）</option>
-              <option value="off">off（关闭，使用三方生图 Provider）</option>
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm md:col-span-2">
-            <span className="text-2xs text-foreground-muted">
-              Native 能力走 OpenAI Responses 内置搜索/生图，复用上方 API Key。auto 时仅
-              api.openai.com 自动开启；中转站请设为 on（需中继支持）或 off 并配置三方 Provider。
-            </span>
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <Input
-              type="number"
-              min={1}
-              value={String(systemDraft.modelConfig.llmMaxOutputTokens)}
-              onChange={(event) =>
-                updateSystemDraft((current) => ({
-                  ...current,
-                  modelConfig: {
-                    ...current.modelConfig,
-                    llmMaxOutputTokens: Math.max(
-                      1,
-                      Number(event.target.value || current.modelConfig.llmMaxOutputTokens),
-                    ),
-                  },
-                }))
-              }
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="text-xs text-foreground-muted">Tool Max Output Tokens</span>
-            <Input
-              type="number"
-              min={1}
-              value={String(systemDraft.modelConfig.toolMaxOutputTokens)}
-              onChange={(event) =>
-                updateSystemDraft((current) => ({
-                  ...current,
-                  modelConfig: {
-                    ...current.modelConfig,
-                    toolMaxOutputTokens: Math.max(
-                      1,
-                      Number(event.target.value || current.modelConfig.toolMaxOutputTokens),
-                    ),
-                  },
-                }))
-              }
-            />
-          </label>
-        </div>
-        <div className="flex justify-end">
-          <Button onClick={saveSystemDraft} disabled={updateSettingsMutation.isPending}>
-            保存模型配置
+        <div className="flex items-center justify-between gap-2">
+          <strong className="text-sm">运行配置</strong>
+          <Button onClick={saveRuntimeConfig} disabled={updateSettingsMutation.isPending}>
+            保存运行配置
           </Button>
         </div>
+        <RuntimeConfigSections draft={systemDraft} onChange={updateSystemDraft} />
       </article>
     </div>
   );

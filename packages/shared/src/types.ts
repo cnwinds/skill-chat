@@ -37,6 +37,32 @@ export interface SystemStatus {
 }
 
 export type NativeToolsPolicy = 'auto' | 'on' | 'off';
+export type WebSearchMode = 'live' | 'cached' | 'disabled';
+
+export interface WebSearchConfig {
+  mode: WebSearchMode;
+  openaiNative: NativeToolsPolicy;
+  /** Comma-separated provider order, e.g. openai_native,tavily,serper,brave */
+  providers: string;
+  tavilyApiKey: string;
+  serperApiKey: string;
+  braveSearchApiKey: string;
+}
+
+export interface ImageConfig {
+  openaiNative: NativeToolsPolicy;
+  /** Comma-separated provider order, e.g. openai_images,zhipu,bailian */
+  providers: string;
+  openaiImageApiKey: string;
+  openaiImageBaseUrl: string;
+  openaiImageModel: string;
+  zhipuImageApiKey: string;
+  zhipuImageBaseUrl: string;
+  zhipuImageModel: string;
+  dashscopeImageApiKey: string;
+  dashscopeImageBaseUrl: string;
+  dashscopeImageModel: string;
+}
 
 export interface SystemSettings {
   registrationRequiresInviteCode: boolean;
@@ -46,11 +72,11 @@ export interface SystemSettings {
     openaiApiKey: string;
     openaiModel: string;
     openaiReasoningEffort: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-    openaiNativeWebSearch: NativeToolsPolicy;
-    openaiNativeImageGeneration: NativeToolsPolicy;
     llmMaxOutputTokens: number;
     toolMaxOutputTokens: number;
   };
+  webSearchConfig: WebSearchConfig;
+  imageConfig: ImageConfig;
 }
 
 export interface UserPreferenceSettings {
