@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from 'react';
-import { HarnessChatProvider, type HarnessAuthState } from '@harnesskit/react';
+import { HarnessChatProvider, type HarnessAuthState } from '@skillchat/harness-react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
 

@@ -78,32 +78,37 @@ export class AuthService {
   }
 
   async bootstrapAdmin(input: { username: string; password: string }): Promise<UserSummary> {
-    const existingAdmin = this.db
-      .prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
-      .get() as { id: string } | undefined;
-    if (existingAdmin) {
-      throw new Error('系统已存在管理员，不能重复初始化');
-    }
-
-    const existing = this.db.prepare('SELECT id FROM users WHERE username = ?').get(input.username);
-    if (existing) {
-      throw new Error('用户名已存在');
-    }
-
-    const id = nanoid();
     const passwordHash = await bcrypt.hash(input.password, 10);
-    this.db
-      .prepare('INSERT INTO users (id, username, password, role, status) VALUES (?, ?, ?, ?, ?)')
-      .run(id, input.username, passwordHash, 'admin', 'active');
+    const id = nanoid();
+
+    const created = this.db.transaction(() => {
+      const existingAdmin = this.db
+        .prepare("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
+        .get() as { id: string } | undefined;
+      if (existingAdmin) {
+        throw new Error('系统已存在管理员，不能重复初始化');
+      }
+
+      const existing = this.db.prepare('SELECT id FROM users WHERE username = ?').get(input.username);
+      if (existing) {
+        throw new Error('用户名已存在');
+      }
+
+      this.db
+        .prepare('INSERT INTO users (id, username, password, role, status) VALUES (?, ?, ?, ?, ?)')
+        .run(id, input.username, passwordHash, 'admin', 'active');
+
+      return {
+        id,
+        username: input.username,
+        role: 'admin' as const,
+        status: 'active' as const,
+      };
+    })();
 
     await ensureUserDirectories(this.config, id);
 
-    return {
-      id,
-      username: input.username,
-      role: 'admin',
-      status: 'active',
-    };
+    return created;
   }
 
   async login(input: { username: string; password: string }): Promise<UserSummary> {

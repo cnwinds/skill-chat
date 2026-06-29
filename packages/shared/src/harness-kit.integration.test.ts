@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SSE_EVENT_NAMES } from '@harnesskit/protocol';
+import { SSE_EVENT_NAMES } from '@skillchat/harness-protocol';
 import { SSE_EVENT_NAMES as SkillChatSSE } from '@skillchat/shared';
 
 describe('harness-kit protocol alignment', () => {

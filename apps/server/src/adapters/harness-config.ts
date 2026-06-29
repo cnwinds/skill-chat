@@ -1,5 +1,5 @@
 import type { AppConfig } from '../config/env.js';
-import type { HarnessConfig } from '@harnesskit/core';
+import type { HarnessConfig } from '@skillchat/harness-core';
 
 const optionalString = (value: string | undefined) => (value ? value : undefined);
 

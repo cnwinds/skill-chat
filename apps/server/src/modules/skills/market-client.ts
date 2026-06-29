@@ -61,7 +61,13 @@ export class MarketClient {
   }
 
   async downloadPackage(packageUrl: string): Promise<Uint8Array> {
-    const response = await fetch(new URL(packageUrl, this.baseUrl));
+    const resolved = new URL(packageUrl, this.baseUrl);
+    const marketOrigin = new URL(this.baseUrl).origin;
+    if (resolved.origin !== marketOrigin) {
+      throw new Error('Skill package URL must use the configured market origin');
+    }
+
+    const response = await fetch(resolved);
     await requireOk(response, 'Failed to download skill package');
     return new Uint8Array(await response.arrayBuffer());
   }

@@ -118,6 +118,74 @@ const SkillQueryError = ({
 const getErrorMessage = (error: unknown, fallback: string) =>
   error instanceof ApiError || error instanceof Error ? error.message : fallback;
 
+const BuiltinSkillCard = ({
+  skill,
+  active,
+  hasActiveSession,
+  toggleDisabled,
+  onToggle,
+}: {
+  skill: SkillMetadata;
+  active: boolean;
+  hasActiveSession: boolean;
+  toggleDisabled: boolean;
+  onToggle: () => void;
+}) => (
+  <article
+    className={cn(
+      'flex w-full min-w-0 max-w-full flex-col gap-1.5 overflow-hidden rounded-md border bg-surface px-2.5 py-2.5 transition-colors',
+      active ? 'border-accent/60 bg-accent/5' : 'border-border hover:border-border-strong',
+    )}
+  >
+    <div className="flex min-w-0 items-start justify-between gap-2">
+      <div className="flex min-w-0 flex-1 items-start gap-2">
+        <span
+          className={cn(
+            'mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border',
+            active
+              ? 'border-accent bg-accent text-accent-foreground'
+              : 'border-border text-foreground-muted',
+          )}
+        >
+          {active ? <Check className="h-3.5 w-3.5" /> : <Package className="h-3.5 w-3.5" />}
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-foreground" title={skill.name}>
+            {skill.name}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p className="line-clamp-2 overflow-hidden break-words text-xs leading-5 text-foreground-muted">
+      {skill.description}
+    </p>
+
+    <div className="flex min-w-0 max-w-full flex-wrap gap-1 overflow-hidden">
+      <Tag className="border-accent/30 text-accent">内置</Tag>
+      {active ? <Tag className="border-accent/40 text-accent">已启用</Tag> : null}
+    </div>
+
+    {hasActiveSession ? (
+      <div className="flex min-w-0 justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onToggle}
+          disabled={toggleDisabled}
+          aria-label={`${active ? '停用' : '启用'} Skill：${skill.name}`}
+          className={cn('h-7 px-2 text-2xs', !active && 'text-accent')}
+        >
+          {active ? '停用' : '启用'}
+        </Button>
+      </div>
+    ) : null}
+  </article>
+);
+
+const isBuiltinSkillRecord = (record: InstalledSkillRecord | null) =>
+  !record || record.sourceMarketUrl === 'legacy' || !record.id.includes('/');
+
 const InstalledSkillCard = ({
   record,
   active,
@@ -230,12 +298,19 @@ const InstalledSkillCard = ({
   );
 };
 
+type SkillListItem = {
+  skillKey: string;
+  skill: SkillMetadata;
+  record: InstalledSkillRecord | null;
+};
+
 export const InspectorPanel = ({
   inspectorTab,
   onTabChange,
   hasActiveSession,
   isWechat,
   groupedFiles,
+  installedSkills,
   activeSkills,
   onDownloadFile,
   onShareFile,
@@ -248,6 +323,13 @@ export const InspectorPanel = ({
   const [skillSearch, setSkillSearch] = useState('');
   const normalizedSkillSearch = normalizeSearch(skillSearch);
 
+  const skillsQuery = useQuery({
+    queryKey: ['skills'],
+    queryFn: api.listSkills,
+    enabled: inspectorTab === 'skills',
+    staleTime: 10_000,
+  });
+
   const userInstalledSkillsQuery = useQuery({
     queryKey: ['user-installed-skills'],
     queryFn: api.listInstalledSkills,
@@ -257,35 +339,70 @@ export const InspectorPanel = ({
 
   const { uninstallMutation } = useSkillMutations();
 
+  const availableSkills = skillsQuery.data ?? installedSkills;
   const userInstalledRecords = userInstalledSkillsQuery.data ?? [];
 
+  const installedRecordById = useMemo(
+    () => new Map(userInstalledRecords.map((record) => [record.id, record])),
+    [userInstalledRecords],
+  );
+
+  const skillItems = useMemo(() => {
+    const items: SkillListItem[] = availableSkills.map((skill) => ({
+      skillKey: skill.name,
+      skill,
+      record: installedRecordById.get(skill.name) ?? null,
+    }));
+    const knownKeys = new Set(items.map((item) => item.skillKey));
+
+    for (const record of userInstalledRecords) {
+      if (knownKeys.has(record.id)) {
+        continue;
+      }
+      items.push({
+        skillKey: record.id,
+        skill: {
+          name: record.id,
+          description: record.manifest.description,
+          starterPrompts: [...record.manifest.starterPrompts],
+        },
+        record,
+      });
+    }
+
+    return items;
+  }, [availableSkills, installedRecordById, userInstalledRecords]);
+
+  const getSkillTitle = (item: SkillListItem) =>
+    item.record?.manifest.displayName ?? item.skill.name;
+
   // Sort: active first (preserving activeSkills order), then alphabetical by displayName
-  const sortedRecords = useMemo(() => {
+  const sortedItems = useMemo(() => {
     const activeSet = new Set(activeSkills);
-    return [...userInstalledRecords].sort((a, b) => {
-      const aActive = activeSet.has(a.id);
-      const bActive = activeSet.has(b.id);
+    return [...skillItems].sort((a, b) => {
+      const aActive = activeSet.has(a.skillKey);
+      const bActive = activeSet.has(b.skillKey);
       if (aActive && !bActive) return -1;
       if (!aActive && bActive) return 1;
-      const aTitle = (a.manifest.displayName ?? a.id).toLowerCase();
-      const bTitle = (b.manifest.displayName ?? b.id).toLowerCase();
-      return aTitle.localeCompare(bTitle);
+      return getSkillTitle(a).toLowerCase().localeCompare(getSkillTitle(b).toLowerCase());
     });
-  }, [userInstalledRecords, activeSkills]);
+  }, [skillItems, activeSkills]);
 
-  const filteredRecords = useMemo(
+  const filteredItems = useMemo(
     () =>
-      sortedRecords.filter((record) =>
+      sortedItems.filter((item) =>
         matchesText(normalizedSkillSearch, [
-          record.id,
-          record.manifest.displayName,
-          record.manifest.description,
-          record.manifest.author.name,
-          ...record.manifest.tags,
-          ...record.manifest.categories,
+          item.skillKey,
+          item.skill.name,
+          item.skill.description,
+          item.record?.manifest.displayName,
+          item.record?.manifest.description,
+          item.record?.manifest.author.name,
+          ...(item.record?.manifest.tags ?? []),
+          ...(item.record?.manifest.categories ?? []),
         ]),
       ),
-    [sortedRecords, normalizedSkillSearch],
+    [sortedItems, normalizedSkillSearch],
   );
 
   const tabClass = (active: boolean) =>
@@ -296,41 +413,73 @@ export const InspectorPanel = ({
         : 'text-foreground-muted hover:text-foreground',
     );
 
+  const refreshSkills = () => {
+    void skillsQuery.refetch();
+    void userInstalledSkillsQuery.refetch();
+  };
+
   const renderSkillContent = () => {
-    if (userInstalledSkillsQuery.isLoading) {
+    const isInitialLoading =
+      (skillsQuery.isLoading && availableSkills.length === 0)
+      || (userInstalledSkillsQuery.isLoading && userInstalledRecords.length === 0);
+
+    if (isInitialLoading) {
       return <SkillListLoading />;
+    }
+
+    if (skillsQuery.isError) {
+      return (
+        <SkillQueryError
+          message={getErrorMessage(skillsQuery.error, '获取可用 Skill 失败')}
+          onRetry={refreshSkills}
+        />
+      );
     }
 
     if (userInstalledSkillsQuery.isError) {
       return (
         <SkillQueryError
           message={getErrorMessage(userInstalledSkillsQuery.error, '获取已安装 Skill 失败')}
-          onRetry={() => void userInstalledSkillsQuery.refetch()}
+          onRetry={refreshSkills}
         />
       );
     }
 
-    if (userInstalledRecords.length === 0) {
+    if (skillItems.length === 0) {
       return (
         <SkillEmptyState>
-          还没有安装任何 Skill。前往市场浏览并安装。
+          当前没有可用的 Skill。
         </SkillEmptyState>
       );
     }
 
-    if (filteredRecords.length === 0) {
+    if (filteredItems.length === 0) {
       return <SkillEmptyState>没有匹配的 Skill。</SkillEmptyState>;
     }
 
     return (
       <div className="grid min-w-0 gap-2">
-        {filteredRecords.map((record) => {
+        {filteredItems.map((item) => {
+          if (isBuiltinSkillRecord(item.record)) {
+            return (
+              <BuiltinSkillCard
+                key={item.skillKey}
+                skill={item.skill}
+                active={activeSkills.includes(item.skillKey)}
+                hasActiveSession={hasActiveSession}
+                toggleDisabled={toggleDisabled}
+                onToggle={() => onToggleSkill(item.skillKey)}
+              />
+            );
+          }
+
+          const record = item.record!;
           const [publisher, name] = record.id.split('/');
           return (
             <InstalledSkillCard
               key={`${record.id}@${record.version}`}
               record={record}
-              active={activeSkills.includes(record.id)}
+              active={activeSkills.includes(item.skillKey)}
               hasActiveSession={hasActiveSession}
               toggleDisabled={toggleDisabled}
               uninstallPending={
@@ -338,7 +487,7 @@ export const InspectorPanel = ({
                 uninstallMutation.variables?.id === record.id &&
                 uninstallMutation.variables?.version === record.version
               }
-              onToggle={() => onToggleSkill(record.id)}
+              onToggle={() => onToggleSkill(item.skillKey)}
               onUninstall={() =>
                 uninstallMutation.mutate({ id: record.id, version: record.version })
               }
@@ -491,12 +640,12 @@ export const InspectorPanel = ({
                   />
                 </label>
                 <span className="inline-flex h-8 shrink-0 items-center rounded-sm bg-surface-hover px-1.5 text-2xs text-foreground-muted">
-                  {activeSkills.length}/{userInstalledRecords.length}
+                  {activeSkills.length}/{skillItems.length}
                 </span>
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  onClick={() => void userInstalledSkillsQuery.refetch()}
+                  onClick={refreshSkills}
                   aria-label="刷新 Skill 列表"
                   title="刷新"
                 >

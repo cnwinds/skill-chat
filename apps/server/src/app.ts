@@ -24,9 +24,9 @@ import {
 } from '@skillchat/shared';
 import { getProjectRoot, loadConfig, type AppConfig, type ConfigOverrides } from './config/env.js';
 import { createDatabase, migrateDatabase } from './db/database.js';
-import { ensureBaseDirectories, MessageStore, StreamHub } from '@harnesskit/core';
-import { SessionContextStore, createOpenAIHarnessStack } from '@harnesskit/harness';
-import { ChatOrchestrator } from '@harnesskit/server';
+import { ensureBaseDirectories, MessageStore, StreamHub } from '@skillchat/harness-core';
+import { SessionContextStore, createOpenAIHarnessStack } from '@skillchat/harness';
+import { ChatOrchestrator } from '@skillchat/harness-server';
 import { syncHarnessConfig, toHarnessConfig } from './adapters/harness-config.js';
 import { toSkillRegistryLike } from './adapters/harness-adapters.js';
 import { SkillRegistry } from './modules/skills/skill-registry.js';

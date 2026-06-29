@@ -1,4 +1,4 @@
-/** HarnessKit React UI — re-exported from @harnesskit/react for SkillChat. */
+/** HarnessKit React UI — re-exported from @skillchat/harness-react for SkillChat. */
 export {
   MessageItem,
   Composer,
@@ -16,7 +16,7 @@ export {
   imagePreviewActions,
   buildRenderableTimeline,
   buildTimelineItems,
-} from '@harnesskit/react';
+} from '@skillchat/harness-react';
 
 export type {
   ComposerProps,
@@ -28,4 +28,4 @@ export type {
   RenderableTimeline,
   ToolTraceDisplayEvent,
   ToolTraceGroupDisplayEvent,
-} from '@harnesskit/react';
+} from '@skillchat/harness-react';

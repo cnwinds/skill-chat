@@ -185,6 +185,7 @@ describe('SystemSettingsService', () => {
     const { config, db } = await createDb({
       NODE_ENV: 'development',
       WEB_ORIGIN: 'http://localhost:5173',
+      MARKET_BASE_URL: 'http://env-market:3100',
       OPENAI_BASE_URL: 'http://env-host/v1',
       OPENAI_API_KEY: 'env-api-key',
       OPENAI_MODEL: 'gpt-5.4',
@@ -199,11 +200,38 @@ describe('SystemSettingsService', () => {
 
     const settings = service.getSettings();
     expect(settings.enableAssistantTools).toBe(true);
+    expect(settings.marketConfig.marketBaseUrl).toBe('http://env-market:3100');
     expect(settings.modelConfig.openaiBaseUrl).toBe('http://env-host/v1');
     expect(settings.modelConfig.openaiApiKey).toBe('env-api-key');
     expect(settings.modelConfig.openaiModel).toBe('gpt-5.4');
     expect(settings.modelConfig.openaiReasoningEffort).toBe('medium');
     expect(settings.modelConfig.llmMaxOutputTokens).toBe(10240);
     expect(settings.modelConfig.toolMaxOutputTokens).toBe(4096);
+  });
+
+  it('applies market base url changes to runtime config without restart', async () => {
+    const { config, db } = await createDb({
+      MARKET_BASE_URL: 'http://localhost:3100',
+    });
+
+    db.prepare(`
+      INSERT INTO users (id, username, password, role, status)
+      VALUES ('admin-user', 'admin', 'hash', 'admin', 'active')
+    `).run();
+
+    const service = new SystemSettingsService(db, config);
+    service.initialize();
+
+    service.updateSettings(
+      {
+        marketConfig: {
+          marketBaseUrl: 'https://market.example.com',
+        },
+      },
+      'admin-user',
+    );
+
+    expect(service.getSettings().marketConfig.marketBaseUrl).toBe('https://market.example.com');
+    expect(config.MARKET_BASE_URL).toBe('https://market.example.com');
   });
 });

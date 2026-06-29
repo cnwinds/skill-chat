@@ -1,23 +1,23 @@
 {
-  "registryVersion": "0.1.0",
+  "registryVersion": "0.1.1",
   "targets": {
     "apps/server/package.json": [
-      "@harnesskit/core",
-      "@harnesskit/harness",
-      "@harnesskit/server"
+      "@skillchat/harness-core",
+      "@skillchat/harness",
+      "@skillchat/harness-server"
     ],
     "apps/web/package.json": [
-      "@harnesskit/react"
+      "@skillchat/harness-react"
     ],
     "packages/shared/package.json": [
-      "@harnesskit/protocol"
+      "@skillchat/harness-protocol"
     ]
   },
   "local": {
-    "@harnesskit/core": "file:../../../harness-kit/packages/core",
-    "@harnesskit/harness": "file:../../../harness-kit/packages/harness",
-    "@harnesskit/server": "file:../../../harness-kit/packages/server",
-    "@harnesskit/react": "file:../../../harness-kit/packages/react",
-    "@harnesskit/protocol": "file:../../../harness-kit/packages/protocol"
+    "@skillchat/harness-core": "file:../../../harness-kit/packages/core",
+    "@skillchat/harness": "file:../../../harness-kit/packages/harness",
+    "@skillchat/harness-server": "file:../../../harness-kit/packages/server",
+    "@skillchat/harness-react": "file:../../../harness-kit/packages/react",
+    "@skillchat/harness-protocol": "file:../../../harness-kit/packages/protocol"
   }
 }

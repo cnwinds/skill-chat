@@ -40,6 +40,7 @@ const SYSTEM_SETTING_KEYS = {
   dashscopeImageApiKey: 'dashscope_image_api_key',
   dashscopeImageBaseUrl: 'dashscope_image_base_url',
   dashscopeImageModel: 'dashscope_image_model',
+  marketBaseUrl: 'market_base_url',
 } as const;
 
 const LEGACY_SYSTEM_SETTING_KEYS = [
@@ -166,6 +167,9 @@ export class SystemSettingsService {
         map.get(SYSTEM_SETTING_KEYS.enableAssistantTools),
         this.config.ENABLE_ASSISTANT_TOOLS,
       ),
+      marketConfig: {
+        marketBaseUrl: map.get(SYSTEM_SETTING_KEYS.marketBaseUrl) ?? this.config.MARKET_BASE_URL,
+      },
       modelConfig: {
         openaiBaseUrl: map.get(SYSTEM_SETTING_KEYS.openaiBaseUrl) ?? this.config.OPENAI_BASE_URL,
         openaiApiKey: map.get(SYSTEM_SETTING_KEYS.openaiApiKey) ?? this.config.OPENAI_API_KEY,
@@ -193,10 +197,11 @@ export class SystemSettingsService {
   }
 
   updateSettings(
-    patch: Partial<Omit<SystemSettings, 'modelConfig' | 'webSearchConfig' | 'imageConfig'>> & {
+    patch: Partial<Omit<SystemSettings, 'modelConfig' | 'webSearchConfig' | 'imageConfig' | 'marketConfig'>> & {
       modelConfig?: Partial<SystemSettings['modelConfig']>;
       webSearchConfig?: Partial<WebSearchConfig>;
       imageConfig?: Partial<ImageConfig>;
+      marketConfig?: Partial<SystemSettings['marketConfig']>;
     },
     updatedBy: string,
   ) {
@@ -204,6 +209,10 @@ export class SystemSettingsService {
     const next: SystemSettings = {
       registrationRequiresInviteCode: patch.registrationRequiresInviteCode ?? current.registrationRequiresInviteCode,
       enableAssistantTools: patch.enableAssistantTools ?? current.enableAssistantTools,
+      marketConfig: {
+        ...current.marketConfig,
+        ...(patch.marketConfig ?? {}),
+      },
       modelConfig: {
         ...current.modelConfig,
         ...(patch.modelConfig ?? {}),
@@ -228,6 +237,7 @@ export class SystemSettingsService {
     this.db.transaction(() => {
       upsert.run(SYSTEM_SETTING_KEYS.registrationRequiresInviteCode, String(next.registrationRequiresInviteCode), now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.enableAssistantTools, String(next.enableAssistantTools), now, updatedBy);
+      upsert.run(SYSTEM_SETTING_KEYS.marketBaseUrl, next.marketConfig.marketBaseUrl, now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.openaiBaseUrl, next.modelConfig.openaiBaseUrl, now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.openaiApiKey, next.modelConfig.openaiApiKey, now, updatedBy);
       upsert.run(SYSTEM_SETTING_KEYS.openaiModel, next.modelConfig.openaiModel, now, updatedBy);
@@ -267,6 +277,7 @@ export class SystemSettingsService {
     this.db.transaction(() => {
       upsert.run(SYSTEM_SETTING_KEYS.registrationRequiresInviteCode, String(settings.registrationRequiresInviteCode));
       upsert.run(SYSTEM_SETTING_KEYS.enableAssistantTools, String(settings.enableAssistantTools));
+      upsert.run(SYSTEM_SETTING_KEYS.marketBaseUrl, settings.marketConfig.marketBaseUrl);
       upsert.run(SYSTEM_SETTING_KEYS.openaiBaseUrl, settings.modelConfig.openaiBaseUrl);
       upsert.run(SYSTEM_SETTING_KEYS.openaiApiKey, settings.modelConfig.openaiApiKey);
       upsert.run(SYSTEM_SETTING_KEYS.openaiModel, settings.modelConfig.openaiModel);
@@ -295,6 +306,7 @@ export class SystemSettingsService {
 
   private applyToRuntimeConfig(settings: SystemSettings) {
     this.config.ENABLE_ASSISTANT_TOOLS = settings.enableAssistantTools;
+    this.config.MARKET_BASE_URL = settings.marketConfig.marketBaseUrl;
     this.config.OPENAI_BASE_URL = settings.modelConfig.openaiBaseUrl;
     this.config.OPENAI_API_KEY = settings.modelConfig.openaiApiKey;
     this.config.OPENAI_MODEL = settings.modelConfig.openaiModel;

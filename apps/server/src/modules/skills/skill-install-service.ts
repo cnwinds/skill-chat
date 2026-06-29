@@ -59,8 +59,8 @@ export class SkillInstallService {
 
   async install(userId: string, input: unknown): Promise<InstalledSkillRecord> {
     const request = installSkillRequestSchema.parse({
+      ...(input as Record<string, unknown>),
       marketBaseUrl: this.config.MARKET_BASE_URL,
-      ...input as Record<string, unknown>,
     });
     const client = new MarketClient(request.marketBaseUrl);
     const marketVersion = await client.getVersion(request.id, request.version);

@@ -2,10 +2,10 @@ import type { Config } from 'tailwindcss';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import typography from '@tailwindcss/typography';
-import harnessKitPreset from '@harnesskit/react/tailwind';
+import harnessKitPreset from '@skillchat/harness-react/tailwind';
 
 const appRoot = fileURLToPath(new URL('.', import.meta.url));
-const harnessKitReactRoot = path.resolve(appRoot, '../../node_modules/@harnesskit/react');
+const harnessKitReactRoot = path.resolve(appRoot, '../../node_modules/@skillchat/harness-react');
 
 /* ---------------------------------------------------------------
  * Typeface stacks

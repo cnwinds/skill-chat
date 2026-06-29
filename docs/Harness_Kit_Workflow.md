@@ -1,6 +1,6 @@
 # HarnessKit 开发与发布流程
 
-SkillChat 依赖 [HarnessKit](https://github.com/cnwinds/harness-kit)（`@harnesskit/*`）。HarnessKit 仍在快速迭代时，推荐：
+SkillChat 依赖 [HarnessKit](https://github.com/cnwinds/harness-kit)（`@skillchat/harness-*`）。HarnessKit 仍在快速迭代时，推荐：
 
 | 阶段 | 依赖方式 | 目的 |
 |------|----------|------|
@@ -70,11 +70,11 @@ npm run dev:web
 
 五个包版本需保持一致（当前均为 `0.1.x`）：
 
-- `@harnesskit/protocol`
-- `@harnesskit/core`
-- `@harnesskit/harness`
-- `@harnesskit/server`
-- `@harnesskit/react`
+- `@skillchat/harness-protocol`
+- `@skillchat/harness-core`
+- `@skillchat/harness`
+- `@skillchat/harness-server`
+- `@skillchat/harness-react`
 
 ```bash
 cd harness-kit
@@ -131,13 +131,13 @@ npm run build
 npm test
 ```
 
-这会改写 `apps/server`、`apps/web`、`packages/shared` 的 `@harnesskit/*` 为 `^0.1.1`，并更新 lockfile。
+这会改写 `apps/server`、`apps/web`、`packages/shared` 的 `@skillchat/harness-*` 为 `^0.1.1`，并更新 lockfile。
 
 ### 4.2 提交发布用依赖（推荐）
 
 ```bash
 git add apps/server/package.json apps/web/package.json packages/shared/package.json package-lock.json config/harness-deps.manifest.json
-git commit -m "chore: pin @harnesskit to 0.1.1 for release"
+git commit -m "chore: pin @skillchat/harness-* to 0.1.1 for release"
 git tag v0.1.1   # 按项目版本策略
 ```
 
@@ -197,7 +197,7 @@ npm install
 | `scripts/sync-harness-deps.mjs` | 切换 `local` / `registry` 模式 |
 | `.npmrc.example` | 私有 npm 源配置示例 |
 | `docker/Dockerfile` | 构建时自动切换 registry 依赖 |
-| `harness-kit/scripts/publish-packages.mjs` | 按顺序发布全部 @harnesskit 包 |
+| `harness-kit/scripts/publish-packages.mjs` | 按顺序发布全部 @skillchat/harness-* 包 |
 
 ---
 
@@ -217,7 +217,7 @@ HarnessKit Demo（`npm run dev:demo`）通过 `examples/minimal-server/.env` 配
 
 ## 8. 常见问题
 
-**Q: Docker 构建报找不到 `@harnesskit/*`？**  
+**Q: Docker 构建报找不到 `@skillchat/harness-*`？**  
 A: 确认已 `npm run publish:packages`，且 `HARNESSKIT_VERSION` 与已发布版本一致；私有源需把 `.npmrc` 传入构建环境。
 
 **Q: 开发时改了 harness-kit 但 skill-chat 没变化？**  

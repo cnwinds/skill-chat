@@ -51,7 +51,7 @@ C:\projects\skill-chat
 
 ## 0.2 HarnessKit 双仓库开发与发布
 
-SkillChat 的聊天 Harness 来自独立仓库 **HarnessKit**（`@harnesskit/*`）。
+SkillChat 的聊天 Harness 来自独立仓库 **HarnessKit**（`@skillchat/harness-*`）。
 
 - **开发**：与 `harness-kit` 并列放置，使用本地 `file:` 依赖，方便两边同时改 bug。
 - **上线**：将 HarnessKit 发布到 npm，SkillChat 与 Docker 构建使用固定版本号。
@@ -194,7 +194,7 @@ tail -f logs/dev-web.log
 
 ## 4. 正式环境部署（Docker Compose）
 
-**上线前请先阅读 [`docs/Harness_Kit_Workflow.md`](docs/Harness_Kit_Workflow.md)**：需将 `@harnesskit/*` 发布到 npm，并在 `docker/.env` 设置 `HARNESSKIT_VERSION`。
+**上线前请先阅读 [`docs/Harness_Kit_Workflow.md`](docs/Harness_Kit_Workflow.md)**：需将 `@skillchat/harness-*` 发布到 npm，并在 `docker/.env` 设置 `HARNESSKIT_VERSION`。
 
 如果你要在服务器上一键启动，仓库根目录已经提供：
 

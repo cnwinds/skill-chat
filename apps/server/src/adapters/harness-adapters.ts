@@ -1,5 +1,5 @@
-import type { SkillDescriptor } from '@harnesskit/core';
-import type { SkillRegistryLike } from '@harnesskit/server';
+import type { SkillDescriptor } from '@skillchat/harness-core';
+import type { SkillRegistryLike } from '@skillchat/harness-server';
 import type { SkillRegistry } from '../modules/skills/skill-registry.js';
 
 const toSkillDescriptor = (skill: ReturnType<SkillRegistry['get']>): SkillDescriptor => ({

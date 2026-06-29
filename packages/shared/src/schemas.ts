@@ -69,6 +69,9 @@ const nativeToolsPolicySchema = z.enum(['auto', 'on', 'off']);
 export const systemSettingsPatchSchema = z.object({
   registrationRequiresInviteCode: z.boolean().optional(),
   enableAssistantTools: z.boolean().optional(),
+  marketConfig: z.object({
+    marketBaseUrl: z.string().url().optional(),
+  }).optional(),
   modelConfig: z.object({
     openaiBaseUrl: z.string().url().optional(),
     openaiApiKey: z.string().optional(),

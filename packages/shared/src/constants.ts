@@ -4,7 +4,7 @@ export {
   FILE_BUCKETS,
   FILE_SOURCES,
   FILE_VISIBILITIES,
-} from '@harnesskit/protocol';
+} from '@skillchat/harness-protocol';
 
 export const APP_NAME = 'SkillChat';
 export const DEFAULT_SESSION_TITLE = '新会话';

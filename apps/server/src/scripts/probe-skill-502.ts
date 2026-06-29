@@ -3,8 +3,8 @@ import path from 'node:path';
 import type { StoredEvent, ToolResultEvent } from '@skillchat/shared';
 import { getProjectRoot, loadConfig } from '../config/env.js';
 import { SkillRegistry } from '../modules/skills/skill-registry.js';
-import type { SkillDescriptor } from '@harnesskit/core';
-import { buildOpenAIHarnessInstructions, toResponsesHarnessInput } from '@harnesskit/harness';
+import type { SkillDescriptor } from '@skillchat/harness-core';
+import { buildOpenAIHarnessInstructions, toResponsesHarnessInput } from '@skillchat/harness';
 import { toHarnessConfig } from '../adapters/harness-config.js';
 
 type SessionMeta = {

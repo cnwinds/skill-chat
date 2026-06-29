@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vitest/config';
 
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
-const harnessKitDist = path.join(workspaceRoot, 'node_modules/@harnesskit/react/dist');
+const harnessKitDist = path.join(workspaceRoot, 'node_modules/@skillchat/harness-react/dist');
 const harnessKitStreamStore = path.join(harnessKitDist, 'store/stream-ui-store.js');
 const harnessKitReactEntry = path.join(harnessKitDist, 'index.js');
 const lucideReact = path.join(workspaceRoot, 'node_modules/lucide-react');
@@ -13,7 +13,7 @@ const forceSharedRuntime = (): Plugin => ({
   name: 'force-shared-runtime',
   enforce: 'pre',
   resolveId(source) {
-    // Keep one stream-ui-store module instance across app + @harnesskit/react.
+    // Keep one stream-ui-store module instance across app + @skillchat/harness-react.
     if (source.includes('stream-ui-store')) {
       return harnessKitStreamStore;
     }
@@ -27,11 +27,11 @@ const forceSharedRuntime = (): Plugin => ({
 export default defineConfig({
   plugins: [forceSharedRuntime(), react()],
   resolve: {
-    dedupe: ['react', 'react-dom', 'zustand', '@tanstack/react-query', 'lucide-react', '@harnesskit/react'],
+    dedupe: ['react', 'react-dom', 'zustand', '@tanstack/react-query', 'lucide-react', '@skillchat/harness-react'],
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
       '@skillchat/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),
-      '@harnesskit/react': harnessKitReactEntry,
+      '@skillchat/harness-react': harnessKitReactEntry,
       'lucide-react': path.join(lucideReact, 'dist/esm/lucide-react.mjs'),
     },
   },
@@ -41,7 +41,7 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['@harnesskit/react', 'zustand', 'zustand/vanilla', 'zustand/react'],
+    include: ['@skillchat/harness-react', 'zustand', 'zustand/vanilla', 'zustand/react'],
   },
   test: {
     environment: 'jsdom',
@@ -50,7 +50,7 @@ export default defineConfig({
     maxWorkers: 1,
     server: {
       deps: {
-        inline: ['@harnesskit/react'],
+        inline: ['@skillchat/harness-react'],
       },
     },
   },

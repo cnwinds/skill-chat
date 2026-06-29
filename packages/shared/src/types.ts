@@ -64,9 +64,14 @@ export interface ImageConfig {
   dashscopeImageModel: string;
 }
 
+export interface MarketConfig {
+  marketBaseUrl: string;
+}
+
 export interface SystemSettings {
   registrationRequiresInviteCode: boolean;
   enableAssistantTools: boolean;
+  marketConfig: MarketConfig;
   modelConfig: {
     openaiBaseUrl: string;
     openaiApiKey: string;

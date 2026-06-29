@@ -54,6 +54,9 @@ const jsonResponse = ({ body, status = 200 }: MockResponseInit) =>
 const systemSettings = {
   registrationRequiresInviteCode: true,
   enableAssistantTools: true,
+  marketConfig: {
+    marketBaseUrl: 'http://localhost:3100',
+  },
   modelConfig: {
     openaiBaseUrl: 'https://api.openai.com/v1',
     openaiApiKey: 'sk-test',
@@ -991,6 +994,7 @@ describe('App routes', () => {
     expect(await screen.findByDisplayValue('gpt-5.2')).toBeInTheDocument();
     expect(screen.getByDisplayValue('https://api.openai.com/v1')).toBeInTheDocument();
     expect(screen.getByDisplayValue('sk-test')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('http://localhost:3100')).toBeInTheDocument();
   });
 
   it('shows only the latest five sessions by default and expands progressively', async () => {

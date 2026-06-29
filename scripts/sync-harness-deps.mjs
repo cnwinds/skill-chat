@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Switch @harnesskit/* dependencies between local file: links and npm registry versions.
+ * Switch @skillchat/harness-* dependencies between local file: links and npm registry versions.
  *
  * Usage:
  *   node scripts/sync-harness-deps.mjs local
@@ -68,11 +68,11 @@ for (const [relativePath, packageNames] of Object.entries(manifest.targets)) {
 }
 
 if (mode === 'registry') {
-  console.log(`\n@harnesskit/* now point to npm ^${registryVersion}`);
+  console.log(`\n@skillchat/harness-* now point to npm ^${registryVersion}`);
   console.log('Run: npm install');
   console.log('Docker: set HARNESSKIT_VERSION in docker/.env before compose build');
 } else {
-  console.log('\n@harnesskit/* now point to local harness-kit file: links');
+  console.log('\n@skillchat/harness-* now point to local harness-kit file: links');
   console.log('Ensure ../harness-kit exists, then run: npm run build:harness-kit && npm install');
 }
 
